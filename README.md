@@ -4,6 +4,10 @@
 
 A comprehensive Flutter application for campus-wide energy monitoring and management with AI-powered analytics, real-time consumption tracking, and role-based dashboards.
 
+[![Flutter](https://img.shields.io/badge/Flutter-3.0+-blue.svg)](https://flutter.dev)
+[![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20iOS%20%7C%20Web%20%7C%20Windows-green.svg)](https://flutter.dev/multi-platform)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ## ✨ Features
 
 ### 🎯 Role-Based Access
