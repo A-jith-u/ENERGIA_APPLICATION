@@ -8,7 +8,10 @@ class ClassroomsPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Classrooms'),
-        automaticallyImplyLeading: false,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: ListView.builder(
         itemCount: 10, // Example classroom count

@@ -1,7 +1,12 @@
+// Student login UI page. Performs simple username/password login against
+// the backend `/auth/login` endpoint and stores the JWT token locally.
+// Uses `lib/services/api.dart` for HTTP requests and `SharedPreferences` for persistence.
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'registration_page.dart';
+import 'services/api.dart';
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -15,14 +20,43 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
   final _nameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
+  String? _selectedDepartment;
+  String? _errorMessage;
+  
+  final List<String> _departments = ['CSE', 'ECE', 'EEE', 'IT', 'RA', 'ME'];
 
   void _login() {
     if (_formKey.currentState?.validate() != true) return;
+    _performLogin();
+  }
+
+  Future<void> _performLogin() async {
     final name = _nameController.text.trim();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Welcome $name')),
+    final password = _passwordController.text;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
     );
-    Navigator.pushReplacementNamed(context, '/dashboard');
+    try {
+      final token = await login(name, password);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('auth_token', token);
+      Navigator.of(context).pop();
+      Navigator.pushReplacementNamed(context, '/dashboard');
+    } catch (e) {
+      Navigator.of(context).pop();
+      setState(() {
+        _errorMessage = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_errorMessage!),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   @override
@@ -85,6 +119,28 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
                                   ),
                             ),
                             const SizedBox(height: 28),
+                            if (_errorMessage != null)
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                margin: const EdgeInsets.only(bottom: 16),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.red.shade300),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _errorMessage!,
+                                        style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             Form(
                               key: _formKey,
                               child: Column(
@@ -96,6 +152,22 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
                                     validator: (v) {
                                       if (v == null || v.trim().isEmpty) return 'Enter your student name or ID';
                                       if (v.trim().length < 3) return 'Too short';
+                                      return null;
+                                    },
+                                  ),
+                                  const SizedBox(height: 18),
+                                  _buildDropdownField(
+                                    value: _selectedDepartment,
+                                    label: 'Department',
+                                    icon: Icons.apartment_outlined,
+                                    items: _departments,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedDepartment = value;
+                                      });
+                                    },
+                                    validator: (v) {
+                                      if (v == null || v.isEmpty) return 'Select department';
                                       return null;
                                     },
                                   ),
@@ -147,7 +219,7 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
                             TextButton(
                               onPressed: () {
                                 // Navigate back to the main role selection page
-                                Navigator.pushReplacementNamed(context, '/');
+                                Navigator.pushReplacementNamed(context, '/role_selection');
                               },
                               child: const Text('Back to Role Selection'),
                             ),
@@ -199,6 +271,31 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
               )
             : null,
       ),
+    );
+  }
+  
+  Widget _buildDropdownField({
+    required String? value,
+    required String label,
+    required IconData icon,
+    required List<String> items,
+    required void Function(String?) onChanged,
+    String? Function(String?)? validator,
+  }) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+      ),
+      items: items.map((item) {
+        return DropdownMenuItem<String>(
+          value: item,
+          child: Text(item),
+        );
+      }).toList(),
+      onChanged: onChanged,
+      validator: validator,
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'services/api.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -19,14 +20,52 @@ class _RegistrationPageState extends State<RegistrationPage> {
   final _rePasswordController = TextEditingController();
   bool _isPasswordVisible = false;
   bool _isRePasswordVisible = false;
+  String? _errorMessage;
+  
+  String? _selectedDepartment;
+  String? _selectedYear;
+  
+  final List<String> _departments = ['CSE', 'ECE', 'EEE', 'IT', 'RA', 'ME'];
+  final List<String> _years = ['1', '2', '3', '4'];
 
   void _register() {
     if (_formKey.currentState?.validate() != true) return;
+    _performRegistration();
+  }
+
+  Future<void> _performRegistration() async {
     final name = _nameController.text.trim();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Registration Successful for $name')),
+    final ktuId = _kluIdController.text.trim();
+    final password = _passwordController.text;
+    final department = _selectedDepartment;
+    final year = _selectedYear;
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
     );
-    Navigator.pop(context);
+    
+    try {
+      await register(ktuId, password, role: 'student', ktuId: ktuId, name: name, department: department, year: year);
+      Navigator.of(context).pop(); // Close progress dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Registration Successful for $name')),
+      );
+      Navigator.pop(context); // Go back to login
+    } catch (e) {
+      Navigator.of(context).pop(); // Close progress dialog
+      setState(() {
+        _errorMessage = e is ApiError ? e.message : 'Registration failed: ${e.toString()}';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_errorMessage!),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   void _goBack() {
@@ -95,6 +134,28 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   ),
                             ),
                             const SizedBox(height: 28),
+                            if (_errorMessage != null)
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                margin: const EdgeInsets.only(bottom: 16),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.red.shade300),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _errorMessage!,
+                                        style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             Form(
                               key: _formKey,
                               child: Column(
@@ -110,25 +171,34 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                     },
                                   ),
                                   _gap(),
-                                  _buildField(
-                                    controller: _departmentController,
+                                  _buildDropdownField(
+                                    value: _selectedDepartment,
                                     label: 'Department',
                                     icon: Icons.apartment_outlined,
+                                    items: _departments,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedDepartment = value;
+                                      });
+                                    },
                                     validator: (v) {
-                                      if (v == null || v.trim().isEmpty) return 'Enter department';
+                                      if (v == null || v.isEmpty) return 'Select department';
                                       return null;
                                     },
                                   ),
                                   _gap(),
-                                  _buildField(
-                                    controller: _yearController,
+                                  _buildDropdownField(
+                                    value: _selectedYear,
                                     label: 'Year of Study',
                                     icon: Icons.calendar_today_outlined,
-                                    keyboardType: TextInputType.number,
+                                    items: _years,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _selectedYear = value;
+                                      });
+                                    },
                                     validator: (v) {
-                                      if (v == null || v.isEmpty) return 'Enter year';
-                                      final n = int.tryParse(v);
-                                      if (n == null || n < 1 || n > 6) return 'Year must be 1-6';
+                                      if (v == null || v.isEmpty) return 'Select year';
                                       return null;
                                     },
                                   ),
@@ -253,6 +323,31 @@ class _RegistrationPageState extends State<RegistrationPage> {
               )
             : null,
       ),
+    );
+  }
+  
+  Widget _buildDropdownField({
+    required String? value,
+    required String label,
+    required IconData icon,
+    required List<String> items,
+    required void Function(String?) onChanged,
+    String? Function(String?)? validator,
+  }) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+      ),
+      items: items.map((item) {
+        return DropdownMenuItem<String>(
+          value: item,
+          child: Text(item),
+        );
+      }).toList(),
+      onChanged: onChanged,
+      validator: validator,
     );
   }
 }

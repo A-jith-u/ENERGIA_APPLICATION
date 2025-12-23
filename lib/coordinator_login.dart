@@ -1,6 +1,10 @@
+// Coordinator login UI. Authenticates the coordinator via backend API
+// and persists the JWT token in `SharedPreferences` for subsequent API calls.
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'services/api.dart';
 
 class CoordinatorLoginPage extends StatefulWidget {
   const CoordinatorLoginPage({super.key});
@@ -14,11 +18,43 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
   final _idController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
+  String? _selectedDepartment;
+  String? _errorMessage;
+  
+  final List<String> _departments = ['CSE', 'ECE', 'EEE', 'IT', 'RA', 'ME'];
 
   void _login() {
     if (_formKey.currentState?.validate() ?? false) {
-      // Navigate to the coordinator dashboard
+      _performLogin();
+    }
+  }
+
+  Future<void> _performLogin() async {
+    final id = _idController.text.trim();
+    final password = _passwordController.text;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final token = await login(id, password);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('auth_token', token);
+      Navigator.of(context).pop();
       Navigator.pushReplacementNamed(context, '/coordinator_dashboard');
+    } catch (e) {
+      Navigator.of(context).pop();
+      setState(() {
+        _errorMessage = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_errorMessage!),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
     }
   }
 
@@ -49,6 +85,32 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
               )
             : null,
       ),
+      validator: validator,
+    );
+  }
+  
+  Widget _buildDropdownField({
+    required String? value,
+    required String label,
+    required IconData icon,
+    required List<String> items,
+    required void Function(String?) onChanged,
+    String? Function(String?)? validator,
+  }) {
+    return DropdownButtonFormField<String>(
+      value: value,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        border: const OutlineInputBorder(),
+      ),
+      items: items.map((item) {
+        return DropdownMenuItem<String>(
+          value: item,
+          child: Text(item),
+        );
+      }).toList(),
+      onChanged: onChanged,
       validator: validator,
     );
   }
@@ -119,6 +181,28 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                   ),
                                 ),
                                 const SizedBox(height: 28),
+                                if (_errorMessage != null)
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    margin: const EdgeInsets.only(bottom: 16),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.shade50,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.red.shade300),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            _errorMessage!,
+                                            style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 Form(
                                   key: _formKey,
                                   child: Column(
@@ -129,6 +213,22 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                         icon: Icons.person_outline,
                                         validator: (v) {
                                           if (v == null || v.trim().isEmpty) return 'Enter your Coordinator ID';
+                                          return null;
+                                        },
+                                      ),
+                                      const SizedBox(height: 18),
+                                      _buildDropdownField(
+                                        value: _selectedDepartment,
+                                        label: 'Department',
+                                        icon: Icons.apartment_outlined,
+                                        items: _departments,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _selectedDepartment = value;
+                                          });
+                                        },
+                                        validator: (v) {
+                                          if (v == null || v.isEmpty) return 'Select department';
                                           return null;
                                         },
                                       ),
@@ -164,7 +264,7 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                 TextButton(
                                   onPressed: () {
                                     // Navigate back to the main role selection page
-                                    Navigator.pushReplacementNamed(context, '/');
+                                    Navigator.pushReplacementNamed(context, '/role_selection');
                                   },
                                   child: const Text('Back to Role Selection'),
                                 ),

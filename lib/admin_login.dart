@@ -1,5 +1,11 @@
+// Admin login page UI and backend integration.
+// Connects to the backend `/auth/login` endpoint to authenticate an admin user
+// and stores the returned JWT token in `SharedPreferences`.
+// Keep UI separate from networking; networking helpers live in `lib/services/api.dart`.
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'services/api.dart';
 
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});
@@ -13,13 +19,41 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   final _idController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
+  String? _errorMessage;
 
   void _login() {
-    if (_formKey.currentState?.validate() != true) {
-      return;
+    if (_formKey.currentState?.validate() != true) return;
+    // call backend
+    _performLogin();
+  }
+
+  Future<void> _performLogin() async {
+    final id = _idController.text.trim();
+    final password = _passwordController.text;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final token = await login(id, password);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('auth_token', token);
+      Navigator.of(context).pop(); // close progress
+      Navigator.pushReplacementNamed(context, '/admin_dashboard');
+    } catch (e) {
+      Navigator.of(context).pop();
+      setState(() {
+        _errorMessage = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_errorMessage!),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
     }
-    // For now, just navigate. In a real app, you'd verify credentials.
-    Navigator.pushReplacementNamed(context, '/admin_dashboard');
   }
 
   Widget _buildField({
@@ -115,6 +149,28 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                               ),
                             ),
                             const SizedBox(height: 28),
+                            if (_errorMessage != null)
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                margin: const EdgeInsets.only(bottom: 16),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade50,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.red.shade300),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _errorMessage!,
+                                        style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             Form(
                               key: _formKey,
                               child: Column(
@@ -161,7 +217,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                             const SizedBox(height: 16),
                             TextButton(
                               onPressed: () {
-                                Navigator.pushReplacementNamed(context, '/');
+                                Navigator.pushReplacementNamed(context, '/role_selection');
                               },
                               child: const Text('Back to Role Selection'),
                             ),

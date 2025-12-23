@@ -1,21 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 // NOTE: Assume these files are created in your project root
-import 'analysis_graph_page.dart'; 
-import 'anomaly_viewer_page.dart';
 import 'role_selection_page.dart';
-class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+import 'graph_adm.dart';
+import 'anomaly_adm.dart';
+class Dash extends StatefulWidget {
+  const Dash({super.key});
 
   @override
-  State<DashboardPage> createState() => _DashboardPageState();
+  State<Dash> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> {
+class _DashboardPageState extends State<Dash> {
   int _index = 0;
 
-  void _performLogout() {
-    // Navigate to RoleSelectionPage and clear stack.
+  void _handleTabSelection(int newIndex) {
+    if (newIndex == 2) { // Index 2 is now reserved for Logout
+      _performLogout();
+    } else {
+      setState(() {
+        _index = newIndex;
+      });
+    }
+  }
+
+  /*void _performLogout() {
+    // Navigate specifically to the student login page and clear the navigation stack.
+    // Assuming the route name for student_login.dart is '/student_login'.
+    Navigator.of(context).pushNamedAndRemoveUntil('/student_login', (Route<dynamic> route) => false);
+  }*/
+void _performLogout() {
+    // CORRECTED NAVIGATION: Navigate to RoleSelectionPage and clear stack.
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const RoleSelectionPage()),
       (Route<dynamic> route) => false,
@@ -26,17 +41,7 @@ class _DashboardPageState extends State<DashboardPage> {
     final colorScheme = Theme.of(context).colorScheme;
     
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('CR Dashboard - CS-201'),
-        automaticallyImplyLeading: false,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: _performLogout,
-          ),
-        ],
-      ),
+      
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 300),
         child: _buildPage(_index, colorScheme),
@@ -45,22 +50,25 @@ class _DashboardPageState extends State<DashboardPage> {
         currentIndex: _index,
         selectedItemColor: colorScheme.primary,
         unselectedItemColor: Colors.grey,
-        onTap: (index) => setState(() => _index = index),
+        onTap: _handleTabSelection, // Use the new handler
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard_outlined),
-            activeIcon: Icon(Icons.dashboard),
-            label: 'Home', 
-          ),
+          // Index 0: Analysis (Was Index 1)
           BottomNavigationBarItem(
             icon: Icon(Icons.analytics_outlined),
             activeIcon: Icon(Icons.analytics),
             label: 'Analysis',
           ),
+          // Index 1: Alerts (Was Index 2)
           BottomNavigationBarItem(
             icon: Icon(Icons.notifications_outlined),
             activeIcon: Icon(Icons.notifications),
             label: 'Alerts',
+          ),
+          // Index 2: Logout (Was Index 3)
+          BottomNavigationBarItem(
+            icon: Icon(Icons.logout),
+            activeIcon: Icon(Icons.logout),
+            label: 'Logout',
           ),
         ],
       ),
@@ -70,130 +78,19 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
-        return _WelcomeSection(scheme: scheme); // Home Page with Stats
+        return _ReportsSection(scheme: scheme); // Now Analysis
       case 1:
-        return _ReportsSection(scheme: scheme); // Analysis/Graphs
+        return _AlertsSection(scheme: scheme); // Now Alerts
       case 2:
-        return _AlertsSection(scheme: scheme); // Alerts
+        // Logout case (unreachable page view)
+        return const Center(child: Text("Logging out..."));
       default:
         return const SizedBox.shrink();
     }
   }
 }
 
-// --- WELCOME SECTION ---
-
-class _WelcomeSection extends StatelessWidget {
-  final ColorScheme scheme;
-  const _WelcomeSection({required this.scheme});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        // 1. Prominent Welcome Card
-        TweenAnimationBuilder<double>(
-          duration: const Duration(milliseconds: 1000),
-          tween: Tween(begin: 0.0, end: 1.0),
-          curve: Curves.easeOutCubic,
-          builder: (context, value, child) {
-            return Opacity(
-              opacity: value,
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      scheme.primary.withOpacity(0.9),
-                      scheme.primaryContainer.withOpacity(0.8),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: scheme.primary.withOpacity(0.3),
-                      blurRadius: 15,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Energy Guardian',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            color: Colors.white70,
-                          ),
-                        ),
-                        Icon(
-                          Icons.check_circle_outline,
-                          color: Colors.lightGreenAccent,
-                          size: 28,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Welcome to CS-201! 💡',
-                      style: theme.textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Monitor real-time consumption and check your alerts here.',
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-        
-        const SizedBox(height: 30),
-
-        // 2. Key Live Statistics (Current Usage)
-        Text(
-          'Live Usage Data (CS-201)',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 16),
-        
-        Wrap(
-          spacing: 18,
-          runSpacing: 18,
-          alignment: WrapAlignment.center,
-          children: const [
-            _StatCard(label: 'Current Usage', value: '4.2 kW', icon: Icons.flash_on, color: Colors.orange),
-            _StatCard(label: 'Today\'s Peak', value: '6.8 kW', icon: Icons.trending_up_outlined, color: Colors.red),
-            _StatCard(label: 'Efficiency', value: '87%', icon: Icons.eco, color: Colors.green),
-            _StatCard(label: 'Daily Goal', value: '28.7/30 kWh', icon: Icons.track_changes, color: Colors.blue),
-          ],
-        ),
-
-        const SizedBox(height: 40),
-
-       
-      ],
-    );
-  }
-}
-
-
-// --- Alerts Section (CR Receives Alerts) ---
+// --- Alerts Section ---
 
 class _AlertsSection extends StatelessWidget {
   final ColorScheme scheme;
@@ -206,7 +103,7 @@ class _AlertsSection extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       children: [
         Text(
-          'Recent Alerts (CS-201)',
+          'Recent Alerts',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
@@ -216,9 +113,9 @@ class _AlertsSection extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         // Scoped alerts to CR's location (CS-201)
-        _buildAlertCard(context, 'High Usage Alert', 'CS-201: AC running after 6 PM. Usage: 5.2 kW.', Icons.power_outlined, Colors.red.shade400, '2h ago'),
-        _buildAlertCard(context, 'Anomaly Detected', 'CS-201: Projector left on overnight (Occupancy Mismatch).', Icons.lightbulb_outline, Colors.amber.shade600, '1d ago'),
-        _buildAlertCard(context, 'Sensor Offline', 'CS-201 PIR Sensor is not responding.', Icons.sensors_off_outlined, Colors.grey.shade500, '3d ago'),
+        _buildAlertCard(context, 'High Usage Alert', ' AC running after 6 PM. Usage: 5.2 kW.', Icons.power_outlined, Colors.red.shade400, '2h ago'),
+        _buildAlertCard(context, 'Anomaly Detected', ' Projector left on overnight (Occupancy Mismatch).', Icons.lightbulb_outline, Colors.amber.shade600, '1d ago'),
+        _buildAlertCard(context, 'Sensor Offline', ' PIR Sensor is not responding.', Icons.sensors_off_outlined, Colors.grey.shade500, '3d ago'),
       ],
     );
   }
@@ -242,11 +139,14 @@ class _AlertsSection extends StatelessWidget {
   }
 }
 
-// --- Reports Section (CR Views Consumption Analysis/Graphs) ---
+// --- Reports Section (Analysis/Graphs) ---
 
 class _ReportsSection extends StatelessWidget {
   final ColorScheme scheme;
   const _ReportsSection({required this.scheme});
+
+  // Define the target dark color for the header
+  static const _headerColor = Color(0xFF1B2A3B);
 
   @override
   Widget build(BuildContext context) {
@@ -260,7 +160,7 @@ class _ReportsSection extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'View detailed consumption graphs and anomaly reports for CS-201.',
+          'View detailed consumption graphs and anomaly reports.',
           style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
         ),
         const SizedBox(height: 24),
@@ -271,7 +171,9 @@ class _ReportsSection extends StatelessWidget {
           'Monthly Consumption Trend',
           'View total energy usage over the last 30 days.',
           Icons.calendar_month_outlined,
-          Colors.blue.shade600,
+          // --- MODIFIED: Reverted to original color for tile styling ---
+          Colors.blue.shade600, 
+          // --- END MODIFIED ---
           'Monthly',
         ),
         // Daily Consumption Graph (Interactive View)
@@ -280,10 +182,12 @@ class _ReportsSection extends StatelessWidget {
           'Daily Usage Profile',
           'View hourly consumption breakdown for today.',
           Icons.today_outlined,
+          // --- MODIFIED: Reverted to original color for tile styling ---
           Colors.green.shade600,
+          // --- END MODIFIED ---
           'Daily',
         ),
-        // Anomaly Report Viewer (No Download for CR)
+        // Anomaly Report Viewer (Navigates to Anomaly Page)
         _buildAnomalyReportTile(
           context,
           'Detailed Anomaly Report',
@@ -299,7 +203,8 @@ class _ReportsSection extends StatelessWidget {
     final theme = Theme.of(context);
     return Card(
       elevation: 4,
-      shadowColor: color.withOpacity(0.1),
+      // Uses the passed color for shadow
+      shadowColor: color.withOpacity(0.1), 
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
@@ -308,10 +213,11 @@ class _ReportsSection extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => AnalysisGraphPage(
+              builder: (context) => Analysis(
                 title: '$type Consumption Graph',
                 type: type,
-                color: color,
+                // Pass the fixed dark color for the AppBar header (0xFF1B2A3B)
+                color: _headerColor, 
               ),
             ),
           );
@@ -324,10 +230,12 @@ class _ReportsSection extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
+                  // Uses the passed color for the icon background
+                  color: color.withOpacity(0.15), 
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: color, size: 30),
+                // Uses the passed color for the icon itself
+                child: Icon(icon, color: color, size: 30), 
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -367,7 +275,7 @@ class _ReportsSection extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => const AnomalyViewerPage(),
+              builder: (context) => const Anomaly(),
             ),
           );
         },
@@ -412,7 +320,7 @@ class _ReportsSection extends StatelessWidget {
 }
 
 
-// --- Helper Classes (Standard Helpers) ---
+// --- Helper Classes ---
 
 class _EnergyUsageChart extends StatelessWidget {
   final bool isDark;
