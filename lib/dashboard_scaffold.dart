@@ -7,6 +7,7 @@ class DashboardScaffold extends StatefulWidget {
   final Function(int) onBottomNavTapped;
   final int currentIndex;
   final Widget? floatingActionButton;
+  final List<Widget>? actions; // <<< ADDED actions parameter >>>
 
   const DashboardScaffold({
     super.key,
@@ -16,6 +17,7 @@ class DashboardScaffold extends StatefulWidget {
     required this.onBottomNavTapped,
     required this.currentIndex,
     this.floatingActionButton,
+    this.actions, // <<< ADDED actions to constructor >>>
   });
 
   @override
@@ -23,10 +25,7 @@ class DashboardScaffold extends StatefulWidget {
 }
 
 class _DashboardScaffoldState extends State<DashboardScaffold> {
-  void _logout(BuildContext context) {
-    // Clear user session, etc.
-    Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
-  }
+  // Removed the hardcoded _logout function
 
   @override
   Widget build(BuildContext context) {
@@ -34,13 +33,10 @@ class _DashboardScaffoldState extends State<DashboardScaffold> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: () => _logout(context),
-          ),
-        ],
+        actions: widget.actions, // <<< NOW USES PASSED ACTIONS >>>
+        // Setting automaticallyImplyLeading to false prevents the back button
+        // from showing up automatically, addressing your request.
+        automaticallyImplyLeading: false, 
       ),
       body: widget.body,
       floatingActionButton: widget.floatingActionButton,

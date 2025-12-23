@@ -2,6 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
 
+// Assuming Analysis is in graph_adm.dart and Anomaly is in anomaly_adm.dart
+import 'graph_adm.dart'; 
+import 'anomaly_adm.dart'; 
+// --- MODIFIED: ADDED IMPORT FOR ROLE SELECTION PAGE ---
+import 'role_selection_page.dart';
+// --- END MODIFIED ---
+
+
 class CoordinatorDashboardPage extends StatefulWidget {
   const CoordinatorDashboardPage({super.key});
 
@@ -12,20 +20,40 @@ class CoordinatorDashboardPage extends StatefulWidget {
 class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   int _currentIndex = 0;
 
+  // Placeholder navigation targets (assuming imports would be here)
+  void _performLogout() {
+    // Navigate to RoleSelectionPage and clear stack.
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const RoleSelectionPage()),
+      (Route<dynamic> route) => false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return DashboardScaffold(
       title: '🏢 CS Department ENERGIA',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Logout',
+          onPressed: _performLogout,
+        ),
+      ],
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 300),
         child: _buildPage(_currentIndex, colorScheme),
       ),
       currentIndex: _currentIndex,
       onBottomNavTapped: (index) {
-        setState(() {
-          _currentIndex = index;
-        });
+        if (index == 4) { // Assuming a 5th item (Logout) might be added
+           _performLogout();
+        } else {
+           setState(() {
+             _currentIndex = index;
+           });
+        }
       },
       bottomNavItems: const [
         BottomNavigationBarItem(
@@ -49,13 +77,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
           label: 'Alerts',
         ),
       ],
-      floatingActionButton: _currentIndex == 1
-          ? FloatingActionButton.extended(
-              onPressed: () {},
-              icon: const Icon(Icons.control_point),
-              label: const Text('Control Room'),
-            )
-          : null,
+      
     );
   }
 
@@ -106,7 +128,7 @@ class _DepartmentOverviewSection extends StatelessWidget {
                   ),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: scheme.primary.withOpacity(0.3), width: 2),
-                  boxShadow: [
+                    boxShadow: [
                     BoxShadow(
                       color: scheme.primary.withOpacity(0.3),
                       blurRadius: 15,
@@ -136,7 +158,7 @@ class _DepartmentOverviewSection extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Welcome, Department Leader! �',
+                                'Welcome, Department Leader! 👋',
                                 style: theme.textTheme.headlineMedium?.copyWith(
                                   fontWeight: FontWeight.bold,
                                   color: scheme.onPrimaryContainer,
@@ -204,43 +226,6 @@ class _DepartmentOverviewSection extends StatelessWidget {
         ),
         const SizedBox(height: 32),
         
-        // Energy Budget Tracking
-        Text(
-          'Energy Budget Tracking',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: scheme.outline.withOpacity(0.2)),
-          ),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Monthly Budget: ₹45,000', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                  Text('Used: ₹28,500', style: theme.textTheme.titleMedium?.copyWith(color: Colors.orange.shade600, fontWeight: FontWeight.bold)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: 0.63,
-                minHeight: 8,
-                backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.orange.shade600),
-              ),
-              const SizedBox(height: 8),
-              Text('63% of budget used • 12 days remaining', style: theme.textTheme.bodySmall),
-            ],
-          ),
-        ),
-        
-        const SizedBox(height: 32),
-        
         // Real-time Chart
         Text(
           'Department Energy Flow (Last 24 Hours)',
@@ -252,13 +237,11 @@ class _DepartmentOverviewSection extends StatelessWidget {
         const SizedBox(height: 32),
         
         // Optimization Suggestions
-        Text(
-          'Smart Optimization',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-        ),
+        
         const SizedBox(height: 12),
-        _buildOptimizationCard(context, 'Schedule AC Auto-off', 'Save 15% by scheduling AC shutdown at 6 PM', Icons.schedule, Colors.green.shade600),
-        _buildOptimizationCard(context, 'Lighting Automation', 'Install motion sensors in low-traffic areas', Icons.sensors, Colors.blue.shade600),
+        //_buildOptimizationCard(context, 'Adjust AC Schedules', 'CS-Lab 1 has 20% avoidable peak usage after 5 PM.', Icons.ac_unit, Colors.red.shade600),
+        //_buildOptimizationCard(context, 'Motion Sensor Audit', 'CS-Seminar Hall motion sensor reporting low usage despite being marked active.', Icons.sensors, Colors.orange.shade600),
+        
       ],
     );
   }
@@ -290,6 +273,87 @@ class _DepartmentOverviewSection extends StatelessWidget {
 class _DepartmentRoomsSection extends StatelessWidget {
   final ColorScheme scheme;
   const _DepartmentRoomsSection({required this.scheme});
+  
+  // MODIFIED: Sample data adjusted for requested percentages (15, 25, 10, 13, 15, 22)
+  // Total Usage maintained around 34.5 kW
+  final List<Map<String, dynamic>> _roomData = const [
+    {'room': 'CS-404', 'usage_kw': 5.2, 'load': 0.6, 'status': 'Normal', 'color': Colors.green}, // ~15.1%
+    {'room': 'CS-Lab 1', 'usage_kw': 8.6, 'load': 0.9, 'status': 'High Usage', 'color': Colors.red}, // ~24.9%
+    {'room': 'CS-Lab 2', 'usage_kw': 3.4, 'load': 0.7, 'status': 'Moderate', 'color': Colors.orange}, // ~9.9%
+    {'room': 'Server Room', 'usage_kw': 4.5, 'load': 0.8, 'status': 'Critical System', 'color': Colors.purple}, // ~13.0%
+    {'room': 'CS-Faculty Room', 'usage_kw': 5.2, 'load': 0.3, 'status': 'Low Usage', 'color': Colors.blue}, // ~15.1%
+    {'room': 'CS-Seminar Hall', 'usage_kw': 7.6, 'load': 0.5, 'status': 'Offline', 'color': Colors.grey}, // ~22.0%
+  ];
+
+  // Refactored helper function for a more compact, ListTile-like appearance
+  Widget _buildRoomMonitorCard(BuildContext context, String room, String usage, double load, Color statusColor, String status) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 2,
+      shadowColor: Colors.transparent,
+      margin: const EdgeInsets.only(bottom: 8), // Reduced margin for compactness
+      child: InkWell(
+        onTap: () {
+          // Placeholder: Navigate to detailed room control/analytics page
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Opening Control Panel for $room')),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0), // Tighter vertical padding (8.0 instead of 12.0)
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // 1. Icon
+              Icon(Icons.room_outlined, color: statusColor, size: 24), // Smaller icon
+              const SizedBox(width: 16),
+              
+              // 2. Name and Usage
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      room, 
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600, fontSize: 16) // Slightly smaller font
+                    ),
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 4, // Thinner progress bar
+                      child: LinearProgressIndicator( 
+                        value: load,
+                        backgroundColor: Colors.grey.shade300,
+                        valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // 3. Status/Load Value
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    usage, 
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, fontSize: 16)
+                  ),
+                  Text(
+                    status, 
+                    style: theme.textTheme.bodySmall?.copyWith(color: statusColor, fontSize: 10) // Smaller status text
+                  ),
+                ],
+              ),
+              // Arrow Icon REMOVED here
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
 
   @override
   Widget build(BuildContext context) {
@@ -308,130 +372,141 @@ class _DepartmentRoomsSection extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         
-        // Scheduling Panel
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.blue.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.blue.shade300),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.schedule, color: Colors.blue.shade600, size: 24),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Energy Scheduling',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue.shade700,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildScheduleButton(context, 'Auto AC Off', '6:00 PM', Icons.ac_unit, Colors.blue.shade600, true),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildScheduleButton(context, 'Lights Off', '7:00 PM', Icons.lightbulb_outline, Colors.orange.shade600, false),
-                  ),
-                ],
-              ),
-            ],
-          ),
+        // Rooms List using the new compact card layout
+        ..._roomData.map((data) {
+          return _buildRoomMonitorCard(
+            context, 
+            data['room'] as String, 
+            '${(data['usage_kw'] as double).toStringAsFixed(1)} kW', 
+            data['load'] as double, 
+            data['color'] as Color, 
+            data['status'] as String
+          );
+        }).toList(),
+
+        const SizedBox(height: 32),
+        
+        // NEW: Aggregate Rooms Usage Pie Chart
+        Text(
+          'Energy Distribution Among Rooms',
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 250,
+          child: _DepartmentRoomsDistributionChart(roomData: _roomData),
         ),
         
-        const SizedBox(height: 24),
-        
-        _buildRoomMonitorCard(context, 'CS-404', '2.7 kW', 0.6, Colors.green.shade700, 'Normal'),
-        _buildRoomMonitorCard(context, 'CS-Lab 1', '8.2 kW', 0.9, Colors.red.shade600, 'High Usage'),
-        _buildRoomMonitorCard(context, 'CS-Lab 2', '6.5 kW', 0.7, Colors.orange.shade600, 'Moderate'),
-        _buildRoomMonitorCard(context, 'Server Room', '15.3 kW', 0.8, Colors.purple.shade700, 'Critical System'),
-        _buildRoomMonitorCard(context, 'CS-Faculty Room', '1.2 kW', 0.3, Colors.blue.shade700, 'Low Usage'),
-        _buildRoomMonitorCard(context, 'CS-Seminar Hall', '0.5 kW', 0.1, Colors.grey.shade500, 'Offline'),
       ],
     );
   }
 
-  Widget _buildScheduleButton(BuildContext context, String action, String time, IconData icon, Color color, bool isActive) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isActive ? color.withOpacity(0.1) : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: isActive ? color : Colors.grey.shade300),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: isActive ? color : Colors.grey.shade500, size: 20),
-          const SizedBox(height: 4),
-          Text(action, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isActive ? color : Colors.grey.shade600)),
-          Text(time, style: TextStyle(fontSize: 10, color: isActive ? color : Colors.grey.shade500)),
-          const SizedBox(height: 4),
-          Switch(
-            value: isActive,
-            onChanged: (value) {},
-            activeColor: color,
-          ),
-        ],
-      ),
-    );
-  }
+}
 
-  Widget _buildRoomMonitorCard(BuildContext context, String room, String usage, double load, Color statusColor, String status) {
-    final theme = Theme.of(context);
-    return Card(
-      elevation: 2,
-      shadowColor: Colors.transparent,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(room, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: statusColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: statusColor.withOpacity(0.3)),
-                  ),
-                  child: Text(status, style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Power: $usage', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-                Text('${(load * 100).toInt()}% Load', style: theme.textTheme.bodyLarge),
-              ],
-            ),
-            const SizedBox(height: 12),
-            LinearProgressIndicator(
-              value: load,
-              minHeight: 8,
-              backgroundColor: theme.colorScheme.surfaceContainerHighest,
-              valueColor: AlwaysStoppedAnimation<Color>(statusColor),
-            ),
-          ],
+class _DepartmentRoomsDistributionChart extends StatelessWidget {
+  final List<Map<String, dynamic>> roomData;
+
+  const _DepartmentRoomsDistributionChart({required this.roomData});
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. Calculate total usage
+    final totalUsage = roomData.fold<double>(0, (sum, room) => sum + (room['usage_kw'] as double));
+
+    // 2. Create PieChartSections
+    final List<PieChartSectionData> sections = [];
+    final List<Widget> legendItems = [];
+    
+    // MODIFIED RADIUS to make slices look larger and give labels more room
+    const double sliceRadius = 100; 
+    
+    roomData.asMap().forEach((index, room) {
+      final usage = room['usage_kw'] as double;
+      final name = room['room'] as String;
+      final color = room['color'] as Color;
+      final percentage = totalUsage > 0 ? (usage / totalUsage) * 100 : 0.0;
+      
+      if (usage > 0) {
+        sections.add(
+          PieChartSectionData(
+            value: usage,
+            color: color,
+            // Only show title if percentage is greater than or equal to 6%
+            title: percentage >= 6.0 ? '${percentage.toStringAsFixed(0)}%' : '',
+            showTitle: percentage >= 6.0,
+            radius: sliceRadius,
+            titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+          ),
+        );
+      }
+      
+      legendItems.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4.0),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 12, height: 12, color: color),
+              const SizedBox(width: 8),
+              Text(
+                '$name (${usage.toStringAsFixed(1)} kW)',
+                style: const TextStyle(fontSize: 14),
+              ),
+            ],
+          ),
         ),
-      ),
+      );
+    });
+
+    if (totalUsage == 0) {
+       sections.add(
+          PieChartSectionData(
+            value: 1.0,
+            color: Colors.grey.shade300,
+            title: '0%',
+            radius: sliceRadius,
+            titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
+          ),
+        );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Pie Chart
+        SizedBox(
+          width: 200, // Increased width to accommodate larger radius
+          child: PieChart(
+            PieChartData(
+              sections: sections,
+              sectionsSpace: 3,
+              centerSpaceRadius: 0,
+              borderData: FlBorderData(show: false),
+            ),
+          ),
+        ),
+        const SizedBox(width: 20),
+        // Legend
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                'Total Live Usage: ${totalUsage.toStringAsFixed(1)} kW',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 10),
+              // Use Expanded/Wrap if the legend is too long, but simple column works for this data size
+              ...legendItems,
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
+
 
 class _DepartmentAnalyticsSection extends StatelessWidget {
   final ColorScheme scheme;
@@ -454,43 +529,55 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         
-        _buildAnalyticsCard(context, 'Weekly Report', 'Generate detailed weekly consumption report', Icons.calendar_view_week_outlined),
-        _buildAnalyticsCard(context, 'Monthly Trends', 'Analyze monthly usage patterns and trends', Icons.trending_up_outlined),
-        _buildAnalyticsCard(context, 'Room Comparison', 'Compare energy usage across all rooms', Icons.compare_arrows_outlined),
-        _buildAnalyticsCard(context, 'Peak Hours Analysis', 'Identify peak consumption periods', Icons.schedule_outlined),
-        _buildAnalyticsCard(context, 'Cost Analysis', 'Calculate energy costs and savings', Icons.attach_money_outlined),
-        _buildAnalyticsCard(context, 'Export Data', 'Export comprehensive department data', Icons.download_outlined),
+        _buildAnalyticsCard(
+          context, 
+          'Daily Trends', 
+          'Analyze hourly usage patterns and trends.', 
+          Icons.timeline_outlined, 
+          () => Navigator.push(context, MaterialPageRoute(builder: (context) => const Analysis(title: 'Daily Consumption Trend', type: 'Daily', color: const Color(0xFF1B2A3B)))),
+          showArrow: true,
+        ),
+        _buildAnalyticsCard(
+          context, 
+          'Monthly Trends', 
+          'Analyze long-term monthly usage patterns.', 
+          Icons.bar_chart_outlined, 
+          () => Navigator.push(context, MaterialPageRoute(builder: (context) => const Analysis(title: 'Monthly Consumption Trend', type: 'Monthly',color: const Color(0xFF1B2A3B)))),
+          showArrow: true,
+        ),
+       _buildAnalyticsCard(
+          context, 
+          'Peak Hours Analysis', 
+          'Identify and optimize daily peak consumption periods.', 
+          Icons.schedule_outlined,
+          // MODIFIED: Links to the new Ranked Metrics Table
+          () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PeakHoursMetricsTable())),
+          showArrow: true,
+        ),
+        /*_buildAnalyticsCard(
+          context, 
+          'Anomaly Alerts', 
+          'View all critical and high-priority system alerts.', 
+          Icons.notifications_active_outlined, 
+          () => Navigator.push(context, MaterialPageRoute(builder: (context) => const Anomaly())),
+          showArrow: true,
+        ),*/
+        _buildAnalyticsCard(
+          context, 
+          'Usage Report', 
+          'Export comprehensive department data for auditing.', 
+          Icons.download_for_offline_outlined, 
+          () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Preparing detailed report for download...'))),
+          showArrow: false, // ARROW REMOVED
+        ),
         
         const SizedBox(height: 24),
-        
-        // Comparative Analytics
-        Text(
-          'Department Comparison',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 12),
-        
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
-          ),
-          child: Column(
-            children: [
-              _buildComparisonRow(context, 'CS Department', '18.4 kW', '87%', Colors.blue.shade600, true),
-              _buildComparisonRow(context, 'ECE Department', '22.1 kW', '92%', Colors.green.shade600, false),
-              _buildComparisonRow(context, 'Mechanical', '31.5 kW', '78%', Colors.red.shade600, false),
-              _buildComparisonRow(context, 'Civil Engineering', '15.7 kW', '85%', Colors.orange.shade600, false),
-            ],
-          ),
-        ),
       ],
     );
   }
 
-  Widget _buildAnalyticsCard(BuildContext context, String title, String description, IconData icon) {
+  // Modified helper function to accept VoidCallback for navigation
+  Widget _buildAnalyticsCard(BuildContext context, String title, String description, IconData icon, VoidCallback onTap, {bool showArrow = true}) {
     final theme = Theme.of(context);
     return Card(
       elevation: 2,
@@ -500,43 +587,9 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
         leading: Icon(icon, color: theme.colorScheme.primary, size: 32),
         title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         subtitle: Text(description),
-        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-        onTap: () {},
-      ),
-    );
-  }
-
-  Widget _buildComparisonRow(BuildContext context, String dept, String usage, String efficiency, Color color, bool isCurrent) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: isCurrent ? color.withOpacity(0.1) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        border: isCurrent ? Border.all(color: color.withOpacity(0.3)) : null,
-      ),
-      child: Row(
-        children: [
-          if (isCurrent) Icon(Icons.star, color: color, size: 20),
-          if (isCurrent) const SizedBox(width: 8),
-          Expanded(
-            child: Text(dept, style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-              color: isCurrent ? color : null,
-            )),
-          ),
-          Text(usage, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-          const SizedBox(width: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(efficiency, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
-          ),
-        ],
+        // Conditional trailing widget
+        trailing: showArrow ? const Icon(Icons.arrow_forward_ios_rounded, size: 16) : null,
+        onTap: onTap, // Uses the navigation callback
       ),
     );
   }
@@ -588,6 +641,106 @@ class _DepartmentAlertsSection extends StatelessWidget {
     );
   }
 }
+
+// --- NEW WIDGET: Ranked Metrics Table ---
+
+class PeakHoursMetricsTable extends StatelessWidget {
+  const PeakHoursMetricsTable({super.key});
+
+  final List<Map<String, String>> peakData = const [
+    {'rank': '1st', 'time': '1:00 PM - 2:00 PM', 'usage': '22.8 kW', 'load': 'High'},
+    {'rank': '2nd', 'time': '10:00 AM - 11:00 AM', 'usage': '18.5 kW', 'load': 'High'},
+    {'rank': '3rd', 'time': '6:00 PM - 7:00 PM', 'usage': '14.1 kW', 'load': 'Moderate'},
+    {'rank': '4th', 'time': '12:00 PM - 1:00 PM', 'usage': '12.5 kW', 'load': 'Moderate'},
+  ];
+
+  Color _getRankColor(int index) {
+    if (index == 0) return Colors.red.shade600;
+    if (index == 1) return Colors.orange.shade600;
+    if (index == 2) return Colors.yellow.shade600;
+    return Colors.grey.shade600;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Peak Hours Analysis'),
+        backgroundColor: const Color(0xFF1B2A3B),
+        foregroundColor: Colors.white,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            'Top Daily Energy Usage Periods',
+            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'These time slots represent the highest average power demand in the department. Optimization focus areas are highlighted.',
+            style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 24),
+
+          // Ranked List Cards
+          ...peakData.asMap().entries.map((entry) {
+            final index = entry.key;
+            final data = entry.value;
+            final color = _getRankColor(index);
+            
+            return Card(
+              elevation: 4,
+              shadowColor: color.withOpacity(0.1),
+              margin: const EdgeInsets.only(bottom: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: color,
+                  child: Text(data['rank']!, style: theme.textTheme.titleMedium?.copyWith(color: Colors.white)),
+                ),
+                title: Text(
+                  data['time']!, 
+                  style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)
+                ),
+                subtitle: Text(
+                  'Average Usage: ${data['usage']!}',
+                  style: theme.textTheme.bodyLarge,
+                ),
+                trailing: Chip(
+                  label: Text(data['load']!),
+                  backgroundColor: color.withOpacity(0.2),
+                  labelStyle: TextStyle(color: color, fontWeight: FontWeight.bold),
+                ),
+                onTap: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Focusing optimization for ${data['time']}')),
+                  );
+                },
+              ),
+            );
+          }).toList(),
+          
+          const SizedBox(height: 40),
+          
+          Text(
+            'Recommendation',
+            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'The primary peak between 1:00 PM and 2:00 PM suggests a need to verify AC scheduling and lighting control during the lunch period.',
+            style: theme.textTheme.bodyLarge,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// --- Helper Classes (Replaced/Kept for integrity) ---
 
 class _DepartmentStatCard extends StatelessWidget {
   final String label;

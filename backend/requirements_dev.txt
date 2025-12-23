@@ -1,0 +1,7 @@
+fastapi>=0.95.0
+uvicorn[standard]>=0.22.0
+sqlalchemy>=2.0.0,<3.0.0
+passlib[bcrypt]>=1.7.4
+PyJWT>=2.0.0
+
+# Dev-only lightweight requirements to run auth endpoints without heavy ML dependencies
