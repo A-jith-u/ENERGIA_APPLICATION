@@ -18,7 +18,7 @@ app = FastAPI(title="Auth Service")
 
 # Default to a local PostgreSQL instance (mapped from Docker or native install).
 # Override with DB_URL when running inside Docker (e.g., host `db`).
-DB_URL = os.environ.get("DB_URL", "postgresql://postgres:ajith%40@localhost:5432/energia")
+DB_URL = os.environ.get("DB_URL", "postgresql://postgres:aswathy2004@localhost:5432/energia")
 JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-prod")
 JWT_ALG = "HS256"
 # Use PBKDF2-SHA256 for hashing to avoid bcrypt binary issues in some environments
@@ -40,7 +40,7 @@ class LoginRequest(BaseModel):
     password: str
 
 
-@app.post("/register")
+@app.post("/auth/register")
 def register(req: RegisterRequest):
     # For student registration, verify KTU ID, Department, and Year against authorized list
     if req.role == "student":
@@ -88,7 +88,7 @@ def register(req: RegisterRequest):
     return {"status": "ok"}
 
 
-@app.post("/login")
+@app.post("/auth/login")
 def login(req: LoginRequest):
     with engine.begin() as conn:
         # Check in users table first (for coordinators and admins)
