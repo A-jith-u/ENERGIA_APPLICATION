@@ -96,7 +96,7 @@ class MyApp extends StatelessWidget {
               fontFamily: 'Roboto',
             ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         elevation: 6,
         shadowColor: Colors.black12,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
@@ -118,7 +118,7 @@ class MyApp extends StatelessWidget {
         bodyColor: Colors.grey.shade200,
         displayColor: Colors.grey.shade100,
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: const Color(0xFF162230),
         elevation: 4,
         shadowColor: Colors.black54,

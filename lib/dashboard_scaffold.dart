@@ -7,7 +7,7 @@ class DashboardScaffold extends StatefulWidget {
   final Function(int) onBottomNavTapped;
   final int currentIndex;
   final Widget? floatingActionButton;
-  final List<Widget>? actions; // <<< ADDED actions parameter >>>
+  final List<Widget>? actions;
 
   const DashboardScaffold({
     super.key,
@@ -17,7 +17,7 @@ class DashboardScaffold extends StatefulWidget {
     required this.onBottomNavTapped,
     required this.currentIndex,
     this.floatingActionButton,
-    this.actions, // <<< ADDED actions to constructor >>>
+    this.actions,
   });
 
   @override
@@ -25,17 +25,13 @@ class DashboardScaffold extends StatefulWidget {
 }
 
 class _DashboardScaffoldState extends State<DashboardScaffold> {
-  // Removed the hardcoded _logout function
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
-        actions: widget.actions, // <<< NOW USES PASSED ACTIONS >>>
-        // Setting automaticallyImplyLeading to false prevents the back button
-        // from showing up automatically, addressing your request.
+        actions: widget.actions,
         automaticallyImplyLeading: false, 
       ),
       body: widget.body,
@@ -44,7 +40,7 @@ class _DashboardScaffoldState extends State<DashboardScaffold> {
         items: widget.bottomNavItems,
         currentIndex: widget.currentIndex,
         onTap: widget.onBottomNavTapped,
-        type: BottomNavigationBarType.fixed,
+        type: BottomNavigationBarType.fixed, // Essential for 4+ items
         selectedItemColor: theme.colorScheme.primary,
         unselectedItemColor: Colors.grey.shade600,
         selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),

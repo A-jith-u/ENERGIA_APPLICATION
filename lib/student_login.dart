@@ -30,7 +30,7 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
     _performLogin();
   }
 
-  Future<void> _performLogin() async {
+  /*Future<void> _performLogin() async {
     final name = _nameController.text.trim();
     final password = _passwordController.text;
     showDialog(
@@ -49,16 +49,52 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
       setState(() {
         _errorMessage = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+     
+    }
+  }*/// Inside _StudentLoginPageState in student_login.dart
+
+Future<void> _performLogin() async {
+  // Use 'trim' to ensure no accidental spaces in the email
+  final email = _nameController.text.trim(); 
+  final password = _passwordController.text;
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const Center(child: CircularProgressIndicator()),
+  );
+
+  try {
+  // Use .trim() to remove any leading or trailing spaces from the KTU ID
+  final ktuId = _nameController.text.trim(); 
+  final password = _passwordController.text;
+
+  // This calls the 'login' function from your services/api.dart
+  final token = await login(ktuId, password); 
+  
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('auth_token', token);
+  
+  if (!mounted) return;
+  Navigator.of(context).pop();
+  Navigator.pushReplacementNamed(context, '/dashboard');
+} catch (e) {
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    setState(() {
+      _errorMessage = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_errorMessage!),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 4),
         ),
       );
-    }
+    // ... rest of error snackbar
   }
-
+}
+ 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -141,20 +177,21 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
                                   ],
                                 ),
                               ),
-                            Form(
+                            /*Form(
                               key: _formKey,
                               child: Column(
                                 children: [
-                                  _buildField(
-                                    controller: _nameController,
-                                    label: 'Student Name / ID',
-                                    icon: Icons.person_outline,
-                                    validator: (v) {
-                                      if (v == null || v.trim().isEmpty) return 'Enter your student name or ID';
-                                      if (v.trim().length < 3) return 'Too short';
-                                      return null;
-                                    },
-                                  ),
+                                 _buildField(
+                                      controller: _nameController,
+                                      label: 'KTU ID', // Changed from Email/Name
+                                      icon: Icons.badge_outlined,
+                                      validator: (v) {
+                                         if (v == null || v.trim().isEmpty) return 'Enter your KTU ID';
+                                             // Match your KTU ID pattern (e.g., IDK22CS017)
+                                            if (v.trim().length < 5) return 'Invalid ID format'; 
+                                            return null;
+                                             },
+                                      ),
                                   const SizedBox(height: 18),
                                   _buildDropdownField(
                                     value: _selectedDepartment,
@@ -187,7 +224,35 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
                                   ),
                                 ],
                               ),
-                            ),
+                            ),*/
+                                Form(
+                              key: _formKey,
+                              child: Column(
+                              children: [
+                                 _buildField(
+                                    controller: _nameController,
+                                    label: 'KTU ID', 
+                                    icon: Icons.badge_outlined,
+                                    validator: (v) {
+                                     if (v == null || v.trim().isEmpty) return 'Enter your KTU ID';
+                                       return null;
+                                      },
+                                    ),
+                         const SizedBox(height: 18),
+      // REMOVE the Department Dropdown entirely!
+                                      _buildField(
+                                        controller: _passwordController,
+                                        label: 'Password (OTP)',
+                                        icon: Icons.lock_outline,
+                                        obscure: true,
+                                        validator: (v) {
+                                         if (v == null || v.isEmpty) return 'Enter password';
+                                         return null;
+                                       },
+                          ),
+                        ],
+                        ),
+           ),
                             const SizedBox(height: 30),
                             Row(
                               children: [

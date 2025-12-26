@@ -21,7 +21,7 @@ from sqlalchemy import (
 
 # Default to a local PostgreSQL instance (mapped from Docker or native install).
 # Override with DB_URL when running inside Docker (e.g., host `db`).
-DB_URL = os.environ.get("DB_URL", "postgresql://postgres:ajith%40@localhost:5432/energia")
+DB_URL = os.environ.get("DB_URL", "postgresql://postgres:aswathy2004@localhost:5432/energia")
 engine = create_engine(DB_URL)
 
 # Password hashing context
