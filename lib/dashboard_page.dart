@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-// NOTE: Assume these files are created in your project root
 import 'analysis_graph_page.dart'; 
 import 'anomaly_viewer_page.dart';
 import 'role_selection_page.dart';
+import 'dashboard_scaffold.dart'; // Ensure this is imported
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
+import 'dart:convert'; // Fixes 'jsonEncode'
+import 'package:http/http.dart' as http; // Fixes 'http'
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -14,55 +18,61 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
 
+  // Dynamic titles based on the selected tab
+  final List<String> _titles = [
+    'CR Dashboard - CS-201',
+    'Consumption Analysis',
+    'Recent Alerts',
+    'My Profile',
+  ];
+
   void _performLogout() {
-    // Navigate to RoleSelectionPage and clear stack.
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const RoleSelectionPage()),
       (Route<dynamic> route) => false,
     );
   }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('CR Dashboard - CS-201'),
-        automaticallyImplyLeading: false,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
-            onPressed: _performLogout,
-          ),
-        ],
-      ),
+    return DashboardScaffold(
+      title: _titles[_index],
+      currentIndex: _index,
+      onBottomNavTapped: (index) => setState(() => _index = index),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Logout',
+          onPressed: _performLogout,
+        ),
+      ],
+      bottomNavItems: const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.dashboard_outlined),
+          activeIcon: Icon(Icons.dashboard),
+          label: 'Home', 
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.analytics_outlined),
+          activeIcon: Icon(Icons.analytics),
+          label: 'Analysis',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.notifications_outlined),
+          activeIcon: Icon(Icons.notifications),
+          label: 'Alerts',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.person_outline),
+          activeIcon: Icon(Icons.person),
+          label: 'Profile',
+        ),
+      ],
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 300),
         child: _buildPage(_index, colorScheme),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _index,
-        selectedItemColor: colorScheme.primary,
-        unselectedItemColor: Colors.grey,
-        onTap: (index) => setState(() => _index = index),
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard_outlined),
-            activeIcon: Icon(Icons.dashboard),
-            label: 'Home', 
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.analytics_outlined),
-            activeIcon: Icon(Icons.analytics),
-            label: 'Analysis',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.notifications_outlined),
-            activeIcon: Icon(Icons.notifications),
-            label: 'Alerts',
-          ),
-        ],
       ),
     );
   }
@@ -70,16 +80,522 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
-        return _WelcomeSection(scheme: scheme); // Home Page with Stats
+        return _WelcomeSection(scheme: scheme);
       case 1:
-        return _ReportsSection(scheme: scheme); // Analysis/Graphs
+        return _ReportsSection(scheme: scheme);
       case 2:
-        return _AlertsSection(scheme: scheme); // Alerts
+        return _AlertsSection(scheme: scheme);
+      case 3:
+        return _ProfileSection(scheme: scheme);
       default:
         return const SizedBox.shrink();
     }
   }
 }
+
+// --- NEW PROFILE SECTION ---
+
+/*class _ProfileSection extends StatelessWidget {
+  final ColorScheme scheme;
+  const _ProfileSection({required this.scheme});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        // Profile Image Header
+        Center(
+          child: Stack(
+            children: [
+              CircleAvatar(
+                radius: 55,
+                backgroundColor: scheme.primaryContainer,
+                child: Icon(Icons.person, size: 55, color: scheme.primary),
+              ),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: CircleAvatar(
+                  backgroundColor: scheme.primary,
+                  radius: 18,
+                  child: IconButton(
+                    icon: const Icon(Icons.camera_alt, size: 16, color: Colors.white),
+                    onPressed: () {}, // Trigger image picker logic
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+
+        // Personal Details
+        Text('Personal Details', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        _ProfileInfoTile(icon: Icons.badge_outlined, label: 'Name', value: 'John Doe'),
+        _ProfileInfoTile(icon: Icons.email_outlined, label: 'Email', value: 'john.doe@university.edu'),
+        _ProfileInfoTile(icon: Icons.school_outlined, label: 'Role', value: 'Class Representative'),
+        
+        const SizedBox(height: 32),
+        const Divider(),
+        const SizedBox(height: 12),
+
+        // Settings / Security
+        Text('Security', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: scheme.surfaceContainerHighest.withOpacity(0.4),
+          child: ListTile(
+            leading: Icon(Icons.lock_outline, color: scheme.primary),
+            title: const Text('Change Password'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              // Navigate to password change screen
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}*/
+
+class _ProfileSection extends StatefulWidget {
+  final ColorScheme scheme;
+  const _ProfileSection({required this.scheme});
+
+  @override
+  State<_ProfileSection> createState() => _ProfileSectionState();
+}
+
+/*class _ProfileSectionState extends State<_ProfileSection> {
+  bool _isEditing = false;
+  late TextEditingController _nameController;
+  late TextEditingController _emailController;
+  late TextEditingController _phoneController; // Optional, can be empty or added to DB
+  late TextEditingController _ktuIdController;
+  late TextEditingController _yearController;
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize empty; data will be loaded in _loadUserData
+    _nameController = TextEditingController();
+    _emailController = TextEditingController();
+    _phoneController = TextEditingController(text: '+91 9876543210');
+    _ktuIdController = TextEditingController();
+    _yearController = TextEditingController();
+    
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    
+    if (token != null && !JwtDecoder.isExpired(token)) {
+      Map<String, dynamic> data = JwtDecoder.decode(token);
+      
+      setState(() {
+        _nameController.text = data['username'] ?? '';
+        _ktuIdController.text = data['ktu_id'] ?? '';
+        _yearController.text = data['year'] != null ? "Year ${data['year']}" : '';
+        // Constructing a dummy email from username
+        _emailController.text = "${data['username']?.toString().toLowerCase() ?? 'user'}@university.edu";
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _ktuIdController.dispose();
+    _yearController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        Center(
+          child: CircleAvatar(
+            radius: 55,
+            backgroundColor: widget.scheme.primaryContainer,
+            child: Icon(Icons.person, size: 55, color: widget.scheme.primary),
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Personal Details', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            TextButton.icon(
+              onPressed: () => setState(() => _isEditing = !_isEditing),
+              icon: Icon(_isEditing ? Icons.check : Icons.edit, size: 18),
+              label: Text(_isEditing ? 'Save' : 'Edit'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        _buildProfileField(Icons.badge_outlined, 'Full Name', _nameController),
+        _buildProfileField(Icons.fingerprint, 'KTU ID', _ktuIdController),
+        _buildProfileField(Icons.calendar_today, 'Year of Study', _yearController),
+        
+        const SizedBox(height: 20),
+        Text('Contact Details', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        _buildProfileField(Icons.email_outlined, 'Email Address', _emailController),
+        _buildProfileField(Icons.phone_outlined, 'Phone Number', _phoneController),
+        
+        const SizedBox(height: 32),
+        const Divider(),
+        const SizedBox(height: 12),
+
+        Text('Security', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: widget.scheme.surfaceContainerHighest.withOpacity(0.4),
+          child: ListTile(
+            leading: Icon(Icons.lock_outline, color: widget.scheme.primary),
+            title: const Text('Change Password'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () { /* Future: Navigate to ChangePasswordPage */ },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProfileField(IconData icon, String label, TextEditingController controller) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10.0),
+      child: Row(
+        crossAxisAlignment: _isEditing ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: Colors.grey.shade600),
+          const SizedBox(width: 16),
+          Expanded(
+            child: _isEditing 
+              ? TextFormField(
+                  controller: controller,
+                  decoration: InputDecoration(
+                    labelText: label,
+                    border: const UnderlineInputBorder(),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    const SizedBox(height: 2),
+                    Text(controller.text, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}*/
+class _ProfileSectionState extends State<_ProfileSection> {
+  bool _isEditing = false;
+  late TextEditingController _nameController;
+  late TextEditingController _emailController;
+  late TextEditingController _ktuIdController;
+  late TextEditingController _yearController;
+  late TextEditingController _deptController;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController();
+    _emailController = TextEditingController();
+    _ktuIdController = TextEditingController();
+    _yearController = TextEditingController();
+    _deptController = TextEditingController();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+  final prefs = await SharedPreferences.getInstance();
+  final token = prefs.getString('auth_token');
+  
+  if (token != null && !JwtDecoder.isExpired(token)) {
+    Map<String, dynamic> data = JwtDecoder.decode(token);
+    setState(() {
+      _nameController.text = data['name'] ?? 'Not Set'; // Real name from JWT
+      _emailController.text = data['username'] ?? '';   // Actual email address
+      _ktuIdController.text = data['ktu_id'] ?? '';
+      _yearController.text = data['year']?.toString() ?? '';
+      _deptController.text = data['department'] ?? '';
+    });
+  }
+}
+
+// Ensure these imports are at the top of the file!
+// import 'dart:convert';
+// import 'package:http/http.dart' as http;
+
+Future<void> _saveProfile() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    
+    // Call the update-profile API
+    final response = await http.post(
+      Uri.parse('http://localhost:8000/auth/update-profile'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'ktu_id': _ktuIdController.text,
+        'name': _nameController.text,
+        'department': _deptController.text,
+        'year': _yearController.text,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Profile updated in database!")),
+      );
+      setState(() => _isEditing = false);
+    } else {
+      throw Exception("Update failed");
+    }
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+    );
+  }
+}
+
+Future<void> _updatePassword(String currentP, String newP) async {
+  try {
+    final response = await http.post(
+      Uri.parse('http://localhost:8000/auth/change-password'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': _ktuIdController.text, // Backend identifies by KTU ID
+        'current_password': currentP,
+        'new_password': newP,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Password updated successfully!")),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Incorrect current password"), backgroundColor: Colors.red),
+      );
+    }
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Server error"), backgroundColor: Colors.red),
+    );
+  }
+}
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListView(
+      padding: const EdgeInsets.all(24),
+      children: [
+        Center(
+          child: CircleAvatar(radius: 50, backgroundColor: widget.scheme.primaryContainer, 
+               child: Icon(Icons.person, size: 50, color: widget.scheme.primary)),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Personal Details', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            TextButton.icon(
+              onPressed: () {
+                if (_isEditing) {
+                  _saveProfile();
+                } else {
+                  setState(() => _isEditing = true);
+                }
+              },
+              icon: Icon(_isEditing ? Icons.save : Icons.edit, size: 18),
+              label: Text(_isEditing ? 'Save' : 'Edit'),
+            ),
+          ],
+        ),
+        _buildProfileField(Icons.person, 'Full Name', _nameController),
+        _buildProfileField(Icons.email, 'Email', _emailController, enabled: false), // Email usually fixed
+        _buildProfileField(Icons.badge, 'KTU ID', _ktuIdController, enabled: false),
+        _buildProfileField(Icons.business, 'Department', _deptController),
+        _buildProfileField(Icons.calendar_month, 'Year', _yearController),
+        
+        const SizedBox(height: 20),
+        const Divider(),
+        ListTile(
+          leading: Icon(Icons.lock_reset, color: widget.scheme.primary),
+          title: const Text('Change Password'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _showPasswordDialog(),
+        ),
+      ],
+    );
+  }
+
+  // Inside _ProfileSectionState
+
+final _currentPasswordController = TextEditingController();
+final _newPasswordController = TextEditingController();
+final _confirmPasswordController = TextEditingController();
+
+Future<void> _handleChangePassword() async {
+  if (_newPasswordController.text != _confirmPasswordController.text) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("New passwords do not match")));
+    return;
+  }
+
+  try {
+    // Logic to call /auth/change-password
+    // Pass _ktuIdController.text as 'username' to the backend
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Password updated!")));
+    Navigator.pop(context); // Close dialog
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error: Incorrect current password")));
+  }
+}
+
+void _showPasswordDialog() {
+  final currentPassController = TextEditingController();
+  final newPassController = TextEditingController();
+  final confirmPassController = TextEditingController();
+
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Update Security'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: currentPassController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Current Password'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: newPassController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'New Password'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: confirmPassController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Confirm New Password'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        ElevatedButton(
+          onPressed: () async {
+            // Validate inputs locally first
+            if (newPassController.text != confirmPassController.text) {
+               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("New passwords do not match")));
+               return;
+            }
+            
+            // Perform API Call to /auth/change-password
+            final response = await http.post(
+              Uri.parse('http://localhost:8000/auth/change-password'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'username': _ktuIdController.text, // Using KTU ID as identifier
+                'current_password': currentPassController.text,
+                'new_password': newPassController.text,
+              }),
+            );
+
+            if (response.statusCode == 200) {
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Password changed!")));
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Incorrect current password"), backgroundColor: Colors.red),
+              );
+            }
+          }, 
+          child: const Text('Update')
+        ),
+      ],
+    ),
+  );
+}
+
+  Widget _buildProfileField(IconData icon, String label, TextEditingController controller, {bool enabled = true}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: TextFormField(
+        controller: controller,
+        enabled: _isEditing && enabled,
+        decoration: InputDecoration(
+          prefixIcon: Icon(icon, size: 20),
+          labelText: label,
+          border: _isEditing ? const OutlineInputBorder() : InputBorder.none,
+        ),
+      ),
+    );
+  }
+  
+}
+class _ProfileInfoTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _ProfileInfoTile({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: Colors.grey),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ... Keep existing _WelcomeSection, _ReportsSection, _AlertsSection, etc. ...
 
 // --- WELCOME SECTION ---
 

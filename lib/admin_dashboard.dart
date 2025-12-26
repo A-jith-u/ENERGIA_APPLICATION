@@ -10,7 +10,8 @@ import 'Electronics.dart';
 import 'mechanical.dart';
 import 'Itt.dart';
 import 'adminblock.dart';
-
+import 'dart:convert'; // Fixes 'jsonEncode' error
+import 'package:http/http.dart' as http; // Fixes 'http' error
 
 // --- HELPER WIDGETS ---
 
@@ -1381,7 +1382,7 @@ class _AddUserPageState extends State<AddUserPage> {
     super.dispose();
   }
 
-  void _submit() {
+  /*void _submit() {
     if (!_formKey.currentState!.validate()) return;
     final user = {
       'name': _nameCtl.text.trim(),
@@ -1402,8 +1403,52 @@ class _AddUserPageState extends State<AddUserPage> {
       SnackBar(content: Text('Created ${user['role']}: ${user['name']}')),
     );
     Navigator.of(context).pop(user);
-  }
+  }*/
+// Inside _AddUserPageState in admin_dashboard.dart
+void _submit() async {
+  if (!_formKey.currentState!.validate()) return;
+  
+  // Show loading dialog
+  showDialog(context: context, builder: (_) => const Center(child: CircularProgressIndicator()));
 
+  try {
+    // Call your new invite API
+   /*final response = await http.post(
+  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  headers: {'Content-Type': 'application/json'},
+  body: jsonEncode({
+    'username': _emailCtl.text.trim(), // Backend expects 'username'
+    'role': _role.toLowerCase(),
+    'department': _department,
+    'ktu_id': _admissionCtl.text.trim(),
+    'year': _year,
+    // No password sent here; backend generates the OTP
+  }),
+);*/
+// Inside _submit() in admin_dashboard.dart
+final response = await http.post(
+  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  headers: {'Content-Type': 'application/json'},
+  body: jsonEncode({
+    'username': _emailCtl.text.trim(),
+    'name': _nameCtl.text.trim(), // Include the Name
+    'role': _role.toLowerCase(),
+    'department': _department,
+    'ktu_id': _admissionCtl.text.trim(),
+    'year': _year,
+  }),
+);
+
+    Navigator.pop(context); // Close loading
+    if (response.statusCode == 200) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invitation Email Sent!')));
+      Navigator.pop(context);
+    }
+  } catch (e) {
+    Navigator.pop(context);
+    // Handle error...
+  }
+}
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1538,8 +1583,8 @@ class _AddUserPageState extends State<AddUserPage> {
                     TextFormField(
                       controller: _admissionCtl,
                       decoration: const InputDecoration(
-                        labelText: 'Admission No',
-                        hintText: '9316',
+                        labelText: 'Ktu Id',
+                        hintText: 'IDK22CS017',
                       ),
                       validator:
                           (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
