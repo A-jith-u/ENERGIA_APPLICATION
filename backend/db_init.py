@@ -16,6 +16,7 @@ from sqlalchemy import (
     Float,
     func,
     select,
+    inspect,
 )
 
 # Default to a local PostgreSQL instance (mapped from Docker or native install).
@@ -67,12 +68,20 @@ class_representatives_table = Table(
     Column("username", String, unique=True, nullable=False),
     Column("password_hash", String, nullable=False),
     Column("ktu_id", String, unique=True, nullable=False),
+    Column("email", String, unique=True, nullable=False),
     Column("department", String, nullable=False),
     Column("year", String, nullable=False),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
 metadata.create_all(engine)
+
+# Ensure email column exists for existing deployments (idempotent)
+insp = inspect(engine)
+columns = [col["name"] for col in insp.get_columns("class_representatives")]
+if "email" not in columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN email VARCHAR"))
 
 # Add convenience test users if they don't exist (for local testing)
 users_to_ensure = [

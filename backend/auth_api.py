@@ -34,6 +34,7 @@ class RegisterRequest(BaseModel):
     ktu_id: str = None  # Required for student registration
     department: str = None  # Required for student registration
     year: str = None  # Required for student registration
+    email: str | None = None  # Required for student registration
 
 class LoginRequest(BaseModel):
     username: str
@@ -44,8 +45,8 @@ class LoginRequest(BaseModel):
 def register(req: RegisterRequest):
     # For student registration, verify KTU ID, Department, and Year against authorized list
     if req.role == "student":
-        if not req.ktu_id or not req.department or not req.year:
-            raise HTTPException(status_code=400, detail="KTU ID, Department, and Year are required for student registration")
+        if not req.ktu_id or not req.department or not req.year or not req.email:
+            raise HTTPException(status_code=400, detail="KTU ID, Department, Year, and Email are required for student registration")
         
         with engine.begin() as conn:
             # Check if student is authorized with matching KTU ID, department, and year
@@ -62,8 +63,8 @@ def register(req: RegisterRequest):
             
             # Check if class representative already exists
             existing = conn.execute(
-                text("SELECT id FROM class_representatives WHERE username = :u OR ktu_id = :k"),
-                {"u": req.username, "k": req.ktu_id}
+                text("SELECT id FROM class_representatives WHERE username = :u OR ktu_id = :k OR email = :e"),
+                {"u": req.username, "k": req.ktu_id, "e": req.email}
             ).fetchone()
             if existing:
                 raise HTTPException(status_code=400, detail="User or KTU ID already registered")
@@ -71,8 +72,8 @@ def register(req: RegisterRequest):
             # Insert into class_representatives table
             pw_hash = PWD_CTX.hash(req.password)
             conn.execute(
-                text("INSERT INTO class_representatives (username, password_hash, ktu_id, department, year, created_at) VALUES (:u, :p, :k, :d, :y, now())"),
-                {"u": req.username, "p": pw_hash, "k": req.ktu_id, "d": req.department, "y": req.year},
+                text("INSERT INTO class_representatives (username, password_hash, ktu_id, email, department, year, created_at) VALUES (:u, :p, :k, :e, :d, :y, now())"),
+                {"u": req.username, "p": pw_hash, "k": req.ktu_id, "e": req.email, "d": req.department, "y": req.year},
             )
     else:
         # Non-student registration (admin/coordinator) - no KTU verification

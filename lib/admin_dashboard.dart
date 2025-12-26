@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
 import 'package:energia/services/pdf_export.dart';
+import 'package:energia/services/csv_export.dart';
 import 'role_selection_page.dart'; // For Logout navigation
 // Departmental page imports
 import 'computer_science_classrooms_page.dart'; 
@@ -79,22 +80,113 @@ class _UserStatsCard extends StatelessWidget {
 }
 
 class _CampusEnergyPieChart extends StatelessWidget {
-  // FIX: Added const constructor to fix the compilation error
   const _CampusEnergyPieChart({super.key}); 
   
   @override
   Widget build(BuildContext context) {
     return PieChart(
       PieChartData(
-        sectionsSpace: 2,
-        centerSpaceRadius: 40,
+        sectionsSpace: 4,
+        centerSpaceRadius: 50,
+        startDegreeOffset: -90,
         sections: [
-          PieChartSectionData(value: 30, color: Colors.blue.shade600, title: 'CS\n30%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 25, color: Colors.green.shade600, title: 'ECE\n25%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 20, color: Colors.orange.shade600, title: 'Mech\n20%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 15, color: Colors.purple.shade600, title: 'Civil\n15%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 10, color: Colors.cyan.shade600, title: 'Admin\n10%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+          PieChartSectionData(
+            value: 30,
+            color: Colors.blue.shade600,
+            title: '30%',
+            radius: 80,
+            titleStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            titlePositionPercentageOffset: 0.55,
+            badgeWidget: _buildBadge('CS', Colors.blue.shade600),
+            badgePositionPercentageOffset: 1.3,
+          ),
+          PieChartSectionData(
+            value: 25,
+            color: Colors.green.shade600,
+            title: '25%',
+            radius: 75,
+            titleStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            titlePositionPercentageOffset: 0.55,
+            badgeWidget: _buildBadge('ECE', Colors.green.shade600),
+            badgePositionPercentageOffset: 1.3,
+          ),
+          PieChartSectionData(
+            value: 20,
+            color: Colors.orange.shade600,
+            title: '20%',
+            radius: 70,
+            titleStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            titlePositionPercentageOffset: 0.55,
+            badgeWidget: _buildBadge('Mech', Colors.orange.shade600),
+            badgePositionPercentageOffset: 1.3,
+          ),
+          PieChartSectionData(
+            value: 15,
+            color: Colors.purple.shade600,
+            title: '15%',
+            radius: 65,
+            titleStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            titlePositionPercentageOffset: 0.55,
+            badgeWidget: _buildBadge('IT', Colors.purple.shade600),
+            badgePositionPercentageOffset: 1.3,
+          ),
+          PieChartSectionData(
+            value: 10,
+            color: Colors.cyan.shade600,
+            title: '10%',
+            radius: 60,
+            titleStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            titlePositionPercentageOffset: 0.55,
+            badgeWidget: _buildBadge('Admin', Colors.cyan.shade600),
+            badgePositionPercentageOffset: 1.3,
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildBadge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: color,
+        ),
       ),
     );
   }
@@ -243,8 +335,7 @@ class _CampusOverviewSection extends StatelessWidget {
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 16),
-        // FIX APPLIED HERE: _CampusEnergyPieChart() is now const
-        const SizedBox(height: 200, child: _CampusEnergyPieChart()),
+        const SizedBox(height: 300, child: _CampusEnergyPieChart()),
         
         const SizedBox(height: 32),
         
@@ -532,15 +623,7 @@ class _UsersManagementSection extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         
-        // Tappable User Type Cards with navigation
-        _buildUserTypeCard(
-          context,
-          'Administrators', 
-          '8 Users', 
-          Icons.admin_panel_settings_outlined, 
-          Colors.red.shade600,
-          // Navigator for Administrators (assuming no separate page, or generic list)
-        ),
+        // Tappable User Type Cards with navigation (hide Administrators & Students as requested)
         _buildUserTypeCard(
           context,
           'Coordinators', 
@@ -561,14 +644,7 @@ class _UsersManagementSection extends StatelessWidget {
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClassRepresentativesPage()));
           },
         ),
-        _buildUserTypeCard(
-          context, 
-          'Students', 
-          '1,059 Users', 
-          Icons.person_outline, 
-          Colors.green.shade600,
-          // Navigator for Students (assuming no separate page, or generic list)
-        ),
+        // (Students card removed)
         
         const SizedBox(height: 24),
         
@@ -588,7 +664,13 @@ class _UsersManagementSection extends StatelessWidget {
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddUserPage()));
           },
         ),
-        _buildActionCard(context, 'Bulk Import', 'Import users from CSV file', Icons.upload_file_outlined),
+        _buildActionCard(
+          context, 
+          'Bulk Import', 
+          'Export all users to CSV file', 
+          Icons.download_outlined,
+          onTap: () => _exportAllUsersCSV(context),
+        ),
         _buildActionCard(context, 'User Permissions', 'Manage access controls', Icons.security_outlined),
         _buildActionCard(context, 'Activity Logs', 'View user activity history', Icons.history_outlined),
         
@@ -642,6 +724,29 @@ class _UsersManagementSection extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _exportAllUsersCSV(BuildContext context) async {
+    // Get all coordinators data
+    final coordinators = _CoordinatorsPageState._allCoordinators;
+    
+    // Get all class representatives data
+    final classReps = _ClassRepresentativesPageState._generateReps();
+    
+    // Export to CSV
+    final filePath = await exportUsersCSV(
+      coordinators: coordinators,
+      classReps: classReps,
+    );
+    
+    if (context.mounted) {
+      final msg = filePath != null
+          ? 'CSV exported to: $filePath'
+          : 'CSV export initiated';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    }
   }
 
   Widget _buildUserTypeCard(BuildContext context, String type, String count, IconData icon, Color color, {VoidCallback? onTap}) {
@@ -1408,7 +1513,10 @@ class _AddUserPageState extends State<AddUserPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Add New User')),
+      appBar: AppBar(
+        title: const Text('Add New User'),
+        leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Card(

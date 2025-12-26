@@ -1,5 +1,5 @@
 import 'dart:typed_data';
-import 'dart:io' show File, Platform;
+import 'dart:io' show File, Platform, Directory;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -16,12 +16,48 @@ Future<void> exportTablePdf(
   List<List<String>> rows, {
   String? subtitle,
 }) async {
+  Future<Directory?> _resolveDownloadsDir() async {
+    if (Platform.isAndroid) {
+      final dirs = await getExternalStorageDirectories(type: StorageDirectory.downloads);
+      if (dirs != null && dirs.isNotEmpty) return dirs.first;
+    }
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      return getDownloadsDirectory();
+    }
+    return null;
+  }
+
   final doc = pw.Document();
+
+  String _fmtStamp(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$y-$m-$d $hh:$mm';
+  }
 
   doc.addPage(
     pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(24),
+      header: (context) => pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        children: [
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(title, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+              pw.Text(_fmtStamp(DateTime.now()), style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+            ],
+          ),
+          if (subtitle != null) pw.Text(subtitle!, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+          pw.SizedBox(height: 8),
+          pw.Divider(color: PdfColors.grey500, thickness: 0.5),
+          pw.SizedBox(height: 8),
+        ],
+      ),
       footer: (context) => pw.Container(
         alignment: pw.Alignment.centerRight,
         margin: const pw.EdgeInsets.only(top: 8),
@@ -32,33 +68,15 @@ Future<void> exportTablePdf(
       ),
       build: (context) {
         return [
-          pw.Text(
-            title,
-            style: pw.TextStyle(
-              fontSize: 18,
-              fontWeight: pw.FontWeight.bold,
-            ),
-          ),
-          if (subtitle != null) ...[
-            pw.SizedBox(height: 6),
-            pw.Text(
-              subtitle,
-              style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
-            ),
-          ],
-          pw.SizedBox(height: 16),
           if (headers.isNotEmpty)
             pw.Table.fromTextArray(
               headers: headers,
               data: rows,
-              headerStyle: pw.TextStyle(
-                fontWeight: pw.FontWeight.bold,
-                color: PdfColors.black,
-              ),
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.black),
               headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
               cellStyle: const pw.TextStyle(fontSize: 10),
               cellAlignment: pw.Alignment.centerLeft,
-              border: null,
+              border: pw.TableBorder.symmetric(inside: const pw.BorderSide(color: PdfColors.grey400, width: 0.3)),
               oddRowDecoration: const pw.BoxDecoration(color: PdfColors.grey100),
             )
           else
@@ -67,24 +85,10 @@ Future<void> exportTablePdf(
               children: rows
                   .map((r) => pw.Padding(
                         padding: const pw.EdgeInsets.symmetric(vertical: 4),
-                        child: pw.Text(r.join('  •  ')),
+                        child: pw.Text(r.join('  •  '), style: const pw.TextStyle(fontSize: 11)),
                       ))
                   .toList(),
             ),
-          pw.SizedBox(height: 12),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                'Generated: ${DateTime.now()}',
-                style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
-              ),
-              pw.Text(
-                'Total rows: ${rows.length}',
-                style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
-              ),
-            ],
-          ),
         ];
       },
     ),
@@ -96,7 +100,23 @@ Future<void> exportTablePdf(
       .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
       .replaceAll(RegExp(r'_+'), '_')
       .replaceAll(RegExp(r'^_|_$'), '');
-  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+  String _fmtFileStamp(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$y$m$d-$hh$mm';
+  }
+  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${_fmtFileStamp(DateTime.now())}.pdf';
+
+  // Try saving to Downloads when available (Android + desktop)
+  final downloadsDir = await _resolveDownloadsDir();
+  if (downloadsDir != null) {
+    final outPath = '${downloadsDir.path}/$fileName';
+    final file = File(outPath);
+    await file.writeAsBytes(bytes);
+  }
 
   await Printing.sharePdf(bytes: bytes, filename: fileName);
 }
@@ -116,22 +136,65 @@ Future<String?> exportTablePdfAutoSave(
   List<List<String>> rows, {
   String? subtitle,
 }) async {
-  // Build document
+  Future<Directory?> _resolveDownloadsDir() async {
+    if (Platform.isAndroid) {
+      final dirs = await getExternalStorageDirectories(type: StorageDirectory.downloads);
+      if (dirs != null && dirs.isNotEmpty) return dirs.first;
+    }
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      return getDownloadsDirectory();
+    }
+    return null;
+  }
+
+  // Build document with standardized header & footer
   final doc = pw.Document();
+  String _fmtStamp(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$y-$m-$d $hh:$mm';
+  }
+
   doc.addPage(
     pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.all(24),
+      header: (context) => pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        children: [
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(title, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+              pw.Text(_fmtStamp(DateTime.now()), style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+            ],
+          ),
+          if (subtitle != null) pw.Text(subtitle!, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+          pw.SizedBox(height: 8),
+          pw.Divider(color: PdfColors.grey500, thickness: 0.5),
+          pw.SizedBox(height: 8),
+        ],
+      ),
+      footer: (context) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        margin: const pw.EdgeInsets.only(top: 8),
+        child: pw.Text(
+          'Page ${context.pageNumber} of ${context.pagesCount}',
+          style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700),
+        ),
+      ),
       build: (context) => [
-        pw.Text(title, style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-        if (subtitle != null) ...[pw.SizedBox(height: 6), pw.Text(subtitle, style: const pw.TextStyle(fontSize: 10))],
-        pw.SizedBox(height: 16),
         pw.Table.fromTextArray(
           headers: headers,
           data: rows,
-          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.black),
           headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
           cellStyle: const pw.TextStyle(fontSize: 10),
+          cellAlignment: pw.Alignment.centerLeft,
+          border: pw.TableBorder.symmetric(inside: const pw.BorderSide(color: PdfColors.grey400, width: 0.3)),
           oddRowDecoration: const pw.BoxDecoration(color: PdfColors.grey100),
         ),
       ],
@@ -144,17 +207,22 @@ Future<String?> exportTablePdfAutoSave(
       .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
       .replaceAll(RegExp(r'_+'), '_')
       .replaceAll(RegExp(r'^_|_$'), '');
-  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+  String _fmtFileStamp(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$y$m$d-$hh$mm';
+  }
+  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${_fmtFileStamp(DateTime.now())}.pdf';
 
-  // Desktop platforms: try to save to Downloads
-  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-    final downloadsDir = await getDownloadsDirectory();
-    if (downloadsDir != null) {
-      final outPath = '${downloadsDir.path}/$fileName';
-      final file = File(outPath);
-      await file.writeAsBytes(bytes);
-      return outPath;
-    }
+  final downloadsDir = await _resolveDownloadsDir();
+  if (downloadsDir != null) {
+    final outPath = '${downloadsDir.path}/$fileName';
+    final file = File(outPath);
+    await file.writeAsBytes(bytes);
+    return outPath;
   }
 
   // Fallback: open share/save dialog

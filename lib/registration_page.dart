@@ -13,6 +13,7 @@ class RegistrationPage extends StatefulWidget {
 class _RegistrationPageState extends State<RegistrationPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
   final _departmentController = TextEditingController();
   final _yearController = TextEditingController();
   final _kluIdController = TextEditingController();
@@ -35,6 +36,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   Future<void> _performRegistration() async {
     final name = _nameController.text.trim();
+    final email = _emailController.text.trim();
     final ktuId = _kluIdController.text.trim();
     final password = _passwordController.text;
     final department = _selectedDepartment;
@@ -47,7 +49,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
     );
     
     try {
-      await register(ktuId, password, role: 'student', ktuId: ktuId, name: name, department: department, year: year);
+      await register(ktuId, password, role: 'student', ktuId: ktuId, name: name, department: department, year: year, email: email);
       Navigator.of(context).pop(); // Close progress dialog
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Registration Successful for $name')),
@@ -160,6 +162,18 @@ class _RegistrationPageState extends State<RegistrationPage> {
                               key: _formKey,
                               child: Column(
                                 children: [
+                                  _buildField(
+                                    controller: _emailController,
+                                    label: 'Email',
+                                    icon: Icons.email_outlined,
+                                    keyboardType: TextInputType.emailAddress,
+                                    validator: (v) {
+                                      if (v == null || v.trim().isEmpty) return 'Enter email';
+                                      if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) return 'Invalid email';
+                                      return null;
+                                    },
+                                  ),
+                                  _gap(),
                                   _buildField(
                                     controller: _nameController,
                                     label: 'Student Name',

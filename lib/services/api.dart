@@ -64,7 +64,7 @@ Future<String> login(String username, String password) async {
 }
 
 /// Register a new user
-Future<void> register(String username, String password, {String role = 'student', String? ktuId, String? name, String? department, String? year}) async {
+Future<void> register(String username, String password, {String role = 'student', String? ktuId, String? name, String? department, String? year, String? email}) async {
   Exception? lastError;
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/register');
@@ -78,6 +78,7 @@ Future<void> register(String username, String password, {String role = 'student'
       if (name != null) body['name'] = name;
       if (department != null) body['department'] = department;
       if (year != null) body['year'] = year;
+      if (email != null) body['email'] = email;
       
       final resp = await http.post(uri,
           headers: {'Content-Type': 'application/json'},
@@ -90,4 +91,41 @@ Future<void> register(String username, String password, {String role = 'student'
     }
   }
   throw ApiError('Register failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+}
+
+/// Send an email notification (alert/update) to one or more recipients.
+/// [type] should be 'alert' or 'update'.
+Future<void> sendNotification({
+  required String type,
+  required String subject,
+  required String body,
+  required List<String> recipients,
+}) async {
+  if (type != 'alert' && type != 'update') {
+    throw ApiError('Unsupported notification type: $type');
+  }
+
+  Exception? lastError;
+  for (final base in _candidates) {
+    final uri = Uri.parse('$base/notify/$type');
+    try {
+      final resp = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'subject': subject,
+          'body': body,
+          'recipients': recipients,
+        }),
+      ).timeout(const Duration(seconds: 8));
+
+      if (resp.statusCode == 200) return;
+      throw ApiError('Notification failed (${base}): ${resp.statusCode} ${resp.body}');
+    } catch (e) {
+      lastError = e as Exception;
+      continue;
+    }
+  }
+
+  throw ApiError('Notification failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
 }

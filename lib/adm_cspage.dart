@@ -41,7 +41,10 @@ void _performLogout() {
     final colorScheme = Theme.of(context).colorScheme;
     
     return Scaffold(
-      
+      appBar: AppBar(
+        title: const Text('Room Consumption Analysis'),
+        leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+      ),
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 300),
         child: _buildPage(_index, colorScheme),
