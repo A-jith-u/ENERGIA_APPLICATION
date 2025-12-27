@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'services/api.dart';
+import 'services/notifier.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -51,22 +52,13 @@ class _RegistrationPageState extends State<RegistrationPage> {
     try {
       await register(ktuId, password, role: 'student', ktuId: ktuId, name: name, department: department, year: year, email: email);
       Navigator.of(context).pop(); // Close progress dialog
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Registration Successful for $name')),
-      );
+      AppNotifier.showSuccess(context, 'Registration successful for $name');
       Navigator.pop(context); // Go back to login
     } catch (e) {
       Navigator.of(context).pop(); // Close progress dialog
-      setState(() {
-        _errorMessage = e is ApiError ? e.message : 'Registration failed: ${e.toString()}';
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_errorMessage!),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-        ),
-      );
+      final msg = e is ApiError ? e.message : 'Registration failed: ${e.toString()}';
+      setState(() { _errorMessage = msg; });
+      AppNotifier.showError(context, msg);
     }
   }
 

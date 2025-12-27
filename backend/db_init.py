@@ -1,5 +1,5 @@
 """Simple DB initializer to create `users` and `sensor_data` tables and insert test users.
-Targets PostgreSQL by default; override DB_URL to point at your Postgres instance.
+Targets PostgreSQL by default; override DB_URL in .env or environment to point at your Postgres instance.
 """
 import os
 from passlib.context import CryptContext
@@ -17,11 +17,13 @@ from sqlalchemy import (
     func,
     select,
     inspect,
+    text,
 )
 
-# Default to a local PostgreSQL instance (mapped from Docker or native install).
-# Override with DB_URL when running inside Docker (e.g., host `db`).
-DB_URL = os.environ.get("DB_URL", "postgresql://postgres:aswathy2004@localhost:5432/energia")
+from . import config as cfg
+
+# Load configuration from environment/.env and enforce PostgreSQL
+DB_URL = cfg.get_db_url()
 engine = create_engine(DB_URL)
 
 # Password hashing context
@@ -37,6 +39,7 @@ users_table = Table(
     Column("password_hash", String, nullable=False),
     Column("role", String, nullable=False, server_default="student"),
     Column("department", String),
+    Column("name", String, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
@@ -69,6 +72,7 @@ class_representatives_table = Table(
     Column("password_hash", String, nullable=False),
     Column("ktu_id", String, unique=True, nullable=False),
     Column("email", String, unique=True, nullable=False),
+    Column("name", String, nullable=True),
     Column("department", String, nullable=False),
     Column("year", String, nullable=False),
     Column("created_at", DateTime, server_default=func.now()),
@@ -76,12 +80,26 @@ class_representatives_table = Table(
 
 metadata.create_all(engine)
 
-# Ensure email column exists for existing deployments (idempotent)
+# Ensure email and name columns exist for existing deployments (idempotent)
 insp = inspect(engine)
+
+# Add name and department columns to users table if they don't exist
+users_columns = [col["name"] for col in insp.get_columns("users")]
+if "name" not in users_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN name VARCHAR"))
+if "department" not in users_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE users ADD COLUMN department VARCHAR"))
+
+# Add email and name columns to class_representatives table if they don't exist
 columns = [col["name"] for col in insp.get_columns("class_representatives")]
 if "email" not in columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE class_representatives ADD COLUMN email VARCHAR"))
+if "name" not in columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN name VARCHAR"))
 
 # Add convenience test users if they don't exist (for local testing)
 users_to_ensure = [

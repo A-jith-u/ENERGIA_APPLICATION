@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'registration_page.dart';
 import 'services/api.dart';
+import 'services/notifier.dart';
+import 'forgot_password_page.dart';
 
 class StudentLoginPage extends StatefulWidget {
   const StudentLoginPage({super.key});
@@ -29,6 +31,7 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
     if (_formKey.currentState?.validate() != true) return;
     _performLogin();
   }
+
 
   /*Future<void> _performLogin() async {
     final name = _nameController.text.trim();
@@ -81,16 +84,9 @@ Future<void> _performLogin() async {
 } catch (e) {
     if (!mounted) return;
     Navigator.of(context).pop();
-    setState(() {
-      _errorMessage = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_errorMessage!),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
+    final msg = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
+    setState(() { _errorMessage = msg; });
+    AppNotifier.showError(context, msg);
     // ... rest of error snackbar
   }
 }
@@ -291,7 +287,12 @@ Future<void> _performLogin() async {
                             Align(
                               alignment: Alignment.centerRight,
                               child: TextButton(
-                                onPressed: () {},
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+                                  );
+                                },
                                 child: const Text('Forgot Password?'),
                               ),
                             ),

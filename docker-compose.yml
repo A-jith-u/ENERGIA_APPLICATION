@@ -23,10 +23,11 @@ services:
     depends_on:
       - db
       - mqtt
+    env_file:
+      - backend/.env
     environment:
-      MODEL_PATH: /app/models/prophet_model.joblib
-      DB_URL: postgresql://postgres:postgres@db:5432/energia
-      MQTT_BROKER: mqtt
+      # Override DB_URL to use Docker service name
+      DB_URL: postgresql+psycopg2://postgres:postgres@db:5432/energia
     ports:
       - "8000:8000"
     volumes:

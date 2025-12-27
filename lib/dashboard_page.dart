@@ -1,3 +1,4 @@
+import 'services/notifier.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'analysis_graph_page.dart'; 
@@ -370,17 +371,20 @@ Future<void> _saveProfile() async {
     );
 
     if (response.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Profile updated in database!")),
-      );
+      final Map<String, dynamic> resp = jsonDecode(response.body);
+      final String? newToken = resp['access_token'];
+      if (newToken != null && newToken.isNotEmpty) {
+        await prefs.setString('auth_token', newToken);
+        // Reload controllers from refreshed JWT so UI reflects immediately
+        await _loadUserData();
+      }
+      AppNotifier.showSuccess(context, "Profile updated!");
       setState(() => _isEditing = false);
     } else {
       throw Exception("Update failed");
     }
   } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-    );
+    AppNotifier.showError(context, "Error: $e");
   }
 }
 
@@ -398,18 +402,12 @@ Future<void> _updatePassword(String currentP, String newP) async {
 
     if (response.statusCode == 200) {
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Password updated successfully!")),
-      );
+      AppNotifier.showSuccess(context, "Password updated successfully!");
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Incorrect current password"), backgroundColor: Colors.red),
-      );
+      AppNotifier.showError(context, "Incorrect current password");
     }
   } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Server error"), backgroundColor: Colors.red),
-    );
+    AppNotifier.showError(context, "Server error");
   }
 }
 
@@ -467,17 +465,17 @@ final _confirmPasswordController = TextEditingController();
 
 Future<void> _handleChangePassword() async {
   if (_newPasswordController.text != _confirmPasswordController.text) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("New passwords do not match")));
+    AppNotifier.showError(context, "New passwords do not match");
     return;
   }
 
   try {
     // Logic to call /auth/change-password
     // Pass _ktuIdController.text as 'username' to the backend
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Password updated!")));
+    AppNotifier.showSuccess(context, "Password updated!");
     Navigator.pop(context); // Close dialog
   } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error: Incorrect current password")));
+    AppNotifier.showError(context, "Incorrect current password");
   }
 }
 
@@ -488,66 +486,229 @@ void _showPasswordDialog() {
 
   showDialog(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Update Security'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: currentPassController,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Current Password'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: newPassController,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'New Password'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: confirmPassController,
-              obscureText: true,
-              decoration: const InputDecoration(labelText: 'Confirm New Password'),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        ElevatedButton(
-          onPressed: () async {
-            // Validate inputs locally first
-            if (newPassController.text != confirmPassController.text) {
-               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("New passwords do not match")));
-               return;
-            }
-            
-            // Perform API Call to /auth/change-password
-            final response = await http.post(
-              Uri.parse('http://localhost:8000/auth/change-password'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'username': _ktuIdController.text, // Using KTU ID as identifier
-                'current_password': currentPassController.text,
-                'new_password': newPassController.text,
-              }),
-            );
+    barrierDismissible: false,
+    builder: (context) {
+      bool showCurrent = false;
+      bool showNew = false;
+      bool showConfirm = false;
+      bool isLoading = false;
+      
+      return StatefulBuilder(
+        builder: (ctx, setState) => Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: widget.scheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.lock_reset,
+                            color: widget.scheme.onPrimaryContainer,
+                            size: 28,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Change Password',
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                'Update your account password',
+                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 24),
+                    const Divider(),
+                    const SizedBox(height: 24),
+                    
+                    // Form Fields
+                    TextFormField(
+                      controller: currentPassController,
+                      obscureText: !showCurrent,
+                      decoration: InputDecoration(
+                        labelText: 'Current Password',
+                        hintText: 'Enter your current password',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        suffixIcon: IconButton(
+                          icon: Icon(showCurrent ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () => setState(() => showCurrent = !showCurrent),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    TextFormField(
+                      controller: newPassController,
+                      obscureText: !showNew,
+                      decoration: InputDecoration(
+                        labelText: 'New Password',
+                        hintText: 'Enter your new password',
+                        prefixIcon: const Icon(Icons.lock),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        suffixIcon: IconButton(
+                          icon: Icon(showNew ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () => setState(() => showNew = !showNew),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    TextFormField(
+                      controller: confirmPassController,
+                      obscureText: !showConfirm,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm New Password',
+                        hintText: 'Re-enter your new password',
+                        prefixIcon: const Icon(Icons.lock_clock),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        suffixIcon: IconButton(
+                          icon: Icon(showConfirm ? Icons.visibility_off : Icons.visibility),
+                          onPressed: () => setState(() => showConfirm = !showConfirm),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                    // Info Card
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.blue.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Password must be at least 8 characters long',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue.shade700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    
+                    // Action Buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: isLoading ? null : () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton.icon(
+                          onPressed: isLoading ? null : () async {
+                            // Validate inputs locally first
+                            if (currentPassController.text.isEmpty) {
+                              AppNotifier.showError(context, "Please enter current password");
+                              return;
+                            }
+                            if (newPassController.text.isEmpty) {
+                              AppNotifier.showError(context, "Please enter new password");
+                              return;
+                            }
+                            if (newPassController.text.length < 8) {
+                              AppNotifier.showError(context, "Password must be at least 8 characters");
+                              return;
+                            }
+                            if (newPassController.text != confirmPassController.text) {
+                              AppNotifier.showError(context, "New passwords do not match");
+                              return;
+                            }
+                            
+                            setState(() => isLoading = true);
+                            
+                            try {
+                              // Perform API Call to /auth/change-password
+                              final response = await http.post(
+                                Uri.parse('http://localhost:8000/auth/change-password'),
+                                headers: {'Content-Type': 'application/json'},
+                                body: jsonEncode({
+                                  'username': _ktuIdController.text, // Using KTU ID as identifier
+                                  'current_password': currentPassController.text,
+                                  'new_password': newPassController.text,
+                                }),
+                              );
 
-            if (response.statusCode == 200) {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Password changed!")));
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Incorrect current password"), backgroundColor: Colors.red),
-              );
-            }
-          }, 
-          child: const Text('Update')
+                              if (response.statusCode == 200) {
+                                Navigator.pop(context);
+                                AppNotifier.showSuccess(context, "Password changed successfully!");
+                              } else {
+                                setState(() => isLoading = false);
+                                AppNotifier.showError(context, "Incorrect current password");
+                              }
+                            } catch (e) {
+                              setState(() => isLoading = false);
+                              AppNotifier.showError(context, "Failed to change password. Please try again.");
+                            }
+                          },
+                          icon: isLoading 
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.check),
+                          label: Text(isLoading ? 'Updating...' : 'Update Password'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
-      ],
-    ),
+      );
+    },
   );
 }
 
