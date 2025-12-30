@@ -15,6 +15,8 @@ import 'adminblock.dart';
 import 'dart:convert'; // Fixes 'jsonEncode' error
 import 'package:http/http.dart' as http; // Fixes 'http' error
 import 'services/api.dart' as api; // Import API functions
+import 'services/user_counts.dart';
+import 'services/user_lists.dart';
 import 'dart:ui'; // For ImageFilter (glassmorphism effect)
 
 // --- HELPER WIDGETS ---
@@ -365,11 +367,22 @@ class _CampusOverviewSection extends StatefulWidget {
 
 class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
   Map<String, int>? _userCounts;
-  bool _isLoading = true;
+  bool _isLoading = false; // show immediately, refresh in background
+
+  void _onCountsChanged() {
+    setState(() {
+      _userCounts = UserCountsStore.instance.counts.value;
+    });
+  }
 
   @override
   void initState() {
     super.initState();
+    // Subscribe to shared user counts
+    UserCountsStore.instance.counts.addListener(_onCountsChanged);
+    // Initialize from current store
+    _userCounts = UserCountsStore.instance.counts.value;
+    // Refresh in background
     _loadUserCounts();
   }
 
@@ -386,9 +399,21 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
       if (mounted) {
         setState(() {
           _isLoading = false;
+          // Use default values on error
+          _userCounts ??= {'admins': 0, 'coordinators': 0, 'class_representatives': 0};
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    UserCountsStore.instance.counts.removeListener(_onCountsChanged);
+    super.dispose();
+  }
+
+  void _refreshCounts() {
+    _loadUserCounts();
   }
 
   // Helper to build the Department Status Tiles
@@ -709,11 +734,19 @@ class _UsersManagementSection extends StatefulWidget {
 
 class _UsersManagementSectionState extends State<_UsersManagementSection> {
   Map<String, int>? _userCounts;
-  bool _isLoading = true;
+  bool _isLoading = false;
+
+  void _onCountsChanged() {
+    setState(() {
+      _userCounts = UserCountsStore.instance.counts.value;
+    });
+  }
 
   @override
   void initState() {
     super.initState();
+    UserCountsStore.instance.counts.addListener(_onCountsChanged);
+    _userCounts = UserCountsStore.instance.counts.value;
     _loadUserCounts();
   }
 
@@ -733,6 +766,12 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    UserCountsStore.instance.counts.removeListener(_onCountsChanged);
+    super.dispose();
   }
 
   @override
@@ -969,7 +1008,7 @@ class CoordinatorsPage extends StatefulWidget {
 
 class _CoordinatorsPageState extends State<CoordinatorsPage> {
   List<Map<String, dynamic>> _allCoordinators = [];
-  bool _isLoading = true;
+  bool _isLoading = false;
   String? _errorMessage;
 
   final _searchController = TextEditingController();
@@ -979,20 +1018,30 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
   @override
   void initState() {
     super.initState();
+    // Subscribe to shared coordinators list
+    UserListsStore.instance.coordinators.addListener(_onCoordinatorsChanged);
+    // Initialize from cached store for instant display
+    _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
+    _filteredCoordinators = List.from(_allCoordinators);
+    // Refresh in background
     _loadCoordinators();
+  }
+
+  void _onCoordinatorsChanged() {
+    setState(() {
+      _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
+      _filteredCoordinators = List.from(_allCoordinators);
+    });
   }
 
   Future<void> _loadCoordinators() async {
     setState(() {
-      _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      final coordinators = await api.getCoordinators();
+      await api.getCoordinators();
       setState(() {
-        _allCoordinators = coordinators;
-        _filteredCoordinators = List.from(_allCoordinators);
         _isLoading = false;
       });
     } catch (e) {
@@ -1006,6 +1055,7 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
   @override
   void dispose() {
     _searchController.dispose();
+    UserListsStore.instance.coordinators.removeListener(_onCoordinatorsChanged);
     super.dispose();
   }
 
@@ -1077,10 +1127,33 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
 
   Future<void> _deleteUser(String username) async {
     try {
-      await api.deleteUser(username);
-      if (mounted) {
+      // Optimistic update: remove from list immediately
+      final indexToRemove = _allCoordinators.indexWhere((c) => c['username'] == username);
+      if (indexToRemove != -1) {
+        final removedUser = _allCoordinators[indexToRemove];
+        setState(() {
+          _allCoordinators.removeAt(indexToRemove);
+          _filterData(); // Update filtered list
+        });
+        // Reflect change in global user counts immediately
+        UserCountsStore.instance.decrement('coordinators');
         AppNotifier.showSuccess(context, 'User deleted successfully');
-        _loadCoordinators();
+        
+        // Call API in background
+        try {
+          await api.deleteUser(username);
+        } catch (e) {
+          // If delete fails, add user back
+          if (mounted) {
+            setState(() {
+              _allCoordinators.insert(indexToRemove, removedUser);
+              _filterData();
+            });
+            // Revert global counts
+            UserCountsStore.instance.increment('coordinators');
+            AppNotifier.showError(context, 'Failed to delete user: $e');
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -1312,7 +1385,7 @@ class ClassRepresentativesPage extends StatefulWidget {
 
 class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
   List<Map<String, dynamic>> _allReps = [];
-  bool _isLoading = true;
+  bool _isLoading = false;
   String? _errorMessage;
 
   final _searchController = TextEditingController();
@@ -1324,20 +1397,31 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
   @override
   void initState() {
     super.initState();
+    // Subscribe to shared reps list
+    UserListsStore.instance.classReps.addListener(_onRepsChanged);
+    // Initialize from cached store for instant display
+    _allReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
+    _filteredReps = List.from(_allReps);
+    // Refresh in background
     _loadClassRepresentatives();
+  }
+
+  void _onRepsChanged() {
+    setState(() {
+      _allReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
+      _filteredReps = List.from(_allReps);
+      _sortData();
+    });
   }
 
   Future<void> _loadClassRepresentatives() async {
     setState(() {
-      _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      final classReps = await api.getClassRepresentatives();
+      await api.getClassRepresentatives();
       setState(() {
-        _allReps = classReps;
-        _filteredReps = List.from(_allReps);
         _isLoading = false;
       });
     } catch (e) {
@@ -1351,6 +1435,7 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
   @override
   void dispose() {
     _searchController.dispose();
+    UserListsStore.instance.classReps.removeListener(_onRepsChanged);
     super.dispose();
   }
 
@@ -1452,10 +1537,33 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
 
   Future<void> _deleteUser(String username) async {
     try {
-      await api.deleteUser(username);
-      if (mounted) {
+      // Optimistic update: remove from list immediately
+      final indexToRemove = _allReps.indexWhere((r) => r['username'] == username || r['ktu_id'] == username);
+      if (indexToRemove != -1) {
+        final removedUser = _allReps[indexToRemove];
+        setState(() {
+          _allReps.removeAt(indexToRemove);
+          _filterData(); // Update filtered list
+        });
+        // Reflect change in global user counts immediately
+        UserCountsStore.instance.decrement('class_representatives');
         AppNotifier.showSuccess(context, 'User deleted successfully');
-        _loadClassRepresentatives();
+        
+        // Call API in background
+        try {
+          await api.deleteUser(username);
+        } catch (e) {
+          // If delete fails, add user back
+          if (mounted) {
+            setState(() {
+              _allReps.insert(indexToRemove, removedUser);
+              _filterData();
+            });
+            // Revert global counts
+            UserCountsStore.instance.increment('class_representatives');
+            AppNotifier.showError(context, 'Failed to delete user: $e');
+          }
+        }
       }
     } catch (e) {
       if (mounted) {

@@ -2,18 +2,29 @@
 Application entrypoint that mounts auth and model APIs into a single FastAPI app.
 This allows the Docker image to expose a single HTTP service for auth, model, and health checks.
 """
+import importlib
+import os
+import sys
 from fastapi import FastAPI
 
-# Use package-relative imports so the module works when run as
-# `python -m uvicorn backend.app_main:app` or inside Docker.
-from . import auth_api
-from . import notify_api
+
+def _load(name: str):
+    """Import backend modules whether run as package or as a bare module."""
+    if __package__:
+        return importlib.import_module(f".{name}", __package__)
+    sys.path.append(os.path.dirname(__file__))
+    return importlib.import_module(name)
+
+
+auth_api = _load("auth_api")
+notify_api = _load("notify_api")
+recommendation_api = _load("recommendation_api")
 
 # Import model app lazily: it's optional for dev (heavy ML deps may be absent).
 try:
-    from . import serve_prophet
+    serve_prophet = _load("serve_prophet")
     _model_app = serve_prophet.app
-except Exception as _err:
+except Exception as _err:  # noqa: BLE001
     _model_app = None
     _model_import_error = _err
 
@@ -23,6 +34,7 @@ app = FastAPI(title="ENERGIA Backend")
 # Auth endpoints will be available at /auth/* and model endpoints at /model/*
 app.mount("/auth", auth_api.app)
 app.mount("/notify", notify_api.app)
+app.mount("/recommendations", recommendation_api.app)
 if _model_app is not None:
     app.mount("/model", _model_app)
 else:

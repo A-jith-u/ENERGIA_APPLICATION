@@ -33,13 +33,14 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
   Future<void> _performLogin() async {
     final id = _idController.text.trim();
     final password = _passwordController.text;
+    final department = _selectedDepartment;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
     try {
-      final token = await login(id, password);
+      final token = await login(id, password, department: department);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('auth_token', token);
       Navigator.of(context).pop();

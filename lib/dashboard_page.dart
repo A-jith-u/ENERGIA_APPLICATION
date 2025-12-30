@@ -5,6 +5,9 @@ import 'analysis_graph_page.dart';
 import 'anomaly_viewer_page.dart';
 import 'role_selection_page.dart';
 import 'dashboard_scaffold.dart'; // Ensure this is imported
+import 'prediction_page.dart';
+import 'recommendations_page.dart';
+import 'widgets/recommendation_widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
@@ -931,6 +934,36 @@ class _ReportsSection extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        // Smart Dashboard Header
+        Text(
+          'Smart Dashboard',
+          style: theme.textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.blue.shade800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Divider(),
+        const SizedBox(height: 16),
+
+        // Recommendations Section
+        const RecommendationsList(
+          userToken: null, // Pass actual token when available
+          showHeader: true,
+          maxItems: 3,
+        ),
+        const SizedBox(height: 32),
+
+        // AI-Powered Prediction - Featured at top
+        _buildPredictionTile(
+          context,
+          '⚡ Energy Usage Prediction',
+          'AI forecast for next 15 minutes using Prophet model.',
+          Icons.insights,
+          Colors.purple.shade600,
+        ),
+        const SizedBox(height: 32),
+
         Text(
           'Consumption Analysis',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
@@ -1080,6 +1113,81 @@ class _ReportsSection extends StatelessWidget {
               ),
               // CR cannot download, so we use a view icon
               const Icon(Icons.visibility_outlined, size: 24, color: Colors.grey),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPredictionTile(BuildContext context, String title, String subtitle, IconData icon, Color color) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 4,
+      shadowColor: color.withOpacity(0.1),
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: InkWell(
+        onTap: () {
+          // Navigate to prediction page
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const PredictionPage(),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 30),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          title,
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'AI',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, size: 18, color: Colors.grey),
             ],
           ),
         ),

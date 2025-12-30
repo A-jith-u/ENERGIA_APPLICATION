@@ -3,7 +3,9 @@
 // - Exposes `login` and `register` helpers returning JWT token on success
 
 import 'dart:convert';
+import 'user_counts.dart';
 import 'package:http/http.dart' as http;
+import 'user_lists.dart';
 
 /// Base URL for backend API. When running the server on the development
 /// machine and testing on Android emulator use 10.0.2.2 to reach host.
@@ -27,7 +29,7 @@ class ApiError implements Exception {
 }
 
 /// Login with username/password. Returns access token string on success.
-Future<String> login(String username, String password) async {
+Future<String> login(String username, String password, {String? department}) async {
   // Try candidate bases until one responds successfully.
   Exception? lastError;
   print('[API] Attempting login for user: $username');
@@ -37,9 +39,13 @@ Future<String> login(String username, String password) async {
     final uri = Uri.parse('$base/auth/login');
     print('[API] Trying: $uri');
     try {
+      final requestBody = {'username': username, 'password': password};
+      if (department != null) {
+        requestBody['department'] = department;
+      }
       final resp = await http.post(uri,
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'username': username, 'password': password}))
+          body: jsonEncode(requestBody))
           .timeout(Duration(seconds: 5));
       print('[API] Response from $base: ${resp.statusCode}');
       
@@ -48,19 +54,42 @@ Future<String> login(String username, String password) async {
         print('[API] Login successful!');
         return data['access_token'] as String;
       }
-      // server reachable but returned error — surface body when present
-      final body = resp.body.isNotEmpty ? resp.body : resp.statusCode.toString();
-      print('[API] Login failed: ${resp.statusCode} $body');
-      throw ApiError('Login failed (${base}): ${resp.statusCode} $body');
+      
+      // Handle specific credential errors (400, 401)
+      if (resp.statusCode == 400 || resp.statusCode == 401) {
+        try {
+          final errorData = jsonDecode(resp.body) as Map<String, dynamic>;
+          final detail = errorData['detail'] as String?;
+          print('[API] Login credential error: $detail');
+          throw ApiError(detail ?? 'Invalid credentials');
+        } catch (e) {
+          if (e is ApiError) rethrow;
+          print('[API] Could not parse error response');
+          throw ApiError('Invalid credentials');
+        }
+      }
+      
+      // Handle system errors (5xx)
+      if (resp.statusCode >= 500) {
+        print('[API] Backend system error: ${resp.statusCode}');
+        throw ApiError('Something went wrong');
+      }
+      
+      // Other errors
+      throw ApiError('Login failed');
     } catch (e) {
-      print('[API] Error with $base: $e');
+      if (e is ApiError) {
+        print('[API] Error with $base: ${e.message}');
+        rethrow; // Re-throw ApiError to show specific message
+      }
+      print('[API] Connection error with $base: $e');
       lastError = e as Exception;
       // try next candidate
       continue;
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Login failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError('Backend unreachable. Please check your connection or contact support.');
 }
 
 /// Register a new user
@@ -189,7 +218,9 @@ Future<List<Map<String, dynamic>>> getCoordinators() async {
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched ${data['total']} coordinators');
-        return List<Map<String, dynamic>>.from(data['coordinators']);
+        final list = List<Map<String, dynamic>>.from(data['coordinators']);
+        UserListsStore.instance.setCoordinators(list);
+        return list;
       }
       throw ApiError('Get coordinators failed (${base}): ${resp.statusCode} ${resp.body}');
     } catch (e) {
@@ -217,7 +248,9 @@ Future<List<Map<String, dynamic>>> getClassRepresentatives() async {
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched ${data['total']} class representatives');
-        return List<Map<String, dynamic>>.from(data['class_representatives']);
+        final list = List<Map<String, dynamic>>.from(data['class_representatives']);
+        UserListsStore.instance.setClassRepresentatives(list);
+        return list;
       }
       throw ApiError('Get class representatives failed (${base}): ${resp.statusCode} ${resp.body}');
     } catch (e) {
@@ -245,12 +278,15 @@ Future<Map<String, int>> getUserCounts() async {
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched user counts: ${data}');
-        return {
+        final result = {
           'total_users': data['total_users'] as int,
           'coordinators': data['coordinators'] as int,
           'class_representatives': data['class_representatives'] as int,
           'admins': data['admins'] as int,
         };
+        // Update shared store so UI can react instantly
+        UserCountsStore.instance.setCounts(result);
+        return result;
       }
       throw ApiError('Get user counts failed (${base}): ${resp.statusCode} ${resp.body}');
     } catch (e) {
