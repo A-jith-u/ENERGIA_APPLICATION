@@ -20,6 +20,22 @@ class CoordinatorDashboardPage extends StatefulWidget {
 class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   int _currentIndex = 0;
 
+  // Dynamic active rooms tracking
+  final List<Map<String, dynamic>> _allRooms = [
+    {'room': 'CS-404', 'status': 'Normal', 'usage': '5.2 kW', 'isActive': true},
+    {'room': 'CS-Lab 1', 'status': 'High Usage', 'usage': '8.6 kW', 'isActive': true},
+    {'room': 'CS-Lab 2', 'status': 'Moderate', 'usage': '3.4 kW', 'isActive': true},
+    {'room': 'Server Room', 'status': 'Critical System', 'usage': '4.5 kW', 'isActive': true},
+    {'room': 'CS-Faculty Room', 'status': 'Low Usage', 'usage': '5.2 kW', 'isActive': true},
+    {'room': 'CS-Seminar Hall', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-405', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Lab 3', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Study Area', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Conference', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-406', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Library', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+  ];
+
   // Placeholder navigation targets (assuming imports would be here)
   void _performLogout() {
     // Navigate to RoleSelectionPage and clear stack.
@@ -84,9 +100,16 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
-        return _DepartmentOverviewSection(scheme: scheme);
+        return _DepartmentOverviewSection(
+          scheme: scheme, 
+          onActiveRoomsTap: _showActiveRooms, 
+          onAlertsTap: _showAlerts,
+          activeRooms: _allRooms.where((room) => room['isActive'] as bool).toList(),
+          totalRooms: _allRooms.length,
+          onActivateRoom: _activateRandomRoom,
+        );
       case 1:
-        return _DepartmentRoomsSection(scheme: scheme);
+        return _DepartmentRoomsSection(scheme: scheme, rooms: _allRooms);
       case 2:
         return _DepartmentAnalyticsSection(scheme: scheme);
       case 3:
@@ -95,11 +118,121 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
         return const SizedBox.shrink();
     }
   }
+
+  void _showActiveRooms() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Active Rooms'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _allRooms.where((room) => room['isActive'] as bool).length,
+            itemBuilder: (context, index) {
+              final room = _allRooms.where((room) => room['isActive'] as bool).toList()[index];
+              return ListTile(
+                leading: Icon(Icons.room, color: Colors.blue),
+                title: Text(room['room'] as String),
+                subtitle: Text('${room['status']} • ${room['usage']}'),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAlerts() {
+    // Hardcoded alerts for demonstration
+    final alerts = [
+      {'room': 'CS-Lab 1', 'type': 'High Consumption', 'message': 'Energy usage exceeded 8 kW threshold', 'time': '2 hours ago', 'severity': 'High'},
+      {'room': 'CS-404', 'type': 'Anomaly Detected', 'message': 'Unusual power spike detected', 'time': '4 hours ago', 'severity': 'Medium'},
+      {'room': 'Server Room', 'type': 'Temperature Alert', 'message': 'Room temperature above safe limit', 'time': '6 hours ago', 'severity': 'High'},
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Active Alerts'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: alerts.length,
+            itemBuilder: (context, index) {
+              final alert = alerts[index];
+              Color severityColor;
+              switch (alert['severity']) {
+                case 'High':
+                  severityColor = Colors.red;
+                  break;
+                case 'Medium':
+                  severityColor = Colors.orange;
+                  break;
+                default:
+                  severityColor = Colors.yellow;
+              }
+              return ListTile(
+                leading: Icon(Icons.warning, color: severityColor),
+                title: Text('${alert['room']} - ${alert['type']}'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(alert['message'] as String),
+                    Text(alert['time'] as String, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _activateRandomRoom() {
+    setState(() {
+      // Find inactive rooms
+      final inactiveRooms = _allRooms.where((room) => !(room['isActive'] as bool)).toList();
+      if (inactiveRooms.isNotEmpty) {
+        // Activate a random inactive room
+        final randomRoom = inactiveRooms[DateTime.now().millisecondsSinceEpoch % inactiveRooms.length];
+        randomRoom['isActive'] = true;
+        randomRoom['status'] = 'Normal'; // Set a default status
+        randomRoom['usage'] = '${(DateTime.now().millisecondsSinceEpoch % 5 + 1)}.${DateTime.now().millisecondsSinceEpoch % 9} kW'; // Random usage
+      }
+    });
+  }
 }
 
 class _DepartmentOverviewSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _DepartmentOverviewSection({required this.scheme});
+  final VoidCallback onActiveRoomsTap;
+  final VoidCallback onAlertsTap;
+  final List<Map<String, dynamic>> activeRooms;
+  final int totalRooms;
+  final VoidCallback onActivateRoom;
+  const _DepartmentOverviewSection({
+    required this.scheme, 
+    required this.onActiveRoomsTap, 
+    required this.onAlertsTap,
+    required this.activeRooms,
+    required this.totalRooms,
+    required this.onActivateRoom,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -217,11 +350,11 @@ class _DepartmentOverviewSection extends StatelessWidget {
           spacing: 16,
           runSpacing: 16,
           alignment: WrapAlignment.center,
-          children: const [
-            _DepartmentStatCard(label: 'Total Usage', value: '18.4 kW', icon: Icons.electric_bolt_outlined, color: Colors.green),
-            _DepartmentStatCard(label: 'Active Rooms', value: '8 of 12', icon: Icons.room_outlined, color: Colors.blue),
-            _DepartmentStatCard(label: 'Alerts', value: '3 Active', icon: Icons.warning_outlined, color: Colors.orange),
-            _DepartmentStatCard(label: 'Efficiency', value: '87%', icon: Icons.trending_up_outlined, color: Colors.purple),
+          children: [
+            const _DepartmentStatCard(label: 'Total Usage', value: '18.4 kW', icon: Icons.electric_bolt_outlined, color: Colors.green),
+            _DepartmentStatCard(label: 'Active Rooms', value: '${activeRooms.length} of $totalRooms', icon: Icons.room_outlined, color: Colors.blue, onTap: onActiveRoomsTap),
+            _DepartmentStatCard(label: 'Alerts', value: '3 Active', icon: Icons.warning_outlined, color: Colors.orange, onTap: onAlertsTap),
+            const _DepartmentStatCard(label: 'Efficiency', value: '87%', icon: Icons.trending_up_outlined, color: Colors.purple),
           ],
         ),
         const SizedBox(height: 32),
@@ -233,6 +366,22 @@ class _DepartmentOverviewSection extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         SizedBox(height: 200, child: _DepartmentUsageChart()),
+        
+        const SizedBox(height: 32),
+        
+        // Demo: Simulate room activation
+        Center(
+          child: ElevatedButton.icon(
+            onPressed: onActivateRoom,
+            icon: const Icon(Icons.power),
+            label: const Text('Simulate Room Activation'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: scheme.primary,
+              foregroundColor: scheme.onPrimary,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+          ),
+        ),
         
         const SizedBox(height: 32),
         
@@ -272,18 +421,8 @@ class _DepartmentOverviewSection extends StatelessWidget {
 
 class _DepartmentRoomsSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _DepartmentRoomsSection({required this.scheme});
-  
-  // MODIFIED: Sample data adjusted for requested percentages (15, 25, 10, 13, 15, 22)
-  // Total Usage maintained around 34.5 kW
-  final List<Map<String, dynamic>> _roomData = const [
-    {'room': 'CS-404', 'usage_kw': 5.2, 'load': 0.6, 'status': 'Normal', 'color': Colors.green}, // ~15.1%
-    {'room': 'CS-Lab 1', 'usage_kw': 8.6, 'load': 0.9, 'status': 'High Usage', 'color': Colors.red}, // ~24.9%
-    {'room': 'CS-Lab 2', 'usage_kw': 3.4, 'load': 0.7, 'status': 'Moderate', 'color': Colors.orange}, // ~9.9%
-    {'room': 'Server Room', 'usage_kw': 4.5, 'load': 0.8, 'status': 'Critical System', 'color': Colors.purple}, // ~13.0%
-    {'room': 'CS-Faculty Room', 'usage_kw': 5.2, 'load': 0.3, 'status': 'Low Usage', 'color': Colors.blue}, // ~15.1%
-    {'room': 'CS-Seminar Hall', 'usage_kw': 7.6, 'load': 0.5, 'status': 'Offline', 'color': Colors.grey}, // ~22.0%
-  ];
+  final List<Map<String, dynamic>> rooms;
+  const _DepartmentRoomsSection({required this.scheme, required this.rooms});
 
   // Refactored helper function for a more compact, ListTile-like appearance
   Widget _buildRoomMonitorCard(BuildContext context, String room, String usage, double load, Color statusColor, String status) {
@@ -373,13 +512,36 @@ class _DepartmentRoomsSection extends StatelessWidget {
         const SizedBox(height: 24),
         
         // Rooms List using the new compact card layout
-        ..._roomData.map((data) {
+        ...rooms.map((data) {
+          Color statusColor;
+          switch (data['status']) {
+            case 'Normal':
+              statusColor = Colors.green;
+              break;
+            case 'High Usage':
+              statusColor = Colors.red;
+              break;
+            case 'Moderate':
+              statusColor = Colors.orange;
+              break;
+            case 'Critical System':
+              statusColor = Colors.purple;
+              break;
+            case 'Low Usage':
+              statusColor = Colors.blue;
+              break;
+            case 'Offline':
+              statusColor = Colors.grey;
+              break;
+            default:
+              statusColor = Colors.grey;
+          }
           return _buildRoomMonitorCard(
             context, 
             data['room'] as String, 
-            '${(data['usage_kw'] as double).toStringAsFixed(1)} kW', 
-            data['load'] as double, 
-            data['color'] as Color, 
+            data['usage'] as String, 
+            0.5, // Default load
+            statusColor, 
             data['status'] as String
           );
         }).toList(),
@@ -394,7 +556,38 @@ class _DepartmentRoomsSection extends StatelessWidget {
         const SizedBox(height: 16),
         SizedBox(
           height: 250,
-          child: _DepartmentRoomsDistributionChart(roomData: _roomData),
+          child: _DepartmentRoomsDistributionChart(roomData: rooms.map((room) {
+            Color statusColor;
+            switch (room['status']) {
+              case 'Normal':
+                statusColor = Colors.green;
+                break;
+              case 'High Usage':
+                statusColor = Colors.red;
+                break;
+              case 'Moderate':
+                statusColor = Colors.orange;
+                break;
+              case 'Critical System':
+                statusColor = Colors.purple;
+                break;
+              case 'Low Usage':
+                statusColor = Colors.blue;
+                break;
+              case 'Offline':
+                statusColor = Colors.grey;
+                break;
+              default:
+                statusColor = Colors.grey;
+            }
+            final usageStr = room['usage'] as String;
+            final usageKw = double.tryParse(usageStr.split(' ')[0]) ?? 0.0;
+            return {
+              'room': room['room'],
+              'usage_kw': usageKw,
+              'color': statusColor,
+            };
+          }).toList()),
         ),
         
       ],
@@ -490,15 +683,21 @@ class _DepartmentRoomsDistributionChart extends StatelessWidget {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
                 'Total Live Usage: ${totalUsage.toStringAsFixed(1)} kW',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
-              // Use Expanded/Wrap if the legend is too long, but simple column works for this data size
-              ...legendItems,
+              // Make legend scrollable to prevent overflow
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: legendItems,
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -747,7 +946,8 @@ class _DepartmentStatCard extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color color;
-  const _DepartmentStatCard({required this.label, required this.value, required this.icon, required this.color});
+  final VoidCallback? onTap;
+  const _DepartmentStatCard({required this.label, required this.value, required this.icon, required this.color, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -760,17 +960,21 @@ class _DepartmentStatCard extends StatelessWidget {
         elevation: 2,
         shadowColor: Colors.transparent,
         color: isDark ? theme.colorScheme.surfaceContainerHighest : theme.cardTheme.color,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 28, color: color),
-              const Spacer(),
-              Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(label, style: theme.textTheme.labelLarge),
-            ],
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 28, color: color),
+                const Spacer(),
+                Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(label, style: theme.textTheme.labelLarge),
+              ],
+            ),
           ),
         ),
       ),
