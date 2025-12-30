@@ -5,6 +5,7 @@ import 'package:energia/dashboard_scaffold.dart';
 // Assuming Analysis is in graph_adm.dart and Anomaly is in anomaly_adm.dart
 import 'graph_adm.dart'; 
 import 'anomaly_adm.dart'; 
+import 'services/notifier.dart'; // Added import for notifier
 // --- MODIFIED: ADDED IMPORT FOR ROLE SELECTION PAGE ---
 import 'role_selection_page.dart';
 // --- END MODIFIED ---
@@ -434,9 +435,9 @@ class _DepartmentRoomsSection extends StatelessWidget {
       child: InkWell(
         onTap: () {
           // Placeholder: Navigate to detailed room control/analytics page
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Opening Control Panel for $room')),
-          );
+          // Provide consistent in-app feedback
+          // ignore: use_build_context_synchronously
+          AppNotifier.showInfo(context, 'Opening Control Panel for $room');
         },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0), // Tighter vertical padding (8.0 instead of 12.0)
@@ -766,7 +767,7 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
           'Usage Report', 
           'Export comprehensive department data for auditing.', 
           Icons.download_for_offline_outlined, 
-          () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Preparing detailed report for download...'))),
+          () => AppNotifier.showInfo(context, 'Preparing detailed report for download...'),
           showArrow: false, // ARROW REMOVED
         ),
         
@@ -914,9 +915,7 @@ class PeakHoursMetricsTable extends StatelessWidget {
                   labelStyle: TextStyle(color: color, fontWeight: FontWeight.bold),
                 ),
                 onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Focusing optimization for ${data['time']}')),
-                  );
+                  AppNotifier.showInfo(context, 'Focusing optimization for ${data['time']}');
                 },
               ),
             );

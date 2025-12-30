@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
+import 'services/notifier.dart';
+import 'package:energia/services/pdf_export.dart';
+import 'package:energia/services/csv_export.dart';
 import 'role_selection_page.dart'; // For Logout navigation
 // Departmental page imports
 import 'computer_science_classrooms_page.dart'; 
@@ -9,7 +12,10 @@ import 'Electronics.dart';
 import 'mechanical.dart';
 import 'Itt.dart';
 import 'adminblock.dart';
-
+import 'dart:convert'; // Fixes 'jsonEncode' error
+import 'package:http/http.dart' as http; // Fixes 'http' error
+import 'services/api.dart' as api; // Import API functions
+import 'dart:ui'; // For ImageFilter (glassmorphism effect)
 
 // --- HELPER WIDGETS ---
 
@@ -78,22 +84,193 @@ class _UserStatsCard extends StatelessWidget {
 }
 
 class _CampusEnergyPieChart extends StatelessWidget {
-  // FIX: Added const constructor to fix the compilation error
   const _CampusEnergyPieChart({super.key}); 
   
   @override
   Widget build(BuildContext context) {
-    return PieChart(
-      PieChartData(
-        sectionsSpace: 2,
-        centerSpaceRadius: 40,
-        sections: [
-          PieChartSectionData(value: 30, color: Colors.blue.shade600, title: 'CS\n30%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 25, color: Colors.green.shade600, title: 'ECE\n25%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 20, color: Colors.orange.shade600, title: 'Mech\n20%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 15, color: Colors.purple.shade600, title: 'Civil\n15%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-          PieChartSectionData(value: 10, color: Colors.cyan.shade600, title: 'Admin\n10%', radius: 50, titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDark 
+            ? [
+                Colors.grey.shade900.withOpacity(0.5),
+                Colors.grey.shade800.withOpacity(0.3),
+              ]
+            : [
+                Colors.white.withOpacity(0.7),
+                Colors.grey.shade100.withOpacity(0.5),
+              ],
+        ),
+        border: Border.all(
+          color: isDark 
+            ? Colors.white.withOpacity(0.1) 
+            : Colors.white.withOpacity(0.8),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isDark 
+              ? Colors.black.withOpacity(0.3)
+              : Colors.grey.withOpacity(0.2),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
         ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: isDark
+                  ? [
+                      Colors.grey.shade900.withOpacity(0.3),
+                      Colors.grey.shade800.withOpacity(0.2),
+                    ]
+                  : [
+                      Colors.white.withOpacity(0.4),
+                      Colors.white.withOpacity(0.2),
+                    ],
+              ),
+            ),
+            child: PieChart(
+              PieChartData(
+                sectionsSpace: 3,
+                centerSpaceRadius: 60,
+                startDegreeOffset: -90,
+                sections: [
+                  PieChartSectionData(
+                    value: 30,
+                    color: Colors.blue.shade400,
+                    title: '30%',
+                    radius: 85,
+                    titleStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                    ),
+                    titlePositionPercentageOffset: 0.6,
+                    badgeWidget: _buildGlassyBadge('CS', Colors.blue.shade400),
+                    badgePositionPercentageOffset: 1.4,
+                  ),
+                  PieChartSectionData(
+                    value: 25,
+                    color: Colors.green.shade400,
+                    title: '25%',
+                    radius: 80,
+                    titleStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                    ),
+                    titlePositionPercentageOffset: 0.6,
+                    badgeWidget: _buildGlassyBadge('ECE', Colors.green.shade400),
+                    badgePositionPercentageOffset: 1.4,
+                  ),
+                  PieChartSectionData(
+                    value: 20,
+                    color: Colors.orange.shade400,
+                    title: '20%',
+                    radius: 75,
+                    titleStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                    ),
+                    titlePositionPercentageOffset: 0.6,
+                    badgeWidget: _buildGlassyBadge('Mech', Colors.orange.shade400),
+                    badgePositionPercentageOffset: 1.4,
+                  ),
+                  PieChartSectionData(
+                    value: 15,
+                    color: Colors.purple.shade400,
+                    title: '15%',
+                    radius: 70,
+                    titleStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                    ),
+                    titlePositionPercentageOffset: 0.6,
+                    badgeWidget: _buildGlassyBadge('IT', Colors.purple.shade400),
+                    badgePositionPercentageOffset: 1.4,
+                  ),
+                  PieChartSectionData(
+                    value: 10,
+                    color: Colors.cyan.shade400,
+                    title: '10%',
+                    radius: 65,
+                    titleStyle: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                    ),
+                    titlePositionPercentageOffset: 0.6,
+                    badgeWidget: _buildGlassyBadge('Admin', Colors.cyan.shade400),
+                    badgePositionPercentageOffset: 1.4,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlassyBadge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withOpacity(0.9),
+            Colors.white.withOpacity(0.7),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.5),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+          BoxShadow(
+            color: Colors.white.withOpacity(0.5),
+            blurRadius: 8,
+            offset: const Offset(-2, -2),
+          ),
+        ],
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+          color: color,
+          letterSpacing: 0.5,
+        ),
       ),
     );
   }
@@ -178,9 +355,41 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 }
 
 // --- 0. CAMPUS OVERVIEW SECTION ---
-class _CampusOverviewSection extends StatelessWidget {
+class _CampusOverviewSection extends StatefulWidget {
   final ColorScheme scheme;
   const _CampusOverviewSection({required this.scheme});
+
+  @override
+  State<_CampusOverviewSection> createState() => _CampusOverviewSectionState();
+}
+
+class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
+  Map<String, int>? _userCounts;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserCounts();
+  }
+
+  Future<void> _loadUserCounts() async {
+    try {
+      final counts = await api.getUserCounts();
+      if (mounted) {
+        setState(() {
+          _userCounts = counts;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   // Helper to build the Department Status Tiles
   Widget _buildDepartmentStatusTile(BuildContext context, String dept, String usage, String efficiency, Color color, String status, {VoidCallback? onTap}) {
@@ -210,11 +419,13 @@ class _CampusOverviewSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final totalUsers = _userCounts?['total_users'] ?? 0;
+    
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         // Admin Welcome Card
-        _AdminWelcomeCard(scheme: scheme),
+        _AdminWelcomeCard(scheme: widget.scheme),
         const SizedBox(height: 24),
         
         // Campus-wide Key Stats
@@ -227,11 +438,13 @@ class _CampusOverviewSection extends StatelessWidget {
           spacing: 16,
           runSpacing: 16,
           alignment: WrapAlignment.center,
-          children: const [
-            _CampusStatCard(label: 'Total Usage', value: '247.8 kW', icon: Icons.electric_bolt_outlined, color: Colors.red),
-            _CampusStatCard(label: 'Active Users', value: '1,247', icon: Icons.people_outlined, color: Colors.blue),
-            _CampusStatCard(label: 'Buildings', value: '12 Online', icon: Icons.business_outlined, color: Colors.purple),
-            _CampusStatCard(label: 'Efficiency', value: '94.2%', icon: Icons.eco_outlined, color: Colors.green),
+          children: [
+            const _CampusStatCard(label: 'Total Usage', value: '247.8 kW', icon: Icons.electric_bolt_outlined, color: Colors.red),
+            _isLoading 
+              ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+              : _CampusStatCard(label: 'Active Users', value: '$totalUsers', icon: Icons.people_outlined, color: Colors.blue),
+            const _CampusStatCard(label: 'Buildings', value: '12 Online', icon: Icons.business_outlined, color: Colors.purple),
+            const _CampusStatCard(label: 'Efficiency', value: '94.2%', icon: Icons.eco_outlined, color: Colors.green),
           ],
         ),
         const SizedBox(height: 32),
@@ -242,8 +455,7 @@ class _CampusOverviewSection extends StatelessWidget {
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 16),
-        // FIX APPLIED HERE: _CampusEnergyPieChart() is now const
-        const SizedBox(height: 200, child: _CampusEnergyPieChart()),
+        const SizedBox(height: 300, child: _CampusEnergyPieChart()),
         
         const SizedBox(height: 32),
         
@@ -487,13 +699,49 @@ class _AdminWelcomeCard extends StatelessWidget {
 }
 
 // --- 1. USERS MANAGEMENT SECTION ---
-class _UsersManagementSection extends StatelessWidget {
+class _UsersManagementSection extends StatefulWidget {
   final ColorScheme scheme;
   const _UsersManagementSection({required this.scheme});
 
   @override
+  State<_UsersManagementSection> createState() => _UsersManagementSectionState();
+}
+
+class _UsersManagementSectionState extends State<_UsersManagementSection> {
+  Map<String, int>? _userCounts;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserCounts();
+  }
+
+  Future<void> _loadUserCounts() async {
+    try {
+      final counts = await api.getUserCounts();
+      if (mounted) {
+        setState(() {
+          _userCounts = counts;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final totalUsers = _userCounts?['total_users'] ?? 0;
+    final coordinatorCount = _userCounts?['coordinators'] ?? 0;
+    final classRepCount = _userCounts?['class_representatives'] ?? 0;
+    
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -511,18 +759,20 @@ class _UsersManagementSection extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: _UserStatsCard(
-                title: 'Total Users',
-                value: '1,247',
-                icon: Icons.people_outlined,
-                color: Colors.blue.shade600,
-              ),
+              child: _isLoading 
+                ? const Card(child: Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())))
+                : _UserStatsCard(
+                    title: 'Total Users',
+                    value: '$totalUsers',
+                    icon: Icons.people_outlined,
+                    color: Colors.blue.shade600,
+                  ),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: _UserStatsCard(
                 title: 'Active Now',
-                value: '342',
+                value: '$totalUsers',
                 icon: Icons.online_prediction_outlined,
                 color: Colors.green.shade600,
               ),
@@ -531,19 +781,11 @@ class _UsersManagementSection extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         
-        // Tappable User Type Cards with navigation
-        _buildUserTypeCard(
-          context,
-          'Administrators', 
-          '8 Users', 
-          Icons.admin_panel_settings_outlined, 
-          Colors.red.shade600,
-          // Navigator for Administrators (assuming no separate page, or generic list)
-        ),
+        // Tappable User Type Cards with navigation (hide Administrators & Students as requested)
         _buildUserTypeCard(
           context,
           'Coordinators', 
-          '24 Users', 
+          _isLoading ? 'Loading...' : '$coordinatorCount Users', 
           Icons.supervisor_account_outlined, 
           Colors.orange.shade600,
           onTap: () {
@@ -553,21 +795,14 @@ class _UsersManagementSection extends StatelessWidget {
         _buildUserTypeCard(
           context,
           'Class Representatives', 
-          '156 Users', 
+          _isLoading ? 'Loading...' : '$classRepCount Users', 
           Icons.school_outlined, 
           Colors.blue.shade600,
           onTap: () {
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClassRepresentativesPage()));
           },
         ),
-        _buildUserTypeCard(
-          context, 
-          'Students', 
-          '1,059 Users', 
-          Icons.person_outline, 
-          Colors.green.shade600,
-          // Navigator for Students (assuming no separate page, or generic list)
-        ),
+        // (Students card removed)
         
         const SizedBox(height: 24),
         
@@ -587,7 +822,13 @@ class _UsersManagementSection extends StatelessWidget {
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddUserPage()));
           },
         ),
-        _buildActionCard(context, 'Bulk Import', 'Import users from CSV file', Icons.upload_file_outlined),
+        _buildActionCard(
+          context, 
+          'Bulk Import', 
+          'Export all users to CSV file', 
+          Icons.download_outlined,
+          onTap: () => _exportAllUsersCSV(context),
+        ),
         _buildActionCard(context, 'User Permissions', 'Manage access controls', Icons.security_outlined),
         _buildActionCard(context, 'Activity Logs', 'View user activity history', Icons.history_outlined),
         
@@ -643,6 +884,47 @@ class _UsersManagementSection extends StatelessWidget {
     );
   }
 
+  void _exportAllUsersCSV(BuildContext context) async {
+    try {
+      // Get all coordinators and class representatives data from backend
+      final coordinators = await api.getCoordinators();
+      final classReps = await api.getClassRepresentatives();
+      
+      // Convert to the format expected by CSV export
+      final coordsForCsv = coordinators.map((c) => {
+        'name': c['name']?.toString() ?? '',
+        'ktuid': c['username']?.toString() ?? '',
+        'department': c['department']?.toString() ?? '',
+      }).toList();
+      
+      final repsForCsv = classReps.map((r) => {
+        'name': r['name']?.toString() ?? '',
+        'ktuid': r['ktu_id']?.toString() ?? '',
+        'department': r['department']?.toString() ?? '',
+        'room': r['email']?.toString() ?? '',  // Using email instead of room
+        'year': r['year']?.toString() ?? '',
+        'gender': 'N/A',  // Not available in backend
+      }).toList();
+      
+      // Export to CSV
+      final filePath = await exportUsersCSV(
+        coordinators: coordsForCsv,
+        classReps: repsForCsv,
+      );
+      
+      if (context.mounted) {
+        final msg = filePath != null
+            ? 'CSV exported to: $filePath'
+            : 'CSV export initiated';
+        AppNotifier.showInfo(context, msg);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        AppNotifier.showError(context, 'Failed to export users: $e');
+      }
+    }
+  }
+
   Widget _buildUserTypeCard(BuildContext context, String type, String count, IconData icon, Color color, {VoidCallback? onTap}) {
     final theme = Theme.of(context);
     return Card(
@@ -678,20 +960,134 @@ class _UsersManagementSection extends StatelessWidget {
 
 // --- USER MANAGEMENT DETAIL PAGES (Added from snippet) ---
 
-class CoordinatorsPage extends StatelessWidget {
+class CoordinatorsPage extends StatefulWidget {
   const CoordinatorsPage({super.key});
 
-  static const List<Map<String, String>> _coordinators = [
-    {
-      'name': 'Dr. Priya Nair',
-      'ktuid': 'KTU-1001',
-      'department': 'Computer Science',
-    },
-    {'name': 'Suman R', 'ktuid': 'KTU-1002', 'department': 'Electronics'},
-    {'name': 'Manish K', 'ktuid': 'KTU-1003', 'department': 'Mechanical'},
-    {'name': 'Anita P', 'ktuid': 'KTU-1004', 'department': 'Civil'},
-    {'name': 'Richa T', 'ktuid': 'KTU-1005', 'department': 'Administrative'},
-  ];
+  @override
+  State<CoordinatorsPage> createState() => _CoordinatorsPageState();
+}
+
+class _CoordinatorsPageState extends State<CoordinatorsPage> {
+  List<Map<String, dynamic>> _allCoordinators = [];
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  final _searchController = TextEditingController();
+  String _selectedDepartment = 'All Departments';
+  List<Map<String, dynamic>> _filteredCoordinators = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCoordinators();
+  }
+
+  Future<void> _loadCoordinators() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final coordinators = await api.getCoordinators();
+      setState(() {
+        _allCoordinators = coordinators;
+        _filteredCoordinators = List.from(_allCoordinators);
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to load coordinators: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _filterData() {
+    setState(() {
+      _filteredCoordinators = _allCoordinators.where((coord) {
+        final name = coord['name']?.toString().toLowerCase() ?? '';
+        final username = coord['username']?.toString().toLowerCase() ?? '';
+        final searchLower = _searchController.text.toLowerCase();
+        
+        final matchesSearch = _searchController.text.isEmpty ||
+            name.contains(searchLower) ||
+            username.contains(searchLower);
+        
+        final matchesDepartment = _selectedDepartment == 'All Departments' ||
+            coord['department'] == _selectedDepartment;
+        
+        return matchesSearch && matchesDepartment;
+      }).toList();
+    });
+  }
+
+  void _exportData() {
+    final headers = ['Name', 'Username', 'Department'];
+    final rows = _filteredCoordinators
+        .map((c) => [
+          c['name']?.toString() ?? '',
+          c['username']?.toString() ?? '',
+          c['department']?.toString() ?? ''
+        ])
+        .toList();
+
+    exportTablePdfAutoSave(
+      'Department Coordinators',
+      headers,
+      rows,
+      subtitle: 'Exported ${_filteredCoordinators.length} coordinators · ${DateTime.now()}',
+    ).then((savedPath) {
+      final msg = savedPath != null
+          ? 'Saved PDF to: $savedPath'
+          : 'PDF ready – choose location in Save/Share';
+      AppNotifier.showInfo(context, msg);
+    });
+  }
+
+  void _confirmDeleteUser(String username, String name) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete User'),
+        content: Text('Are you sure you want to delete $name ($username)?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteUser(username);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteUser(String username) async {
+    try {
+      await api.deleteUser(username);
+      if (mounted) {
+        AppNotifier.showSuccess(context, 'User deleted successfully');
+        _loadCoordinators();
+      }
+    } catch (e) {
+      if (mounted) {
+        AppNotifier.showError(context, 'Failed to delete user: $e');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -701,6 +1097,13 @@ class CoordinatorsPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Coordinators'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadCoordinators,
+            tooltip: 'Refresh',
+          ),
+        ],
       ),
       body: Container(
         width: double.infinity,
@@ -716,13 +1119,33 @@ class CoordinatorsPage extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 900),
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Header
-                  Card(
-                    elevation: 0,
-                    color: scheme.primaryContainer,
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _errorMessage != null
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
+                              const SizedBox(height: 16),
+                              Text(_errorMessage!, style: theme.textTheme.titleMedium),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                onPressed: _loadCoordinators,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        )
+                      : SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Header
+                    Card(
+                      elevation: 0,
+                      color: scheme.primaryContainer,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -740,9 +1163,70 @@ class CoordinatorsPage extends StatelessWidget {
                             ),
                           ),
                           // Quick actions
-                          FilledButton.icon(onPressed: () {}, icon: const Icon(Icons.file_download), label: const Text('Export')),
+                          FilledButton.icon(
+                            onPressed: _exportData,
+                            icon: const Icon(Icons.file_download),
+                            label: const Text('Export'),
+                          ),
                           const SizedBox(width: 8),
-                          OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.filter_alt), label: const Text('Filter')),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Filter Options'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      DropdownButtonFormField<String>(
+                                        value: _selectedDepartment,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Department',
+                                          border: OutlineInputBorder(),
+                                        ),
+                                        items: const [
+                                          DropdownMenuItem(value: 'All Departments', child: Text('All Departments')),
+                                          DropdownMenuItem(value: 'CSE', child: Text('CSE')),
+                                          DropdownMenuItem(value: 'ECE', child: Text('ECE')),
+                                          DropdownMenuItem(value: 'ME', child: Text('ME')),
+                                          DropdownMenuItem(value: 'CE', child: Text('CE')),
+                                          DropdownMenuItem(value: 'AD', child: Text('AD')),
+                                        ],
+                                        onChanged: (value) {
+                                          if (value != null) {
+                                            setState(() {
+                                              _selectedDepartment = value;
+                                            });
+                                          }
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _selectedDepartment = 'All Departments';
+                                        });
+                                        _filterData();
+                                        Navigator.pop(context);
+                                      },
+                                      child: const Text('Clear'),
+                                    ),
+                                    FilledButton(
+                                      onPressed: () {
+                                        _filterData();
+                                        Navigator.pop(context);
+                                      },
+                                      child: const Text('Apply'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.filter_alt),
+                            label: Text(_selectedDepartment == 'All Departments' ? 'Filter' : 'Filtered'),
+                          ),
                         ],
                       ),
                     ),
@@ -759,8 +1243,10 @@ class CoordinatorsPage extends StatelessWidget {
                         children: [
                           // Search bar
                           TextField(
+                            controller: _searchController,
+                            onChanged: (_) => _filterData(),
                             decoration: const InputDecoration(
-                              hintText: 'Search by name or KTU ID',
+                              hintText: 'Search by name or username',
                               prefixIcon: Icon(Icons.search),
                               border: OutlineInputBorder(),
                             ),
@@ -768,23 +1254,28 @@ class CoordinatorsPage extends StatelessWidget {
                           const SizedBox(height: 12),
                           // Table
                           SingleChildScrollView(
-                            scrollDirection: Axis.vertical,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: DataTable(
-                                columns: [
-                                  DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
-                                  DataColumn(label: Text('KTU ID', style: theme.textTheme.titleMedium)),
-                                  DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
-                                ],
-                                rows: _coordinators.map((c) {
-                                  return DataRow(cells: [
-                                    DataCell(Text(c['name']!)),
-                                    DataCell(Text(c['ktuid']!)),
-                                    DataCell(Text(c['department']!)),
-                                  ]);
-                                }).toList(),
-                              ),
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              columns: [
+                                DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Username', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Actions', style: theme.textTheme.titleMedium)),
+                              ],
+                              rows: _filteredCoordinators.map((c) {
+                                return DataRow(cells: [
+                                  DataCell(Text(c['name']?.toString() ?? 'N/A')),
+                                  DataCell(Text(c['username']?.toString() ?? 'N/A')),
+                                  DataCell(Text(c['department']?.toString() ?? 'N/A')),
+                                  DataCell(
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                      tooltip: 'Delete user',
+                                      onPressed: () => _confirmDeleteUser(c['username']?.toString() ?? '', c['name']?.toString() ?? 'User'),
+                                    ),
+                                  ),
+                                ]);
+                              }).toList(),
                             ),
                           ),
                         ],
@@ -796,9 +1287,9 @@ class CoordinatorsPage extends StatelessWidget {
                   // Footer stats
                   Row(
                     children: [
-                      Expanded(child: _UserStatsCard(title: 'Total Coordinators', value: '${_coordinators.length}', icon: Icons.people, color: Colors.blue.shade600)),
+                      Expanded(child: _UserStatsCard(title: 'Total Coordinators', value: '${_filteredCoordinators.length}', icon: Icons.people, color: Colors.blue.shade600)),
                       const SizedBox(width: 12),
-                      Expanded(child: _UserStatsCard(title: 'Active Today', value: '6', icon: Icons.online_prediction, color: Colors.green.shade600)),
+                      Expanded(child: _UserStatsCard(title: 'Showing', value: '${_filteredCoordinators.length}/${_allCoordinators.length}', icon: Icons.filter_list, color: Colors.green.shade600)),
                     ],
                   ),
                 ],
@@ -807,108 +1298,187 @@ class CoordinatorsPage extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }
 
-class ClassRepresentativesPage extends StatelessWidget {
+class ClassRepresentativesPage extends StatefulWidget {
   const ClassRepresentativesPage({super.key});
 
-  // Generates unique realistic-looking student names and details
-  static List<Map<String, String>> _generateReps() {
-    final depts = {
-      'CS': 'Computer Science',
-      'ECE': 'Electronics',
-      'ME': 'Mechanical',
-      'CE': 'Civil',
-      'AD': 'Administrative',
-    };
+  @override
+  State<ClassRepresentativesPage> createState() => _ClassRepresentativesPageState();
+}
 
-    final maleFirst = [
-      'Arjun',
-      'Rahul',
-      'Vineet',
-      'Sandeep',
-      'Karthik',
-      'Akhil',
-      'Manav',
-      'Rohit',
-      'Anil',
-      'Deepak',
-    ];
-    final femaleFirst = [
-      'Anjali',
-      'Priya',
-      'Riya',
-      'Neha',
-      'Sana',
-      'Pooja',
-      'Isha',
-      'Meera',
-      'Divya',
-      'Kavya',
-    ];
-    final surnames = [
-      'Nair',
-      'Menon',
-      'Thomas',
-      'Kumar',
-      'Varma',
-      'Reddy',
-      'Sharma',
-      'Patel',
-      'Singh',
-      'Joseph',
-    ];
+class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
+  List<Map<String, dynamic>> _allReps = [];
+  bool _isLoading = true;
+  String? _errorMessage;
 
-    final out = <Map<String, String>>[];
-    var counter = 1001; // starting KTU id suffix for uniqueness
+  final _searchController = TextEditingController();
+  String _selectedDepartment = 'All Departments';
+  List<Map<String, dynamic>> _filteredReps = [];
+  String _sortBy = 'name';
+  bool _sortAscending = true;
 
-    for (final entry in depts.entries) {
-      final abbr = entry.key;
-      final deptName = entry.value;
-      for (var year = 1; year <= 4; year++) {
-        // Boy representative
-        final maleIdx = (counter + year) % maleFirst.length;
-        final surnameIdx = (counter + year) % surnames.length;
-        final maleName = '${maleFirst[maleIdx]} ${surnames[surnameIdx]}';
-        out.add({
-          'name': maleName,
-          'ktuid': 'KTU-$counter',
-          'department': deptName,
-          'room': '${abbr.toLowerCase()}${year}01',
-          'year': '$year',
-          'gender': 'Male',
-        });
-        counter++;
+  @override
+  void initState() {
+    super.initState();
+    _loadClassRepresentatives();
+  }
 
-        // Girl representative
-        final femaleIdx = (counter + year) % femaleFirst.length;
-        final surnameIdx2 = (counter + year) % surnames.length;
-        final femaleName = '${femaleFirst[femaleIdx]} ${surnames[surnameIdx2]}';
-        out.add({
-          'name': femaleName,
-          'ktuid': 'KTU-$counter',
-          'department': deptName,
-          'room': '${abbr.toLowerCase()}${year}02',
-          'year': '$year',
-          'gender': 'Female',
-        });
-        counter++;
+  Future<void> _loadClassRepresentatives() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final classReps = await api.getClassRepresentatives();
+      setState(() {
+        _allReps = classReps;
+        _filteredReps = List.from(_allReps);
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to load class representatives: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _filterData() {
+    setState(() {
+      _filteredReps = _allReps.where((rep) {
+        final name = rep['name']?.toString().toLowerCase() ?? '';
+        final ktuId = rep['ktu_id']?.toString().toLowerCase() ?? '';
+        final email = rep['email']?.toString().toLowerCase() ?? '';
+        final searchLower = _searchController.text.toLowerCase();
+        
+        final matchesSearch = _searchController.text.isEmpty ||
+            name.contains(searchLower) ||
+            ktuId.contains(searchLower) ||
+            email.contains(searchLower);
+        
+        final matchesDepartment = _selectedDepartment == 'All Departments' ||
+            rep['department'] == _selectedDepartment;
+        
+        return matchesSearch && matchesDepartment;
+      }).toList();
+      _sortData();
+    });
+  }
+
+  void _sortData() {
+    _filteredReps.sort((a, b) {
+      int comparison;
+      switch (_sortBy) {
+        case 'name':
+          comparison = (a['name']?.toString() ?? '').compareTo(b['name']?.toString() ?? '');
+          break;
+        case 'ktuid':
+          comparison = (a['ktu_id']?.toString() ?? '').compareTo(b['ktu_id']?.toString() ?? '');
+          break;
+        case 'department':
+          comparison = (a['department']?.toString() ?? '').compareTo(b['department']?.toString() ?? '');
+          break;
+        case 'year':
+          final yearA = int.tryParse(a['year']?.toString() ?? '0') ?? 0;
+          final yearB = int.tryParse(b['year']?.toString() ?? '0') ?? 0;
+          comparison = yearA.compareTo(yearB);
+          break;
+        default:
+          comparison = 0;
+      }
+      return _sortAscending ? comparison : -comparison;
+    });
+  }
+
+  void _exportData() {
+    final headers = ['Name', 'KTU ID', 'Department', 'Email', 'Year'];
+    final rows = _filteredReps
+        .map((r) => [
+              r['name']?.toString() ?? '',
+              r['ktu_id']?.toString() ?? '',
+              r['department']?.toString() ?? '',
+              r['email']?.toString() ?? '',
+              r['year']?.toString() ?? '',
+            ])
+        .toList();
+
+    exportTablePdfAutoSave(
+      'Class Representatives',
+      headers,
+      rows,
+      subtitle: 'Exported ${_filteredReps.length} reps · ${DateTime.now()}',
+    ).then((savedPath) {
+      final msg = savedPath != null
+          ? 'Saved PDF to: $savedPath'
+          : 'PDF ready – choose location in Save/Share';
+      AppNotifier.showInfo(context, msg);
+    });
+  }
+
+  void _confirmDeleteUser(String username, String name) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete User'),
+        content: Text('Are you sure you want to delete $name ($username)?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteUser(username);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteUser(String username) async {
+    try {
+      await api.deleteUser(username);
+      if (mounted) {
+        AppNotifier.showSuccess(context, 'User deleted successfully');
+        _loadClassRepresentatives();
+      }
+    } catch (e) {
+      if (mounted) {
+        AppNotifier.showError(context, 'Failed to delete user: $e');
       }
     }
-    return out;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final reps = _generateReps();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Class Representatives'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadClassRepresentatives,
+            tooltip: 'Refresh',
+          ),
+        ],
       ),
       body: Container(
         width: double.infinity,
@@ -924,18 +1494,38 @@ class ClassRepresentativesPage extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 1000),
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Header
-                  Card(
-                    elevation: 0,
-                    color: scheme.secondaryContainer,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _errorMessage != null
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
+                              const SizedBox(height: 16),
+                              Text(_errorMessage!, style: theme.textTheme.titleMedium),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                onPressed: _loadClassRepresentatives,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        )
+                      : SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Header
+                    Card(
+                      elevation: 0,
+                      color: scheme.secondaryContainer,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
                           Icon(Icons.school, color: scheme.onSecondaryContainer),
                           const SizedBox(width: 12),
                           Expanded(
@@ -947,9 +1537,88 @@ class ClassRepresentativesPage extends StatelessWidget {
                               ],
                             ),
                           ),
-                          FilledButton.icon(onPressed: () {}, icon: const Icon(Icons.file_download), label: const Text('Export')),
+                          FilledButton.icon(
+                            onPressed: _exportData,
+                            icon: const Icon(Icons.file_download),
+                            label: const Text('Export'),
+                          ),
                           const SizedBox(width: 8),
-                          OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.sort), label: const Text('Sort')),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Sort Options'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      RadioListTile<String>(
+                                        title: const Text('Name'),
+                                        value: 'name',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
+                                      ),
+                                      RadioListTile<String>(
+                                        title: const Text('KTU ID'),
+                                        value: 'ktuid',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
+                                      ),
+                                      RadioListTile<String>(
+                                        title: const Text('Department'),
+                                        value: 'department',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
+                                      ),
+                                      RadioListTile<String>(
+                                        title: const Text('Year'),
+                                        value: 'year',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
+                                      ),
+                                      const SizedBox(height: 12),
+                                      SwitchListTile(
+                                        title: const Text('Ascending'),
+                                        value: _sortAscending,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortAscending = value;
+                                          });
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  actions: [
+                                    FilledButton(
+                                      onPressed: () {
+                                        _filterData();
+                                        Navigator.pop(context);
+                                      },
+                                      child: const Text('Apply'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.sort),
+                            label: const Text('Sort'),
+                          ),
                         ],
                       ),
                     ),
@@ -969,8 +1638,10 @@ class ClassRepresentativesPage extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: TextField(
+                                  controller: _searchController,
+                                  onChanged: (_) => _filterData(),
                                   decoration: const InputDecoration(
-                                    hintText: 'Search reps by name, KTU ID or room',
+                                    hintText: 'Search by name, KTU ID, or email',
                                     prefixIcon: Icon(Icons.search),
                                     border: OutlineInputBorder(),
                                   ),
@@ -978,45 +1649,55 @@ class ClassRepresentativesPage extends StatelessWidget {
                               ),
                               const SizedBox(width: 12),
                               DropdownButton<String>(
-                                value: 'All Departments',
+                                value: _selectedDepartment,
                                 items: const [
                                   DropdownMenuItem(value: 'All Departments', child: Text('All Departments')),
-                                  DropdownMenuItem(value: 'Computer Science', child: Text('Computer Science')),
-                                  DropdownMenuItem(value: 'Electronics', child: Text('Electronics')),
-                                  DropdownMenuItem(value: 'Mechanical', child: Text('Mechanical')),
-                                  DropdownMenuItem(value: 'Civil', child: Text('Civil')),
-                                  DropdownMenuItem(value: 'Administrative', child: Text('Administrative')),
+                                  DropdownMenuItem(value: 'CSE', child: Text('CSE')),
+                                  DropdownMenuItem(value: 'ECE', child: Text('ECE')),
+                                  DropdownMenuItem(value: 'ME', child: Text('ME')),
+                                  DropdownMenuItem(value: 'CE', child: Text('CE')),
+                                  DropdownMenuItem(value: 'AD', child: Text('AD')),
                                 ],
-                                onChanged: (_) {},
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    setState(() {
+                                      _selectedDepartment = value;
+                                    });
+                                    _filterData();
+                                  }
+                                },
                               ),
                             ],
                           ),
                           const SizedBox(height: 12),
                           // Table
                           SingleChildScrollView(
-                            scrollDirection: Axis.vertical,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: DataTable(
-                                columns: [
-                                  DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
-                                  DataColumn(label: Text('KTU ID', style: theme.textTheme.titleMedium)),
-                                  DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
-                                  DataColumn(label: Text('Room No', style: theme.textTheme.titleMedium)),
-                                  DataColumn(label: Text('Year', style: theme.textTheme.titleMedium)),
-                                  DataColumn(label: Text('Gender', style: theme.textTheme.titleMedium)),
-                                ],
-                                rows: reps.map((r) {
-                                  return DataRow(cells: [
-                                    DataCell(Text(r['name']!)),
-                                    DataCell(Text(r['ktuid']!)),
-                                    DataCell(Text(r['department']!)),
-                                    DataCell(Text(r['room']!)),
-                                    DataCell(Text(r['year']!)),
-                                    DataCell(Text(r['gender']!)),
-                                  ]);
-                                }).toList(),
-                              ),
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              columns: [
+                                DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('KTU ID', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Email', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Year', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Actions', style: theme.textTheme.titleMedium)),
+                              ],
+                              rows: _filteredReps.map((r) {
+                                return DataRow(cells: [
+                                  DataCell(Text(r['name']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['ktu_id']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['department']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['email']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['year']?.toString() ?? 'N/A')),
+                                  DataCell(
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                      tooltip: 'Delete user',
+                                      onPressed: () => _confirmDeleteUser(r['username']?.toString() ?? '', r['name']?.toString() ?? 'User'),
+                                    ),
+                                  ),
+                                ]);
+                              }).toList(),
                             ),
                           ),
                         ],
@@ -1028,9 +1709,9 @@ class ClassRepresentativesPage extends StatelessWidget {
                   // Footer stats
                   Row(
                     children: [
-                      Expanded(child: _UserStatsCard(title: 'Total Representatives', value: '${reps.length}', icon: Icons.groups, color: Colors.blue.shade600)),
+                      Expanded(child: _UserStatsCard(title: 'Total Representatives', value: '${_filteredReps.length}', icon: Icons.groups, color: Colors.blue.shade600)),
                       const SizedBox(width: 12),
-                      Expanded(child: _UserStatsCard(title: 'New This Month', value: '12', icon: Icons.new_releases, color: Colors.orange.shade600)),
+                      Expanded(child: _UserStatsCard(title: 'Showing', value: '${_filteredReps.length}/${_allReps.length}', icon: Icons.filter_list, color: Colors.orange.shade600)),
                     ],
                   ),
                 ],
@@ -1039,6 +1720,7 @@ class ClassRepresentativesPage extends StatelessWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }
@@ -1055,20 +1737,17 @@ class _AddUserPageState extends State<AddUserPage> {
   final _nameCtl = TextEditingController();
   final _emailCtl = TextEditingController();
   final _phoneCtl = TextEditingController();
-  final _passwordCtl = TextEditingController();
   final _admissionCtl = TextEditingController();
 
-  String _role = 'Student';
+  String _role = 'Class Representative';
   String _department = 'CSE';
   String _year = '2';
   String _semester = 'S3';
   String _classGroup = 'CSE - A';
 
   static const roles = [
-    'Student',
     'Class Representative',
     'Coordinator',
-    'Administrator',
   ];
   static const departments = ['CSE', 'ECE', 'ME', 'CE', 'AD'];
 
@@ -1077,12 +1756,11 @@ class _AddUserPageState extends State<AddUserPage> {
     _nameCtl.dispose();
     _emailCtl.dispose();
     _phoneCtl.dispose();
-    _passwordCtl.dispose();
     _admissionCtl.dispose();
     super.dispose();
   }
 
-  void _submit() {
+  /*void _submit() {
     if (!_formKey.currentState!.validate()) return;
     final user = {
       'name': _nameCtl.text.trim(),
@@ -1099,17 +1777,66 @@ class _AddUserPageState extends State<AddUserPage> {
     };
 
     // TODO: wire this to backend / persistence. For now show confirmation and return user data.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Created ${user['role']}: ${user['name']}')),
-    );
+    AppNotifier.showSuccess(context, 'Created ${user['role']}: ${user['name']}');
     Navigator.of(context).pop(user);
-  }
+  }*/
+// Inside _AddUserPageState in admin_dashboard.dart
+void _submit() async {
+  if (!_formKey.currentState!.validate()) return;
+  
+  // Show loading dialog
+  showDialog(context: context, builder: (_) => const Center(child: CircularProgressIndicator()));
 
+  try {
+    // Call your new invite API
+   /*final response = await http.post(
+  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  headers: {'Content-Type': 'application/json'},
+  body: jsonEncode({
+    'username': _emailCtl.text.trim(), // Backend expects 'username'
+    'role': _role.toLowerCase(),
+    'department': _department,
+    'ktu_id': _admissionCtl.text.trim(),
+    'year': _year,
+    // No password sent here; backend generates the OTP
+  }),
+);*/
+// Inside _submit() in admin_dashboard.dart
+final response = await http.post(
+  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  headers: {'Content-Type': 'application/json'},
+  body: jsonEncode({
+    'username': _emailCtl.text.trim(),
+    'name': _nameCtl.text.trim(), // Include the Name
+    'role': _role.toLowerCase(),
+      // Department required for both coordinator and class rep
+      'department': _department,
+      // Class rep–specific fields
+      if (_role == 'Class Representative') ...{
+        'ktu_id': _admissionCtl.text.trim(),
+        'year': _year,
+      },
+  }),
+);
+
+    Navigator.pop(context); // Close loading
+    if (response.statusCode == 200) {
+      AppNotifier.showSuccess(context, 'Invitation email sent!');
+      Navigator.pop(context);
+    }
+  } catch (e) {
+    Navigator.pop(context);
+    // Handle error...
+  }
+}
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Add New User')),
+      appBar: AppBar(
+        title: const Text('Add New User'),
+        leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Card(
@@ -1157,17 +1884,6 @@ class _AddUserPageState extends State<AddUserPage> {
                                 ? null
                                 : 'Enter phone',
                   ),
-                  const SizedBox(height: 8),
-                  TextFormField(
-                    controller: _passwordCtl,
-                    decoration: const InputDecoration(
-                      labelText: 'Password',
-                      hintText: 'Cr@12345',
-                    ),
-                    obscureText: true,
-                    validator:
-                        (v) => (v ?? '').length >= 6 ? null : 'Min 6 chars',
-                  ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     value: _role,
@@ -1181,8 +1897,8 @@ class _AddUserPageState extends State<AddUserPage> {
                     onChanged: (v) => setState(() => _role = v!),
                   ),
 
-                  // Extra fields shown only when Role == Class Representative
-                  if (_role == 'Class Representative') ...[
+                  // Extra fields shown when role requires academic context
+                  if (_role == 'Class Representative' || _role == 'Coordinator') ...[
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       value: _department,
@@ -1199,6 +1915,10 @@ class _AddUserPageState extends State<AddUserPage> {
                       onChanged: (v) => setState(() => _department = v!),
                     ),
                     const SizedBox(height: 8),
+                  ],
+
+                  // Class Rep–specific details
+                  if (_role == 'Class Representative') ...[
                     DropdownButtonFormField<String>(
                       value: _year,
                       decoration: const InputDecoration(labelText: 'Year'),
@@ -1239,8 +1959,8 @@ class _AddUserPageState extends State<AddUserPage> {
                     TextFormField(
                       controller: _admissionCtl,
                       decoration: const InputDecoration(
-                        labelText: 'Admission No',
-                        hintText: '9316',
+                        labelText: 'Ktu Id',
+                        hintText: 'IDK22CS017',
                       ),
                       validator:
                           (v) => (v ?? '').trim().isEmpty ? 'Required' : null,

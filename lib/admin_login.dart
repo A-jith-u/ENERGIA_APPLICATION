@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/api.dart';
+import 'services/notifier.dart';
 
 class AdminLoginPage extends StatefulWidget {
   const AdminLoginPage({super.key});
@@ -43,16 +44,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
       Navigator.pushReplacementNamed(context, '/admin_dashboard');
     } catch (e) {
       Navigator.of(context).pop();
-      setState(() {
-        _errorMessage = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_errorMessage!),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      final msg = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
+      setState(() { _errorMessage = msg; });
+      AppNotifier.showError(context, msg);
     }
   }
 

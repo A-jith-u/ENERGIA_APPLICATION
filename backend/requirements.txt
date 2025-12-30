@@ -9,3 +9,5 @@ sqlalchemy>=2.0.0,<3.0.0
 psycopg2-binary==2.9.10
 passlib[bcrypt]==1.7.4
 PyJWT==2.8.0
+python-dotenv==1.0.0
+fastapi-mail==1.4.1

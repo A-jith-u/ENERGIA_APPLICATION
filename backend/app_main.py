@@ -7,6 +7,7 @@ from fastapi import FastAPI
 # Use package-relative imports so the module works when run as
 # `python -m uvicorn backend.app_main:app` or inside Docker.
 from . import auth_api
+from . import notify_api
 
 # Import model app lazily: it's optional for dev (heavy ML deps may be absent).
 try:
@@ -21,6 +22,7 @@ app = FastAPI(title="ENERGIA Backend")
 # Mount sub-apps on distinct prefixes so endpoints don't collide.
 # Auth endpoints will be available at /auth/* and model endpoints at /model/*
 app.mount("/auth", auth_api.app)
+app.mount("/notify", notify_api.app)
 if _model_app is not None:
     app.mount("/model", _model_app)
 else:

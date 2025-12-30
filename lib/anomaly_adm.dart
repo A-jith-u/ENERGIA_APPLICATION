@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'services/notifier.dart';
 
 class Anomaly extends StatelessWidget {
   const Anomaly({super.key});
@@ -31,11 +32,7 @@ class Anomaly extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.download_for_offline_outlined),
             tooltip: 'Download Anomaly Log',
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Downloading Anomaly Log (CSV)...')),
-              );
-            },
+            onPressed: () => AppNotifier.showInfo(context, 'Downloading Anomaly Log (CSV)...'),
           ),
         ],
         // --- END MODIFIED ---

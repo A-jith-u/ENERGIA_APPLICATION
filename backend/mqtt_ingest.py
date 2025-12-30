@@ -18,10 +18,12 @@ import paho.mqtt.client as mqtt
 from sqlalchemy import create_engine, text
 from datetime import datetime
 
+from . import config as cfg
+
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", 1883))
 TOPIC = os.environ.get("MQTT_TOPIC", "energia/sensors/#")
-DB_URL = os.environ.get("DB_URL", "postgresql://postgres:postgres@db:5432/energia")
+DB_URL = cfg.get_db_url()
 
 engine = create_engine(DB_URL)
 
