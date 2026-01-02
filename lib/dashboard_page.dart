@@ -8,6 +8,7 @@ import 'dashboard_scaffold.dart'; // Ensure this is imported
 import 'prediction_page.dart';
 import 'recommendations_page.dart';
 import 'widgets/recommendation_widgets.dart';
+import 'widgets/energy_visualization_widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
@@ -845,29 +846,94 @@ class _WelcomeSection extends StatelessWidget {
         
         const SizedBox(height: 30),
 
-        // 2. Key Live Statistics (Current Usage)
+        // 2. Live Energy Meters for Room
         Text(
-          'Live Usage Data (CS-201)',
+          'Live Usage Data',
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         
-        Wrap(
-          spacing: 18,
-          runSpacing: 18,
-          alignment: WrapAlignment.center,
-          children: const [
-            _StatCard(label: 'Current Usage', value: '4.2 kW', icon: Icons.flash_on, color: Colors.orange),
-            _StatCard(label: 'Today\'s Peak', value: '6.8 kW', icon: Icons.trending_up_outlined, color: Colors.red),
-            _StatCard(label: 'Efficiency', value: '87%', icon: Icons.eco, color: Colors.green),
-            _StatCard(label: 'Daily Goal', value: '28.7/30 kWh', icon: Icons.track_changes, color: Colors.blue),
-          ],
+        // Main energy meter
+        LiveEnergyMeter(
+          currentPower: 4.2,
+          maxCapacity: 8.0,
+          label: 'CS-201 - Live Power',
+          status: 'Active Usage',
+          showTrend: true,
+          trendPercentage: -2.5,
+        ),
+        const SizedBox(height: 20),
+        
+        // Quick stats using StatRow for consistency
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                StatRow(
+                  label: 'Today\'s Peak',
+                  value: '6.8',
+                  unit: 'kW',
+                  icon: Icons.trending_up_outlined,
+                  color: Colors.red,
+                ),
+                const Divider(height: 16),
+                StatRow(
+                  label: 'Efficiency',
+                  value: '87',
+                  unit: '%',
+                  icon: Icons.eco,
+                  color: Colors.green,
+                ),
+                const Divider(height: 16),
+                StatRow(
+                  label: 'Daily Goal',
+                  value: '28.7',
+                  unit: '/ 30 kWh',
+                  icon: Icons.track_changes,
+                  color: Colors.blue,
+                ),
+                const Divider(height: 16),
+                StatRow(
+                  label: 'Status',
+                  value: 'Normal',
+                  unit: '',
+                  icon: Icons.check_circle,
+                  color: Colors.green,
+                ),
+              ],
+            ),
+          ),
         ),
 
         const SizedBox(height: 40),
 
+        // Daily consumption preview
+        _buildConsumptionChart(),
+        const SizedBox(height: 40),
+
        
       ],
+    );
+  }
+  
+  Widget _buildConsumptionChart() {
+    return ResponsiveLineChart(
+      spots: [
+        const FlSpot(0, 1.5), const FlSpot(1, 1.8), const FlSpot(2, 1.4), const FlSpot(3, 2.5),
+        const FlSpot(4, 2.2), const FlSpot(5, 3.5), const FlSpot(6, 3.8), const FlSpot(7, 3.0),
+        const FlSpot(8, 2.5), const FlSpot(9, 4.1), const FlSpot(10, 3.2), const FlSpot(11, 2.8),
+        const FlSpot(12, 4.5), const FlSpot(13, 4.2), const FlSpot(14, 3.9), const FlSpot(15, 4.7),
+        const FlSpot(16, 4.4), const FlSpot(17, 3.8), const FlSpot(18, 4.1), const FlSpot(19, 3.5),
+        const FlSpot(20, 3.2), const FlSpot(21, 2.9), const FlSpot(22, 2.5), const FlSpot(23, 2.2),
+      ],
+      title: 'Today\'s Hourly Usage',
+      unit: 'kW',
+      maxY: 5.0,
+      isMonthly: false,
+      lineColor: EnergyColorScheme.primaryBlue,
     );
   }
 }
@@ -1263,6 +1329,7 @@ class _EnergyUsageChart extends StatelessWidget {
   }
 }
 
+
 class _TipCard extends StatelessWidget {
   final String tip;
   final IconData icon;
@@ -1281,60 +1348,6 @@ class _TipCard extends StatelessWidget {
             const SizedBox(width: 16),
             Expanded(child: Text(tip)),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  const _StatCard({required this.label, required this.value, required this.icon, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return SizedBox(
-      width: 160,
-      height: 140, // Increased height to prevent overflow
-      child: Card(
-        elevation: 2,
-        shadowColor: Colors.transparent,
-        color: isDark ? theme.colorScheme.surfaceContainerHighest : theme.cardTheme.color,
-        child: Padding(
-          padding: const EdgeInsets.all(12), // Reduced padding slightly
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Icon(icon, size: 24, color: color), // Reduced icon size slightly
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      value,
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      label,
-                      style: theme.textTheme.labelMedium,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );

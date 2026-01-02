@@ -17,6 +17,7 @@ const String _envBase = String.fromEnvironment('ENERGIA_API_BASE');
 final List<String> _candidates = [
   if (_envBase.isNotEmpty) _envBase,
   'http://10.0.2.2:8000',
+  'http://192.168.160.1:8000', // Host machine IP for Android emulator
   'http://localhost:8000',
   'http://127.0.0.1:8000',
 ];
@@ -328,4 +329,30 @@ Future<void> deleteUser(String username) async {
   }
   print('[API] All candidates failed. Last error: $lastError');
   throw ApiError('Delete user failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+}
+/// Get activity logs from the backend
+Future<List<Map<String, dynamic>>> getActivityLogs({int limit = 10, int days = 1}) async {
+  Exception? lastError;
+  
+  for (final base in _candidates) {
+    final uri = Uri.parse('$base/activity/logs?limit=$limit&days=$days');
+    try {
+      print('[API] Fetching activity logs from: $uri');
+      final resp = await http.get(uri).timeout(Duration(seconds: 20));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final logs = List<Map<String, dynamic>>.from(data['data'] ?? []);
+        return logs;
+      }
+      print('[API] Activity logs from $base: ${resp.statusCode}');
+      lastError = ApiError('HTTP ${resp.statusCode}');
+      continue;
+    } catch (e) {
+      print('[API] Error fetching activity logs from $base: $e');
+      lastError = e as Exception;
+      continue;
+    }
+  }
+  print('[API] Failed to get activity logs. Last error: $lastError');
+  return [];
 }

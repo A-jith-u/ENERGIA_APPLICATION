@@ -117,7 +117,7 @@ class Recommendation {
 
 /// Service to fetch recommendations
 class RecommendationService {
-  static const String baseUrl = 'http://localhost:8000/recommendations';
+  static const String baseUrl = 'http://localhost:8000';
 
   static Future<List<Recommendation>> fetchRecommendations(String? token) async {
     try {
@@ -130,7 +130,7 @@ class RecommendationService {
       }
 
       final response = await http.get(
-        Uri.parse('$baseUrl/recommendations'),
+        Uri.parse('$baseUrl/recommendations/recommendations'),
         headers: headers,
       );
 
@@ -158,7 +158,7 @@ class RecommendationService {
       }
 
       final response = await http.get(
-        Uri.parse('$baseUrl/recommendations/count'),
+        Uri.parse('$baseUrl/recommendations/recommendations/count'),
         headers: headers,
       );
 

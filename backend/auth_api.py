@@ -9,7 +9,7 @@ This uses SQLAlchemy to talk to Postgres (DB_URL env var) and PyJWT for tokens.
 import os
 import sys
 import importlib
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from passlib.context import CryptContext
@@ -28,7 +28,17 @@ def _load_cfg():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         return importlib.import_module("config")
 
+def _load_activity_logger():
+    """Load activity logger module."""
+    if __package__:
+        from . import activity_logger
+        return activity_logger
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        return importlib.import_module("activity_logger")
+
 cfg = _load_cfg()
+activity_logger = _load_activity_logger()
 
 OTP_TTL_MINUTES = 5
 OTP_LENGTH = 6
@@ -679,8 +689,10 @@ def register(req: RegisterRequest):
 
 
 @app.post("/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
     try:
+        client_ip = request.client.host if request.client else "0.0.0.0"
+        
         with engine.begin() as conn:
             # Try admin by username first
             admin_row = conn.execute(
@@ -700,11 +712,25 @@ def login(req: LoginRequest):
                 if coordinator_row and req.department:
                     stored_dept = coordinator_row[3]  # department is at index 3
                     if stored_dept and stored_dept.strip().upper() != req.department.strip().upper():
+                        activity_logger.log_activity(
+                            user_id=req.username,
+                            action_type="login",
+                            action_description="Failed login attempt - department mismatch",
+                            status="failure",
+                            ip_address=client_ip,
+                        )
                         raise HTTPException(
                             status_code=401, 
                             detail="Department mismatch"
                         )
                 elif coordinator_row and not req.department:
+                    activity_logger.log_activity(
+                        user_id=req.username,
+                        action_type="login",
+                        action_description="Failed login attempt - missing department",
+                        status="failure",
+                        ip_address=client_ip,
+                    )
                     raise HTTPException(status_code=400, detail="Department is required")
 
             class_rep_row = None
@@ -727,10 +753,39 @@ def login(req: LoginRequest):
                 email = email_from_table or username_val
                 role = "student"
             else:
+                activity_logger.log_activity(
+                    user_id=req.username,
+                    action_type="login",
+                    action_description="Failed login attempt - user not found",
+                    status="failure",
+                    ip_address=client_ip,
+                )
                 raise HTTPException(status_code=401, detail="Invalid username or password")
 
             if not PWD_CTX.verify(req.password, pw_hash):
+                activity_logger.log_activity(
+                    user_id=req.username,
+                    user_name=name,
+                    user_role=role,
+                    action_type="login",
+                    action_description="Failed login attempt - invalid password",
+                    status="failure",
+                    department=dept,
+                    ip_address=client_ip,
+                )
                 raise HTTPException(status_code=401, detail="Invalid username or password")
+
+            # Log successful login
+            activity_logger.log_activity(
+                user_id=str(u_id),
+                user_name=name,
+                user_role=role,
+                action_type="login",
+                action_description=f"{role.capitalize()} successfully logged in",
+                status="success",
+                department=dept,
+                ip_address=client_ip,
+            )
 
             payload = {
                 "sub": str(u_id),

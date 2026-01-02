@@ -19,6 +19,7 @@ def _load(name: str):
 auth_api = _load("auth_api")
 notify_api = _load("notify_api")
 recommendation_api = _load("recommendation_api")
+activity_log_api = _load("activity_log_api")
 
 # Import model app lazily: it's optional for dev (heavy ML deps may be absent).
 try:
@@ -35,6 +36,7 @@ app = FastAPI(title="ENERGIA Backend")
 app.mount("/auth", auth_api.app)
 app.mount("/notify", notify_api.app)
 app.mount("/recommendations", recommendation_api.app)
+app.mount("/activity", activity_log_api.app)
 if _model_app is not None:
     app.mount("/model", _model_app)
 else:

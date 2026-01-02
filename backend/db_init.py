@@ -32,6 +32,15 @@ def _load_cfg():
     return cfg
 
 
+def _index_exists(conn, table_name: str, index_name: str) -> bool:
+    """Check if an index exists."""
+    result = conn.execute(
+        text("SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE tablename = :table AND indexname = :index)"),
+        {"table": table_name, "index": index_name}
+    ).scalar()
+    return bool(result)
+
+
 cfg = _load_cfg()
 
 # Load configuration from environment/.env and enforce PostgreSQL
@@ -103,9 +112,46 @@ class_representatives_table = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
+# Activity Logs table - tracks all user actions in the system
+activity_logs_table = Table(
+    "activity_logs",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("user_id", String, nullable=True),  # username or ID of the user performing action
+    Column("user_name", String, nullable=True),  # Full name for display
+    Column("user_role", String, nullable=True),  # admin, coordinator, student
+    Column("action_type", String, nullable=False),  # login, logout, data_submission, report_generation, etc.
+    Column("action_description", String, nullable=False),  # detailed description of the action
+    Column("resource_type", String, nullable=True),  # what type of resource was affected (sensor, report, etc)
+    Column("resource_id", String, nullable=True),  # ID of the affected resource
+    Column("department", String, nullable=True),  # department involved
+    Column("ip_address", String, nullable=True),  # IP address of the request
+    Column("status", String, nullable=False, default="success"),  # success, failure, warning
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("timestamp", DateTime, nullable=False, server_default=func.now()),
+)
+
 metadata.create_all(engine)
 
 insp = inspect(engine)
+
+# Create indexes for activity_logs table to improve query performance
+with engine.begin() as conn:
+    # Index on timestamp for range queries and sorting
+    if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_timestamp'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON activity_logs(timestamp DESC)"))
+    
+    # Index on timestamp and status for filtering queries
+    if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_timestamp_status'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp_status ON activity_logs(timestamp DESC, status)"))
+    
+    # Index on user_id for user-specific queries
+    if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_user_id'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs(user_id, timestamp DESC)"))
+    
+    # Index on action_type for action filtering
+    if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_action_type'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_action_type ON activity_logs(action_type, timestamp DESC)"))
 
 # Ensure columns exist for existing deployments (idempotent upgrades)
 class_rep_columns = [col["name"] for col in insp.get_columns("class_representatives")]
@@ -175,19 +221,26 @@ with engine.begin() as conn:
     for email, name, dept, pwd in coordinator_seeds:
         res = conn.execute(select(coordinators_table.c.id).where(coordinators_table.c.email == email)).fetchone()
         if not res:
-            # Generate unique coordinator ID
+            # Generate unique coordinator ID - check for existing coordinators
             seq_res = conn.execute(
                 text("SELECT COUNT(*) FROM coordinators WHERE department=:d"),
                 {"d": dept}
             ).scalar() or 0
             coordinator_id = _generate_coordinator_id(dept, seq_res + 1)
-            conn.execute(coordinators_table.insert().values(
-                coordinator_id=coordinator_id,
-                email=email,
-                name=name,
-                department=dept,
-                password_hash=pwd_context.hash(pwd),
-            ))
+            
+            # Double-check the coordinator_id doesn't already exist
+            id_check = conn.execute(
+                select(coordinators_table.c.id).where(coordinators_table.c.coordinator_id == coordinator_id)
+            ).fetchone()
+            
+            if not id_check:
+                conn.execute(coordinators_table.insert().values(
+                    coordinator_id=coordinator_id,
+                    email=email,
+                    name=name,
+                    department=dept,
+                    password_hash=pwd_context.hash(pwd),
+                ))
 
     for uname, pwd, ktu_id, dept, year, email in student_seeds:
         res = conn.execute(select(class_representatives_table.c.id).where(class_representatives_table.c.username == uname)).fetchone()

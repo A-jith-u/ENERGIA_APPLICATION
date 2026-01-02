@@ -20,10 +20,10 @@ def _load_cfg():
 
 def _load_engine():
     if __package__:
-        from . import recommendation_engine
-        return recommendation_engine
+        from . import ai_recommendation_engine
+        return ai_recommendation_engine
     else:
-        return importlib.import_module("recommendation_engine")
+        return importlib.import_module("ai_recommendation_engine")
 
 cfg = _load_cfg()
 rec_engine_module = _load_engine()
@@ -34,8 +34,8 @@ DB_URL = cfg.get_db_url()
 JWT_SECRET = cfg.get_jwt_secret()
 JWT_ALG = "HS256"
 
-# Initialize recommendation engine
-engine = rec_engine_module.RecommendationEngine(DB_URL)
+# Initialize AI recommendation engine
+engine = rec_engine_module.AIRecommendationEngine(DB_URL)
 
 
 class RecommendationRequest(BaseModel):
@@ -94,23 +94,23 @@ def get_recommendations(authorization: Optional[str] = Header(None)):
     department = user_context.get("department")
     classroom = user_context.get("ktu_id")  # For class reps, this is their classroom ID
     
-    # Get recommendations from engine
+    # Get AI-powered recommendations with predictions
     try:
-        recommendations = engine.get_recommendations(
+        result = engine.get_recommendations_with_predictions(
             user_role=role,
             user_id=user_id,
             department=department,
             classroom=classroom,
         )
         
-        return {
-            "recommendations": recommendations,
-            "count": len(recommendations),
-            "user": {
-                "role": role,
-                "department": department,
-            },
+        # Add user context to result
+        result["user"] = {
+            "role": role,
+            "department": department,
+            "classroom": classroom,
         }
+        
+        return result
     except Exception as e:
         raise HTTPException(
             status_code=500,

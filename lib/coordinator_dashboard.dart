@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
+import 'services/notifier.dart'; // Added import for notifier
+import 'package:energia/widgets/energy_visualization_widgets.dart';
 
 // Assuming Analysis is in graph_adm.dart and Anomaly is in anomaly_adm.dart
 import 'graph_adm.dart'; 
 import 'anomaly_adm.dart'; 
-import 'services/notifier.dart'; // Added import for notifier
 // --- MODIFIED: ADDED IMPORT FOR ROLE SELECTION PAGE ---
 import 'role_selection_page.dart';
 // --- END MODIFIED ---
@@ -341,22 +342,100 @@ class _DepartmentOverviewSection extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         
-        // Department Stats
+        // Department Stats - Using proper responsive layout
         Text(
           'Department Overview',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 16,
-          runSpacing: 16,
-          alignment: WrapAlignment.center,
-          children: [
-            const _DepartmentStatCard(label: 'Total Usage', value: '18.4 kW', icon: Icons.electric_bolt_outlined, color: Colors.green),
-            _DepartmentStatCard(label: 'Active Rooms', value: '${activeRooms.length} of $totalRooms', icon: Icons.room_outlined, color: Colors.blue, onTap: onActiveRoomsTap),
-            _DepartmentStatCard(label: 'Alerts', value: '3 Active', icon: Icons.warning_outlined, color: Colors.orange, onTap: onAlertsTap),
-            const _DepartmentStatCard(label: 'Efficiency', value: '87%', icon: Icons.trending_up_outlined, color: Colors.purple),
-          ],
+        
+        // Key Metrics using StatRow for better layout
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                StatRow(
+                  label: 'Total Department Usage',
+                  value: '18.4',
+                  unit: 'kW',
+                  icon: Icons.electric_bolt_outlined,
+                  color: Colors.orange,
+                ),
+                const Divider(height: 24),
+                StatRow(
+                  label: 'Active Rooms',
+                  value: '${activeRooms.length}',
+                  unit: 'of $totalRooms',
+                  icon: Icons.room_outlined,
+                  color: Colors.blue,
+                ),
+                const Divider(height: 24),
+                StatRow(
+                  label: 'Department Efficiency',
+                  value: '87',
+                  unit: '%',
+                  icon: Icons.trending_up_outlined,
+                  color: Colors.green,
+                ),
+                const Divider(height: 24),
+                StatRow(
+                  label: 'Active Alerts',
+                  value: '3',
+                  unit: 'anomalies',
+                  icon: Icons.warning_outlined,
+                  color: Colors.red,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 32),
+        
+        // Live energy meters for key rooms
+        Text(
+          'Top Energy Consumers',
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        
+        LiveEnergyMeter(
+          currentPower: 8.6,
+          maxCapacity: 10.0,
+          label: 'CS-Lab 1',
+          status: 'High Usage - Peak hours',
+          showTrend: true,
+          trendPercentage: 5.2,
+        ),
+        const SizedBox(height: 12),
+        
+        LiveEnergyMeter(
+          currentPower: 5.2,
+          maxCapacity: 8.0,
+          label: 'Server Room',
+          status: 'Critical System',
+          showTrend: true,
+          trendPercentage: 1.2,
+        ),
+        const SizedBox(height: 32),
+        
+        // Energy Distribution Chart
+        EnergyDistributionDonut(
+          labels: const ['AC Systems', 'Lighting', 'Lab Equipment', 'Server', 'Other'],
+          values: const [32.5, 18.3, 28.7, 15.2, 5.3],
+          title: 'Department Energy Distribution',
+        ),
+        const SizedBox(height: 32),
+        
+        // Weekly Comparison
+        ComparativeBarChart(
+          labels: const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+          values: const [156.2, 162.4, 158.9, 171.3, 165.8, 98.4, 102.6],
+          title: 'Weekly Department Usage (kWh)',
+          unit: 'kWh',
+          maxY: 180.0,
         ),
         const SizedBox(height: 32),
         
@@ -366,11 +445,25 @@ class _DepartmentOverviewSection extends StatelessWidget {
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 16),
-        SizedBox(height: 200, child: _DepartmentUsageChart()),
+        ResponsiveLineChart(
+          spots: [
+            const FlSpot(0, 8.5), const FlSpot(1, 9.2), const FlSpot(2, 8.8), const FlSpot(3, 12.5),
+            const FlSpot(4, 15.2), const FlSpot(5, 18.4), const FlSpot(6, 19.5), const FlSpot(7, 17.8),
+            const FlSpot(8, 16.2), const FlSpot(9, 14.5), const FlSpot(10, 13.2), const FlSpot(11, 12.8),
+            const FlSpot(12, 14.5), const FlSpot(13, 15.8), const FlSpot(14, 16.2), const FlSpot(15, 17.1),
+            const FlSpot(16, 18.4), const FlSpot(17, 16.9), const FlSpot(18, 15.3), const FlSpot(19, 13.5),
+            const FlSpot(20, 12.2), const FlSpot(21, 10.8), const FlSpot(22, 9.5), const FlSpot(23, 8.8),
+          ],
+          title: 'Department Load Profile',
+          unit: 'kW',
+          maxY: 20.0,
+          isMonthly: false,
+          lineColor: EnergyColorScheme.infoTeal,
+        ),
         
         const SizedBox(height: 32),
         
-        // Demo: Simulate room activation
+        // Action Buttons
         Center(
           child: ElevatedButton.icon(
             onPressed: onActivateRoom,
@@ -385,13 +478,6 @@ class _DepartmentOverviewSection extends StatelessWidget {
         ),
         
         const SizedBox(height: 32),
-        
-        // Optimization Suggestions
-        
-        const SizedBox(height: 12),
-        //_buildOptimizationCard(context, 'Adjust AC Schedules', 'CS-Lab 1 has 20% avoidable peak usage after 5 PM.', Icons.ac_unit, Colors.red.shade600),
-        //_buildOptimizationCard(context, 'Motion Sensor Audit', 'CS-Seminar Hall motion sensor reporting low usage despite being marked active.', Icons.sensors, Colors.orange.shade600),
-        
       ],
     );
   }
