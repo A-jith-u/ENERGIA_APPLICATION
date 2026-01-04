@@ -903,6 +903,151 @@ def delete_user(username: str):
         return {"status": "success", "message": f"User '{username}' deleted successfully", "deleted_count": deleted_count}
 
 
+@app.post("/sensor-data")
+async def receive_sensor_data(request: Request):
+    """
+    Receive sensor data from ESP32 and store it in the database.
+    
+    Expected JSON payload:
+    {
+        "device_id": "ESP32-LAB-001",
+        "voltage": 230.5,
+        "current": 2.3,
+        "power": 529.15,
+        "energy": 1.5,
+        "frequency": 50.0,
+        "power_factor": 0.95
+    }
+    """
+    try:
+        payload = await request.json()
+
+        device_id = payload.get("device_id", "unknown")
+
+        # Extract metrics, cast to float where present
+        def _to_float(key, default=None):
+            v = payload.get(key, default)
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid numeric value for '{key}': {v}")
+
+        voltage = _to_float("voltage")
+        current = _to_float("current")
+        power = _to_float("power")
+        energy = _to_float("energy")
+        frequency = _to_float("frequency")
+        power_factor = _to_float("power_factor")
+
+        # Maintain legacy 'value' field (use power if provided)
+        value = power if power is not None else _to_float("value", 0)
+
+        timestamp = datetime.now(timezone.utc)
+
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO sensor_data(ds, device_id, value, voltage, current, power, energy, frequency, power_factor) "
+                    "VALUES (:ds, :device_id, :value, :voltage, :current, :power, :energy, :frequency, :power_factor)"
+                ),
+                {
+                    "ds": timestamp,
+                    "device_id": device_id,
+                    "value": float(value) if value is not None else None,
+                    "voltage": voltage,
+                    "current": current,
+                    "power": power,
+                    "energy": energy,
+                    "frequency": frequency,
+                    "power_factor": power_factor,
+                },
+            )
+
+            # Log this activity
+            activity_logger.log_activity(
+                user_id=device_id,
+                action_type="data_submission",
+                resource_type="sensor",
+                resource_id=device_id,
+                action_description=f"Sensor reading inserted: power={power}W",
+            )
+
+        return {
+            "status": "success",
+            "message": f"Sensor data from {device_id} received and stored",
+            "device_id": device_id,
+            "value": value,
+            "voltage": voltage,
+            "current": current,
+            "power": power,
+            "energy": energy,
+            "frequency": frequency,
+            "power_factor": power_factor,
+            "timestamp": timestamp.isoformat(),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error processing sensor data: {str(e)}")
+
+
+@app.get("/sensor-data")
+def get_sensor_data(device_id: str = None, limit: int = 100):
+    """
+    Retrieve sensor data from the database.
+    
+    Query parameters:
+    - device_id: Filter by specific device (optional)
+    - limit: Maximum number of records to return (default: 100)
+    """
+    try:
+        with engine.begin() as conn:
+            if device_id:
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, value 
+                        FROM sensor_data 
+                        WHERE device_id = :device_id
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"device_id": device_id, "limit": limit}
+                )
+            else:
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, value 
+                        FROM sensor_data 
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"limit": limit}
+                )
+            
+            rows = result.fetchall()
+            data = [
+                {
+                    "id": row[0],
+                    "timestamp": row[1].isoformat() if row[1] else None,
+                    "device_id": row[2],
+                    "value": row[3]
+                }
+                for row in rows
+            ]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

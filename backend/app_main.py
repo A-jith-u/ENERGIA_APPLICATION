@@ -34,6 +34,7 @@ app = FastAPI(title="ENERGIA Backend")
 # Mount sub-apps on distinct prefixes so endpoints don't collide.
 # Auth endpoints will be available at /auth/* and model endpoints at /model/*
 app.mount("/auth", auth_api.app)
+app.mount("/api", auth_api.app)
 app.mount("/notify", notify_api.app)
 app.mount("/recommendations", recommendation_api.app)
 app.mount("/activity", activity_log_api.app)

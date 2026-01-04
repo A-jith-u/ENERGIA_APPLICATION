@@ -84,6 +84,12 @@ sensor_table = Table(
     Column("ds", DateTime, nullable=False),
     Column("device_id", String),
     Column("value", Float),
+    Column("voltage", Float, nullable=True),
+    Column("current", Float, nullable=True),
+    Column("power", Float, nullable=True),
+    Column("energy", Float, nullable=True),
+    Column("frequency", Float, nullable=True),
+    Column("power_factor", Float, nullable=True),
 )
 
 # Authorized student representatives table for registration verification
@@ -172,6 +178,22 @@ if "email" not in admin_columns:
 if "username" not in admin_columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE admins ADD COLUMN username VARCHAR UNIQUE"))
+
+# Ensure sensor_data has all required metric columns (idempotent)
+sensor_columns = [col["name"] for col in insp.get_columns("sensor_data")]
+with engine.begin() as conn:
+    if "voltage" not in sensor_columns:
+        conn.execute(text("ALTER TABLE sensor_data ADD COLUMN voltage DOUBLE PRECISION"))
+    if "current" not in sensor_columns:
+        conn.execute(text("ALTER TABLE sensor_data ADD COLUMN current DOUBLE PRECISION"))
+    if "power" not in sensor_columns:
+        conn.execute(text("ALTER TABLE sensor_data ADD COLUMN power DOUBLE PRECISION"))
+    if "energy" not in sensor_columns:
+        conn.execute(text("ALTER TABLE sensor_data ADD COLUMN energy DOUBLE PRECISION"))
+    if "frequency" not in sensor_columns:
+        conn.execute(text("ALTER TABLE sensor_data ADD COLUMN frequency DOUBLE PRECISION"))
+    if "power_factor" not in sensor_columns:
+        conn.execute(text("ALTER TABLE sensor_data ADD COLUMN power_factor DOUBLE PRECISION"))
 
 coordinator_columns = [col["name"] for col in insp.get_columns("coordinators")]
 if "department" not in coordinator_columns:
