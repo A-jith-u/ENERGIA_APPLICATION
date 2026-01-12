@@ -13,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
 import 'package:http/http.dart' as http; // Fixes 'http'
+import 'dart:async';
+import 'dart:math';
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -22,6 +24,7 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
+  String? _authToken;
 
   // Dynamic titles based on the selected tab
   final List<String> _titles = [
@@ -30,6 +33,19 @@ class _DashboardPageState extends State<DashboardPage> {
     'Recent Alerts',
     'My Profile',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAuthToken();
+  }
+
+  Future<void> _loadAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _authToken = prefs.getString('auth_token');
+    });
+  }
 
   void _performLogout() {
     Navigator.of(context).pushAndRemoveUntil(
@@ -87,7 +103,7 @@ class _DashboardPageState extends State<DashboardPage> {
       case 0:
         return _WelcomeSection(scheme: scheme);
       case 1:
-        return _ReportsSection(scheme: scheme);
+        return _ReportsSection(scheme: scheme, userToken: _authToken);
       case 2:
         return _AlertsSection(scheme: scheme);
       case 3:
@@ -361,7 +377,7 @@ Future<void> _saveProfile() async {
     
     // Call the update-profile API
     final response = await http.post(
-      Uri.parse('http://localhost:8000/auth/update-profile'),
+      Uri.parse('http://localhost:5000/auth/update-profile'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -395,10 +411,10 @@ Future<void> _saveProfile() async {
 Future<void> _updatePassword(String currentP, String newP) async {
   try {
     final response = await http.post(
-      Uri.parse('http://localhost:8000/auth/change-password'),
+      Uri.parse('http://localhost:5000/auth/change-password'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'username': _ktuIdController.text, // Backend identifies by KTU ID
+        'username': _ktuIdController.text,
         'current_password': currentP,
         'new_password': newP,
       }),
@@ -673,7 +689,7 @@ void _showPasswordDialog() {
                             try {
                               // Perform API Call to /auth/change-password
                               final response = await http.post(
-                                Uri.parse('http://localhost:8000/auth/change-password'),
+                                Uri.parse('http://localhost:5000/auth/change-password'),
                                 headers: {'Content-Type': 'application/json'},
                                 body: jsonEncode({
                                   'username': _ktuIdController.text, // Using KTU ID as identifier
@@ -764,9 +780,116 @@ class _ProfileInfoTile extends StatelessWidget {
 
 // --- WELCOME SECTION ---
 
-class _WelcomeSection extends StatelessWidget {
+class _WelcomeSection extends StatefulWidget {
   final ColorScheme scheme;
   const _WelcomeSection({required this.scheme});
+
+  @override
+  State<_WelcomeSection> createState() => _WelcomeSectionState();
+}
+
+class _WelcomeSectionState extends State<_WelcomeSection> {
+  double _currentPower = 0;
+  double _peakToday = 0;
+  double _dailyTotal = 0;
+  List<FlSpot> _hourlyData = [];
+  bool _isLoading = true;
+  String _status = 'Loading...';
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLiveData();
+    // Refresh every 60 seconds when new ESP32 data arrives
+    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (_) => _loadLiveData());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadLiveData() async {
+    try {
+      final List<String> apiCandidates = [
+        'http://10.0.2.2:5000',
+        'http://192.168.160.1:5000',
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+      ];
+
+      for (final baseUrl in apiCandidates) {
+        try {
+          // Fetch latest sensor reading
+          final response = await http.get(
+            Uri.parse('$baseUrl/api/sensor-data?limit=50'),
+            headers: {'Content-Type': 'application/json'},
+          ).timeout(const Duration(seconds: 5));
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            final readings = data['data'] as List? ?? [];
+
+            if (readings.isNotEmpty) {
+                // Get current power (latest reading) - prefer 'power', fallback to 'value'
+                final latest = readings[0];
+                double currentPower = (latest['power'] as num?)?.toDouble() ??
+                  (latest['value'] as num?)?.toDouble() ?? 0;
+
+              // Calculate daily stats from recent readings
+              double peakPower = currentPower;
+              double totalEnergy = 0;
+              List<FlSpot> hourlySpots = [];
+
+              for (int i = 0; i < readings.length && i < 24; i++) {
+                final reading = readings[i];
+                double power = (reading['power'] as num?)?.toDouble() ??
+                    (reading['value'] as num?)?.toDouble() ?? 0;
+                peakPower = max(peakPower, power);
+                totalEnergy += power * (1 / 60); // approx kWh over 60s cadence
+
+                // Create hourly data points
+                hourlySpots.add(FlSpot(
+                  i.toDouble(),
+                  power,
+                ));
+              }
+
+              if (mounted) {
+                setState(() {
+                  _currentPower = currentPower;
+                  _peakToday = peakPower;
+                  _dailyTotal = totalEnergy;
+                  _hourlyData = hourlySpots;
+                  _isLoading = false;
+                  _status = _currentPower > 0 ? 'Active Usage' : 'Idle';
+                });
+              }
+              return;
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _status = 'No data available';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _status = 'Error loading data';
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -788,8 +911,8 @@ class _WelcomeSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      scheme.primary.withOpacity(0.9),
-                      scheme.primaryContainer.withOpacity(0.8),
+                      widget.scheme.primary.withOpacity(0.9),
+                      widget.scheme.primaryContainer.withOpacity(0.8),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -797,7 +920,7 @@ class _WelcomeSection extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: scheme.primary.withOpacity(0.3),
+                      color: widget.scheme.primary.withOpacity(0.3),
                       blurRadius: 15,
                       offset: const Offset(0, 8),
                     ),
@@ -832,7 +955,7 @@ class _WelcomeSection extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Monitor real-time consumption and check your alerts here.',
+                      _isLoading ? 'Loading live data...' : 'Real-time consumption: ${_currentPower.toStringAsFixed(2)} kW',
                       style: theme.textTheme.bodyLarge?.copyWith(
                         color: Colors.white70,
                       ),
@@ -853,18 +976,18 @@ class _WelcomeSection extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         
-        // Main energy meter
+        // Main energy meter with live data
         LiveEnergyMeter(
-          currentPower: 4.2,
+          currentPower: _currentPower,
           maxCapacity: 8.0,
           label: 'CS-201 - Live Power',
-          status: 'Active Usage',
+          status: _status,
           showTrend: true,
-          trendPercentage: -2.5,
+          trendPercentage: _currentPower > 5 ? 5 : -2,
         ),
         const SizedBox(height: 20),
         
-        // Quick stats using StatRow for consistency
+        // Quick stats using real data
         Card(
           elevation: 2,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -874,7 +997,7 @@ class _WelcomeSection extends StatelessWidget {
               children: [
                 StatRow(
                   label: 'Today\'s Peak',
-                  value: '6.8',
+                  value: _peakToday.toStringAsFixed(1),
                   unit: 'kW',
                   icon: Icons.trending_up_outlined,
                   color: Colors.red,
@@ -882,26 +1005,26 @@ class _WelcomeSection extends StatelessWidget {
                 const Divider(height: 16),
                 StatRow(
                   label: 'Efficiency',
-                  value: '87',
+                  value: (_currentPower > 0 ? ((_peakToday - _currentPower) / _peakToday * 100) : 100).toStringAsFixed(0),
                   unit: '%',
                   icon: Icons.eco,
                   color: Colors.green,
                 ),
                 const Divider(height: 16),
                 StatRow(
-                  label: 'Daily Goal',
-                  value: '28.7',
-                  unit: '/ 30 kWh',
+                  label: 'Daily Total',
+                  value: _dailyTotal.toStringAsFixed(1),
+                  unit: 'kWh',
                   icon: Icons.track_changes,
                   color: Colors.blue,
                 ),
                 const Divider(height: 16),
                 StatRow(
                   label: 'Status',
-                  value: 'Normal',
+                  value: _currentPower > 0 ? 'Active' : 'Idle',
                   unit: '',
-                  icon: Icons.check_circle,
-                  color: Colors.green,
+                  icon: _currentPower > 0 ? Icons.circle : Icons.pause_circle,
+                  color: _currentPower > 0 ? Colors.orange : Colors.grey,
                 ),
               ],
             ),
@@ -910,8 +1033,18 @@ class _WelcomeSection extends StatelessWidget {
 
         const SizedBox(height: 40),
 
-        // Daily consumption preview
-        _buildConsumptionChart(),
+        // Daily consumption preview with real data
+        if (_hourlyData.isNotEmpty)
+          _buildConsumptionChart()
+        else if (!_isLoading)
+          Center(
+            child: Text(
+              'No data available yet. Waiting for ESP32 sensor readings...',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: Colors.grey,
+              ),
+            ),
+          ),
         const SizedBox(height: 40),
 
        
@@ -921,17 +1054,10 @@ class _WelcomeSection extends StatelessWidget {
   
   Widget _buildConsumptionChart() {
     return ResponsiveLineChart(
-      spots: [
-        const FlSpot(0, 1.5), const FlSpot(1, 1.8), const FlSpot(2, 1.4), const FlSpot(3, 2.5),
-        const FlSpot(4, 2.2), const FlSpot(5, 3.5), const FlSpot(6, 3.8), const FlSpot(7, 3.0),
-        const FlSpot(8, 2.5), const FlSpot(9, 4.1), const FlSpot(10, 3.2), const FlSpot(11, 2.8),
-        const FlSpot(12, 4.5), const FlSpot(13, 4.2), const FlSpot(14, 3.9), const FlSpot(15, 4.7),
-        const FlSpot(16, 4.4), const FlSpot(17, 3.8), const FlSpot(18, 4.1), const FlSpot(19, 3.5),
-        const FlSpot(20, 3.2), const FlSpot(21, 2.9), const FlSpot(22, 2.5), const FlSpot(23, 2.2),
-      ],
-      title: 'Today\'s Hourly Usage',
+      spots: _hourlyData,
+      title: 'Last ${_hourlyData.length} Readings',
       unit: 'kW',
-      maxY: 5.0,
+      maxY: (_peakToday * 1.2).clamp(2.0, 10.0),
       isMonthly: false,
       lineColor: EnergyColorScheme.primaryBlue,
     );
@@ -992,7 +1118,8 @@ class _AlertsSection extends StatelessWidget {
 
 class _ReportsSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _ReportsSection({required this.scheme});
+  final String? userToken;
+  const _ReportsSection({required this.scheme, required this.userToken});
 
   @override
   Widget build(BuildContext context) {
@@ -1013,8 +1140,8 @@ class _ReportsSection extends StatelessWidget {
         const SizedBox(height: 16),
 
         // Recommendations Section
-        const RecommendationsList(
-          userToken: null, // Pass actual token when available
+        RecommendationsList(
+          userToken: userToken,
           showHeader: true,
           maxItems: 3,
         ),

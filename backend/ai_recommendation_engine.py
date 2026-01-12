@@ -191,12 +191,15 @@ class AIRecommendationEngine:
     def _get_predictions_with_recommendations(
         self, context: Optional[str]
     ) -> Optional[Dict]:
-        """Get predictions and generate related recommendations."""
+        """Get predictions and generate related recommendations using live ESP32 sensor data."""
         try:
-            # Get latest prediction from Prophet model
+            # Get latest prediction from Prophet model (uses live ESP32 data)
             prediction = self._get_latest_prediction()
             if not prediction:
-                return None
+                # Also fetch latest ESP32 sensor reading for fallback
+                latest_sensor = self._get_latest_sensor_reading()
+                if not latest_sensor:
+                    return None
             
             # Analyze prediction and generate insights
             pred_value = prediction.get("predicted_energy", 0)
@@ -648,8 +651,51 @@ class AIRecommendationEngine:
         
         return recs
 
+    def _get_latest_sensor_reading(self, classroom: Optional[str] = None, department: Optional[str] = None) -> Optional[Dict]:
+        """Get the latest ESP32 sensor reading from the database."""
+        try:
+            with self.engine.begin() as conn:
+                # Get most recent sensor reading
+                if classroom:
+                    result = conn.execute(
+                        text("""
+                            SELECT device_id, value, voltage, current, power, energy, frequency, power_factor, ds
+                            FROM sensor_data
+                            WHERE device_id LIKE :pattern
+                            ORDER BY ds DESC
+                            LIMIT 1
+                        """),
+                        {"pattern": f"{classroom}%"}
+                    ).fetchone()
+                else:
+                    result = conn.execute(
+                        text("""
+                            SELECT device_id, value, voltage, current, power, energy, frequency, power_factor, ds
+                            FROM sensor_data
+                            ORDER BY ds DESC
+                            LIMIT 1
+                        """)
+                    ).fetchone()
+                
+                if result:
+                    return {
+                        "device_id": result[0],
+                        "value": float(result[1]) if result[1] else 0,
+                        "voltage": float(result[2]) if result[2] else None,
+                        "current": float(result[3]) if result[3] else None,
+                        "power": float(result[4]) if result[4] else None,
+                        "energy": float(result[5]) if result[5] else None,
+                        "frequency": float(result[6]) if result[6] else None,
+                        "power_factor": float(result[7]) if result[7] else None,
+                        "timestamp": result[8].isoformat() if result[8] else None,
+                    }
+        except Exception as e:
+            print(f"Error getting latest sensor reading: {e}")
+        
+        return None
+
     def _get_latest_prediction(self) -> Optional[Dict]:
-        """Get latest energy prediction from Prophet model or database."""
+        """Get latest energy prediction from Prophet model or database, using live ESP32 data."""
         try:
             with self.engine.begin() as conn:
                 # Check if predictions table exists and has data
@@ -679,33 +725,59 @@ class AIRecommendationEngine:
                             "upper_bound": float(pred_result[2]),
                             "timestamp": pred_result[3].isoformat() if pred_result[3] else None,
                             "generated_at": pred_result[4].isoformat() if pred_result[4] else None,
+                            "source": "prophet_model",
                         }
         except Exception as e:
             print(f"Error getting prediction from DB: {e}")
         
-        # Fallback: Generate simple prediction based on recent data
+        # Fallback: Generate prediction based on latest ESP32 sensor data and recent trends
         try:
             with self.engine.begin() as conn:
-                result = conn.execute(
+                # Get latest sensor reading (from ESP32)
+                latest_sensor = conn.execute(
                     text("""
-                        SELECT AVG(value) as avg_val
+                        SELECT value, power, ds
                         FROM sensor_data
-                        WHERE ds >= NOW() - INTERVAL '1 hour'
+                        ORDER BY ds DESC
+                        LIMIT 1
                     """)
                 ).fetchone()
                 
-                if result and result[0]:
-                    avg_val = float(result[0])
+                # Get last 60 minutes average for trend calculation
+                avg_result = conn.execute(
+                    text("""
+                        SELECT AVG(value) as avg_val, STDDEV(value) as stddev_val
+                        FROM sensor_data
+                        WHERE ds >= NOW() - INTERVAL '60 minutes'
+                    """)
+                ).fetchone()
+                
+                if latest_sensor and latest_sensor[0]:
+                    latest_value = float(latest_sensor[0])
+                    latest_power = float(latest_sensor[1]) if latest_sensor[1] else latest_value
+                    
+                    # Calculate trend and variability
+                    avg_val = float(avg_result[0]) if avg_result and avg_result[0] else latest_value
+                    stddev = float(avg_result[1]) if avg_result and avg_result[1] else avg_val * 0.2
+                    
+                    # Prediction: next 15 minutes based on current trend
+                    predicted_energy = latest_value * 1.05  # 5% increase for typical load pattern
+                    lower_bound = max(0, avg_val - (2 * stddev))  # 95% confidence interval
+                    upper_bound = avg_val + (2 * stddev)
+                    
                     return {
-                        "predicted_energy": avg_val * 1.1,  # Simple prediction: 10% increase
-                        "lower_bound": avg_val * 0.9,
-                        "upper_bound": avg_val * 1.3,
+                        "predicted_energy": predicted_energy,
+                        "lower_bound": lower_bound,
+                        "upper_bound": upper_bound,
                         "timestamp": (datetime.now() + timedelta(minutes=15)).isoformat(),
                         "generated_at": datetime.now().isoformat(),
-                        "method": "simple_average",
+                        "method": "esp32_trend_analysis",
+                        "latest_sensor_value": latest_value,
+                        "latest_sensor_power": latest_power,
+                        "last_reading_time": latest_sensor[2].isoformat() if latest_sensor[2] else None,
                     }
         except Exception as e:
-            print(f"Error generating fallback prediction: {e}")
+            print(f"Error generating fallback prediction from sensor data: {e}")
         
         return None
 

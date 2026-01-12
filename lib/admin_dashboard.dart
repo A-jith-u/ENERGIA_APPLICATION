@@ -21,6 +21,7 @@ import 'services/user_counts.dart';
 import 'services/user_lists.dart';
 import 'services/validators.dart'; // Import validation functions
 import 'activity_logs_page.dart'; // Import activity logs page
+import 'monthly_report_page.dart'; // Import monthly report page
 import 'dart:ui'; // For ImageFilter (glassmorphism effect)
 
 // --- HELPER WIDGETS ---
@@ -492,7 +493,7 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
         setState(() {
           _isLoading = false;
           // Use default values on error
-          _userCounts ??= {'admins': 0, 'coordinators': 0, 'class_representatives': 0};
+          _userCounts ??= {'coordinators': 0, 'class_representatives': 0};
         });
       }
     }
@@ -607,14 +608,16 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
-        _buildActionCard(context, 'Generate Monthly Report', 'Create campus-wide consumption report.', Icons.picture_as_pdf), //
-        _buildActionCard(context, 'Manage Thresholds', 'Adjust campus-level anomaly limits.', Icons.tune), //
+        _buildActionCard(context, 'Generate Monthly Report', 'Create campus-wide consumption report.', Icons.picture_as_pdf, onTap: () {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MonthlyReportPage()));
+        }),
+        _buildActionCard(context, 'Manage Thresholds', 'Adjust campus-level anomaly limits.', Icons.tune),
 
       ],
     );
   }
 
-  Widget _buildActionCard(BuildContext context, String title, String description, IconData icon) {
+  Widget _buildActionCard(BuildContext context, String title, String description, IconData icon, {VoidCallback? onTap}) {
     final theme = Theme.of(context);
     return Card(
       elevation: 2,
@@ -625,7 +628,7 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
         title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         subtitle: Text(description),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-        onTap: () {},
+        onTap: onTap ?? () {},
       ),
     );
   }
@@ -875,7 +878,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
         ),
         _buildActionCard(
           context, 
-          'Bulk Import', 
+          'Bulk Export', 
           'Export all users to CSV file', 
           Icons.download_outlined,
           onTap: () => _exportAllUsersCSV(context),
@@ -1858,14 +1861,13 @@ class _AddUserPageState extends State<AddUserPage> {
   String _role = 'Class Representative';
   String _department = 'CSE';
   String _year = '2';
-  String _semester = 'S3';
   String _classGroup = 'CSE - A';
 
   static const roles = [
     'Class Representative',
     'Coordinator',
   ];
-  static const departments = ['CSE', 'ECE', 'ME', 'CE', 'AD'];
+  static const departments = ['CSE', 'ECE', 'ME', 'IT', 'RA','EEE'];
 
   @override
   void dispose() {
@@ -1906,7 +1908,7 @@ void _submit() async {
   try {
     // Call your new invite API
    /*final response = await http.post(
-  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  Uri.parse('http://localhost:5000/auth/admin/invite-user'),
   headers: {'Content-Type': 'application/json'},
   body: jsonEncode({
     'username': _emailCtl.text.trim(), // Backend expects 'username'
@@ -1919,7 +1921,7 @@ void _submit() async {
 );*/
 // Inside _submit() in admin_dashboard.dart
 final response = await http.post(
-  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  Uri.parse('http://localhost:5000/auth/admin/invite-user'),
   headers: {'Content-Type': 'application/json'},
   body: jsonEncode({
     'username': _emailCtl.text.trim(),
@@ -2034,22 +2036,11 @@ final response = await http.post(
                               .map(
                                 (y) => DropdownMenuItem(
                                   value: y,
-                                  child: Text('$y'),
+                                  child: Text('Year $y'),
                                 ),
                               )
                               .toList(),
                       onChanged: (v) => setState(() => _year = v!),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      initialValue: _semester,
-                      decoration: const InputDecoration(
-                        labelText: 'Semester',
-                        hintText: 'S3',
-                      ),
-                      onChanged: (v) => _semester = v,
-                      validator:
-                          (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
                     ),
                     const SizedBox(height: 8),
                     TextFormField(
