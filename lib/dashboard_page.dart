@@ -5,10 +5,16 @@ import 'analysis_graph_page.dart';
 import 'anomaly_viewer_page.dart';
 import 'role_selection_page.dart';
 import 'dashboard_scaffold.dart'; // Ensure this is imported
+import 'prediction_page.dart';
+import 'recommendations_page.dart';
+import 'widgets/recommendation_widgets.dart';
+import 'widgets/energy_visualization_widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
 import 'package:http/http.dart' as http; // Fixes 'http'
+import 'dart:async';
+import 'dart:math';
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -18,6 +24,7 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
+  String? _authToken;
 
   // Dynamic titles based on the selected tab
   final List<String> _titles = [
@@ -26,6 +33,19 @@ class _DashboardPageState extends State<DashboardPage> {
     'Recent Alerts',
     'My Profile',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAuthToken();
+  }
+
+  Future<void> _loadAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _authToken = prefs.getString('auth_token');
+    });
+  }
 
   void _performLogout() {
     Navigator.of(context).pushAndRemoveUntil(
@@ -83,7 +103,7 @@ class _DashboardPageState extends State<DashboardPage> {
       case 0:
         return _WelcomeSection(scheme: scheme);
       case 1:
-        return _ReportsSection(scheme: scheme);
+        return _ReportsSection(scheme: scheme, userToken: _authToken);
       case 2:
         return _AlertsSection(scheme: scheme);
       case 3:
@@ -357,7 +377,7 @@ Future<void> _saveProfile() async {
     
     // Call the update-profile API
     final response = await http.post(
-      Uri.parse('http://localhost:8000/auth/update-profile'),
+      Uri.parse('http://localhost:5000/auth/update-profile'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -391,10 +411,10 @@ Future<void> _saveProfile() async {
 Future<void> _updatePassword(String currentP, String newP) async {
   try {
     final response = await http.post(
-      Uri.parse('http://localhost:8000/auth/change-password'),
+      Uri.parse('http://localhost:5000/auth/change-password'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'username': _ktuIdController.text, // Backend identifies by KTU ID
+        'username': _ktuIdController.text,
         'current_password': currentP,
         'new_password': newP,
       }),
@@ -669,7 +689,7 @@ void _showPasswordDialog() {
                             try {
                               // Perform API Call to /auth/change-password
                               final response = await http.post(
-                                Uri.parse('http://localhost:8000/auth/change-password'),
+                                Uri.parse('http://localhost:5000/auth/change-password'),
                                 headers: {'Content-Type': 'application/json'},
                                 body: jsonEncode({
                                   'username': _ktuIdController.text, // Using KTU ID as identifier
@@ -760,9 +780,116 @@ class _ProfileInfoTile extends StatelessWidget {
 
 // --- WELCOME SECTION ---
 
-class _WelcomeSection extends StatelessWidget {
+class _WelcomeSection extends StatefulWidget {
   final ColorScheme scheme;
   const _WelcomeSection({required this.scheme});
+
+  @override
+  State<_WelcomeSection> createState() => _WelcomeSectionState();
+}
+
+class _WelcomeSectionState extends State<_WelcomeSection> {
+  double _currentPower = 0;
+  double _peakToday = 0;
+  double _dailyTotal = 0;
+  List<FlSpot> _hourlyData = [];
+  bool _isLoading = true;
+  String _status = 'Loading...';
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLiveData();
+    // Refresh every 60 seconds when new ESP32 data arrives
+    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (_) => _loadLiveData());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadLiveData() async {
+    try {
+      final List<String> apiCandidates = [
+        'http://10.0.2.2:5000',
+        'http://192.168.160.1:5000',
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+      ];
+
+      for (final baseUrl in apiCandidates) {
+        try {
+          // Fetch latest sensor reading
+          final response = await http.get(
+            Uri.parse('$baseUrl/api/sensor-data?limit=50'),
+            headers: {'Content-Type': 'application/json'},
+          ).timeout(const Duration(seconds: 5));
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            final readings = data['data'] as List? ?? [];
+
+            if (readings.isNotEmpty) {
+                // Get current power (latest reading) - prefer 'power', fallback to 'value'
+                final latest = readings[0];
+                double currentPower = (latest['power'] as num?)?.toDouble() ??
+                  (latest['value'] as num?)?.toDouble() ?? 0;
+
+              // Calculate daily stats from recent readings
+              double peakPower = currentPower;
+              double totalEnergy = 0;
+              List<FlSpot> hourlySpots = [];
+
+              for (int i = 0; i < readings.length && i < 24; i++) {
+                final reading = readings[i];
+                double power = (reading['power'] as num?)?.toDouble() ??
+                    (reading['value'] as num?)?.toDouble() ?? 0;
+                peakPower = max(peakPower, power);
+                totalEnergy += power * (1 / 60); // approx kWh over 60s cadence
+
+                // Create hourly data points
+                hourlySpots.add(FlSpot(
+                  i.toDouble(),
+                  power,
+                ));
+              }
+
+              if (mounted) {
+                setState(() {
+                  _currentPower = currentPower;
+                  _peakToday = peakPower;
+                  _dailyTotal = totalEnergy;
+                  _hourlyData = hourlySpots;
+                  _isLoading = false;
+                  _status = _currentPower > 0 ? 'Active Usage' : 'Idle';
+                });
+              }
+              return;
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _status = 'No data available';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _status = 'Error loading data';
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -784,8 +911,8 @@ class _WelcomeSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      scheme.primary.withOpacity(0.9),
-                      scheme.primaryContainer.withOpacity(0.8),
+                      widget.scheme.primary.withOpacity(0.9),
+                      widget.scheme.primaryContainer.withOpacity(0.8),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -793,7 +920,7 @@ class _WelcomeSection extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: scheme.primary.withOpacity(0.3),
+                      color: widget.scheme.primary.withOpacity(0.3),
                       blurRadius: 15,
                       offset: const Offset(0, 8),
                     ),
@@ -828,7 +955,7 @@ class _WelcomeSection extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Monitor real-time consumption and check your alerts here.',
+                      _isLoading ? 'Loading live data...' : 'Real-time consumption: ${_currentPower.toStringAsFixed(2)} kW',
                       style: theme.textTheme.bodyLarge?.copyWith(
                         color: Colors.white70,
                       ),
@@ -842,29 +969,97 @@ class _WelcomeSection extends StatelessWidget {
         
         const SizedBox(height: 30),
 
-        // 2. Key Live Statistics (Current Usage)
+        // 2. Live Energy Meters for Room
         Text(
-          'Live Usage Data (CS-201)',
+          'Live Usage Data',
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         
-        Wrap(
-          spacing: 18,
-          runSpacing: 18,
-          alignment: WrapAlignment.center,
-          children: const [
-            _StatCard(label: 'Current Usage', value: '4.2 kW', icon: Icons.flash_on, color: Colors.orange),
-            _StatCard(label: 'Today\'s Peak', value: '6.8 kW', icon: Icons.trending_up_outlined, color: Colors.red),
-            _StatCard(label: 'Efficiency', value: '87%', icon: Icons.eco, color: Colors.green),
-            _StatCard(label: 'Daily Goal', value: '28.7/30 kWh', icon: Icons.track_changes, color: Colors.blue),
-          ],
+        // Main energy meter with live data
+        LiveEnergyMeter(
+          currentPower: _currentPower,
+          maxCapacity: 8.0,
+          label: 'CS-201 - Live Power',
+          status: _status,
+          showTrend: true,
+          trendPercentage: _currentPower > 5 ? 5 : -2,
+        ),
+        const SizedBox(height: 20),
+        
+        // Quick stats using real data
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                StatRow(
+                  label: 'Today\'s Peak',
+                  value: _peakToday.toStringAsFixed(1),
+                  unit: 'kW',
+                  icon: Icons.trending_up_outlined,
+                  color: Colors.red,
+                ),
+                const Divider(height: 16),
+                StatRow(
+                  label: 'Efficiency',
+                  value: (_currentPower > 0 ? ((_peakToday - _currentPower) / _peakToday * 100) : 100).toStringAsFixed(0),
+                  unit: '%',
+                  icon: Icons.eco,
+                  color: Colors.green,
+                ),
+                const Divider(height: 16),
+                StatRow(
+                  label: 'Daily Total',
+                  value: _dailyTotal.toStringAsFixed(1),
+                  unit: 'kWh',
+                  icon: Icons.track_changes,
+                  color: Colors.blue,
+                ),
+                const Divider(height: 16),
+                StatRow(
+                  label: 'Status',
+                  value: _currentPower > 0 ? 'Active' : 'Idle',
+                  unit: '',
+                  icon: _currentPower > 0 ? Icons.circle : Icons.pause_circle,
+                  color: _currentPower > 0 ? Colors.orange : Colors.grey,
+                ),
+              ],
+            ),
+          ),
         ),
 
         const SizedBox(height: 40),
 
+        // Daily consumption preview with real data
+        if (_hourlyData.isNotEmpty)
+          _buildConsumptionChart()
+        else if (!_isLoading)
+          Center(
+            child: Text(
+              'No data available yet. Waiting for ESP32 sensor readings...',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: Colors.grey,
+              ),
+            ),
+          ),
+        const SizedBox(height: 40),
+
        
       ],
+    );
+  }
+  
+  Widget _buildConsumptionChart() {
+    return ResponsiveLineChart(
+      spots: _hourlyData,
+      title: 'Last ${_hourlyData.length} Readings',
+      unit: 'kW',
+      maxY: (_peakToday * 1.2).clamp(2.0, 10.0),
+      isMonthly: false,
+      lineColor: EnergyColorScheme.primaryBlue,
     );
   }
 }
@@ -923,7 +1118,8 @@ class _AlertsSection extends StatelessWidget {
 
 class _ReportsSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _ReportsSection({required this.scheme});
+  final String? userToken;
+  const _ReportsSection({required this.scheme, required this.userToken});
 
   @override
   Widget build(BuildContext context) {
@@ -931,6 +1127,36 @@ class _ReportsSection extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        // Smart Dashboard Header
+        Text(
+          'Smart Dashboard',
+          style: theme.textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: Colors.blue.shade800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        const Divider(),
+        const SizedBox(height: 16),
+
+        // Recommendations Section
+        RecommendationsList(
+          userToken: userToken,
+          showHeader: true,
+          maxItems: 3,
+        ),
+        const SizedBox(height: 32),
+
+        // AI-Powered Prediction - Featured at top
+        _buildPredictionTile(
+          context,
+          '⚡ Energy Usage Prediction',
+          'AI forecast for next 15 minutes using Prophet model.',
+          Icons.insights,
+          Colors.purple.shade600,
+        ),
+        const SizedBox(height: 32),
+
         Text(
           'Consumption Analysis',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
@@ -1086,6 +1312,81 @@ class _ReportsSection extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildPredictionTile(BuildContext context, String title, String subtitle, IconData icon, Color color) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 4,
+      shadowColor: color.withOpacity(0.1),
+      margin: const EdgeInsets.only(bottom: 16),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: InkWell(
+        onTap: () {
+          // Navigate to prediction page
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const PredictionPage(),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 30),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          title,
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            'AI',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, size: 18, color: Colors.grey),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 
@@ -1155,6 +1456,7 @@ class _EnergyUsageChart extends StatelessWidget {
   }
 }
 
+
 class _TipCard extends StatelessWidget {
   final String tip;
   final IconData icon;
@@ -1173,60 +1475,6 @@ class _TipCard extends StatelessWidget {
             const SizedBox(width: 16),
             Expanded(child: Text(tip)),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final String label;
-  final String value;
-  final IconData icon;
-  final Color color;
-  const _StatCard({required this.label, required this.value, required this.icon, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return SizedBox(
-      width: 160,
-      height: 140, // Increased height to prevent overflow
-      child: Card(
-        elevation: 2,
-        shadowColor: Colors.transparent,
-        color: isDark ? theme.colorScheme.surfaceContainerHighest : theme.cardTheme.color,
-        child: Padding(
-          padding: const EdgeInsets.all(12), // Reduced padding slightly
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Icon(icon, size: 24, color: color), // Reduced icon size slightly
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      value,
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      label,
-                      style: theme.textTheme.labelMedium,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );

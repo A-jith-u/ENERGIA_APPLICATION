@@ -7,16 +7,38 @@ This uses SQLAlchemy to talk to Postgres (DB_URL env var) and PyJWT for tokens.
 """
 
 import os
-from fastapi import FastAPI, HTTPException, Depends
+import sys
+import importlib
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
-from . import config as cfg
 from passlib.context import CryptContext
 import jwt
 from datetime import datetime, timedelta, timezone
 import secrets
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from sqlalchemy.exc import SQLAlchemyError
+
+def _load_cfg():
+    """Load config module handling both package and script execution."""
+    if __package__:
+        from . import config
+        return config
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        return importlib.import_module("config")
+
+def _load_activity_logger():
+    """Load activity logger module."""
+    if __package__:
+        from . import activity_logger
+        return activity_logger
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        return importlib.import_module("activity_logger")
+
+cfg = _load_cfg()
+activity_logger = _load_activity_logger()
 
 OTP_TTL_MINUTES = 5
 OTP_LENGTH = 6
@@ -77,6 +99,7 @@ class InviteUserRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    department: str | None = None  # Required for coordinator login
 
 class UpdateProfileRequest(BaseModel):
     ktu_id: str
@@ -101,35 +124,80 @@ class PasswordResetConfirmRequest(BaseModel):
 
 # Use this version of the change-password endpoint
 @app.post("/change-password")
-def change_password(req: ChangePasswordRequest):
+async def change_password(req: ChangePasswordRequest):
+    """Change password by locating the user in their role-specific table only."""
     with engine.begin() as conn:
-        # 1. Fetch current hash to verify the user
-        res = conn.execute(
-            text("SELECT password_hash FROM class_representatives WHERE ktu_id = :u OR username = :u"),
-            {"u": req.username}
+        # Try admin by email first
+        admin_row = conn.execute(
+            text("SELECT id, password_hash, email, name FROM admins WHERE UPPER(email)=UPPER(:u)"),
+            {"u": req.username},
         ).fetchone()
-        
-        if not res:
-            res = conn.execute(
-                text("SELECT password_hash FROM users WHERE username = :u"),
-                {"u": req.username}
+
+        coordinator_row = None
+        if not admin_row:
+            coordinator_row = conn.execute(
+                text("SELECT id, password_hash, email, name FROM coordinators WHERE UPPER(email)=UPPER(:u)"),
+                {"u": req.username},
             ).fetchone()
 
-        # 2. Verify current password before allowing change
-        if not res or not PWD_CTX.verify(req.current_password, res[0]):
+        class_rep_row = None
+        if not admin_row and not coordinator_row:
+            class_rep_row = conn.execute(
+                text("SELECT id, password_hash, email, name FROM class_representatives WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u) OR UPPER(username)=UPPER(:u)"),
+                {"u": req.username},
+            ).fetchone()
+
+        row = admin_row or coordinator_row or class_rep_row
+        if not row or not PWD_CTX.verify(req.current_password, row[1]):
             raise HTTPException(status_code=401, detail="Current password is incorrect")
 
-        # 3. Update to new hash
         new_hash = PWD_CTX.hash(req.new_password)
-        conn.execute(
-            text("UPDATE class_representatives SET password_hash = :p WHERE ktu_id = :u OR username = :u"),
-            {"p": new_hash, "u": req.username}
+        user_email = row[2]
+        user_name = row[3] or user_email
+
+        if admin_row:
+            conn.execute(text("UPDATE admins SET password_hash=:p WHERE id=:i"), {"p": new_hash, "i": row[0]})
+        elif coordinator_row:
+            conn.execute(text("UPDATE coordinators SET password_hash=:p WHERE id=:i"), {"p": new_hash, "i": row[0]})
+        elif class_rep_row:
+            conn.execute(text("UPDATE class_representatives SET password_hash=:p WHERE id=:i"), {"p": new_hash, "i": row[0]})
+
+    # Send password change confirmation email
+    try:
+        message = MessageSchema(
+            subject="Password Changed Successfully",
+            recipients=[user_email],
+            body=f"""
+                            <html>
+                                <body style="font-family: Arial, sans-serif; background-color: #f5f5f5; padding: 20px;">
+                                    <div style="background-color: white; border-radius: 8px; padding: 30px; max-width: 600px; margin: 0 auto; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                        <h2 style="color: #333; margin-bottom: 20px;">Password Changed Successfully</h2>
+                                        <p style="color: #666; font-size: 14px; line-height: 1.6;">
+                                            Hello {user_name},
+                                        </p>
+                                        <p style="color: #666; font-size: 14px; line-height: 1.6;">
+                                            Your password has been successfully changed. If you did not request this change, please contact the administrator immediately.
+                                        </p>
+                                        <div style="background-color: #e8f4f8; border-left: 4px solid #0066cc; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                            <p style="color: #333; margin: 0; font-size: 14px;">
+                                                <strong>For Security:</strong> Keep your password confidential and never share it with anyone. If you suspect unauthorized access, change your password immediately.
+                                            </p>
+                                        </div>
+                                        <p style="color: #999; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+                                            This is an automated message. Please do not reply to this email.
+                                        </p>
+                                    </div>
+                                </body>
+                            </html>
+                            """,
+            subtype="html",
         )
-        conn.execute(
-            text("UPDATE users SET password_hash = :p WHERE username = :u"),
-            {"p": new_hash, "u": req.username}
-        )
-        
+        fm = FastMail(conf)
+        await fm.send_message(message)
+    except Exception as e:
+        print(f"Warning: Failed to send password change email to {user_email}: {e}")
+        # Don't fail the password change if email fails
+
     return {"status": "Password updated successfully"}
 
 
@@ -139,25 +207,32 @@ async def request_password_reset(req: PasswordResetRequest):
     otp_hash = PWD_CTX.hash(otp)
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MINUTES)
 
-    # Locate user email and table
     with engine.begin() as conn:
-        res = conn.execute(
-            text(
-                "SELECT email FROM class_representatives WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(username)=UPPER(:u)"
-            ),
+        # Look in each role-specific table; stop at first match
+        admin_row = conn.execute(
+            text("SELECT email FROM admins WHERE UPPER(email)=UPPER(:u)"),
             {"u": req.username},
         ).fetchone()
 
-        if res:
-            email = res[0] or req.username
-        else:
-            res_user = conn.execute(
-                text("SELECT username FROM users WHERE UPPER(username)=UPPER(:u)"),
+        coordinator_row = None
+        if not admin_row:
+            coordinator_row = conn.execute(
+                text("SELECT email FROM coordinators WHERE UPPER(email)=UPPER(:u)"),
                 {"u": req.username},
             ).fetchone()
-            if not res_user:
-                raise HTTPException(status_code=404, detail="User not found")
-            email = res_user[0]
+
+        class_rep_row = None
+        if not admin_row and not coordinator_row:
+            class_rep_row = conn.execute(
+                text("SELECT email FROM class_representatives WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u) OR UPPER(username)=UPPER(:u)"),
+                {"u": req.username},
+            ).fetchone()
+
+        match_row = admin_row or coordinator_row or class_rep_row
+        if not match_row:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        email = match_row[0] or req.username
 
         conn.execute(
             text(
@@ -208,17 +283,31 @@ def confirm_password_reset(req: PasswordResetConfirmRequest):
 
         new_hash = PWD_CTX.hash(req.new_password)
 
-        # Update both tables where applicable
-        conn.execute(
-            text(
-                "UPDATE class_representatives SET password_hash = :p WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(username)=UPPER(:u)"
-            ),
-            {"p": new_hash, "u": req.username},
-        )
-        conn.execute(
-            text("UPDATE users SET password_hash = :p WHERE UPPER(username)=UPPER(:u)"),
-            {"p": new_hash, "u": req.username},
-        )
+        admin_row = conn.execute(
+            text("SELECT id FROM admins WHERE UPPER(email)=UPPER(:u)"),
+            {"u": req.username},
+        ).fetchone()
+        coordinator_row = None
+        if not admin_row:
+            coordinator_row = conn.execute(
+                text("SELECT id FROM coordinators WHERE UPPER(email)=UPPER(:u)"),
+                {"u": req.username},
+            ).fetchone()
+        class_rep_row = None
+        if not admin_row and not coordinator_row:
+            class_rep_row = conn.execute(
+                text("SELECT id FROM class_representatives WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u) OR UPPER(username)=UPPER(:u)"),
+                {"u": req.username},
+            ).fetchone()
+
+        if admin_row:
+            conn.execute(text("UPDATE admins SET password_hash=:p WHERE id=:i"), {"p": new_hash, "i": admin_row[0]})
+        elif coordinator_row:
+            conn.execute(text("UPDATE coordinators SET password_hash=:p WHERE id=:i"), {"p": new_hash, "i": coordinator_row[0]})
+        elif class_rep_row:
+            conn.execute(text("UPDATE class_representatives SET password_hash=:p WHERE id=:i"), {"p": new_hash, "i": class_rep_row[0]})
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
 
         conn.execute(text("DELETE FROM password_resets WHERE username = :u"), {"u": req.username})
 
@@ -255,16 +344,6 @@ def update_profile(req: UpdateProfileRequest):
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
     return {"status": "Profile updated successfully", "access_token": token, "token_type": "bearer"}
 
-@app.post("/change-password")
-def change_password(ktu_id: str, new_password: str):
-    pw_hash = PWD_CTX.hash(new_password)
-    with engine.begin() as conn:
-        conn.execute(
-            text("UPDATE class_representatives SET password_hash = :p WHERE ktu_id = :k"),
-            {"p": pw_hash, "k": ktu_id}
-        )
-    return {"status": "Password changed successfully"}
-
 # Build email config from environment variables via config module
 _m = cfg.get_mail_settings()
 conf = ConnectionConfig(
@@ -280,7 +359,7 @@ conf = ConnectionConfig(
 
 
 # Email templates for different user roles
-def _get_invite_email_template(role: str, username: str, password: str, name: str) -> tuple[str, str]:
+def _get_invite_email_template(role: str, username: str, password: str, name: str, coordinator_id: str = None) -> tuple[str, str]:
     """Return (subject, body) email template based on user role."""
     role_lower = role.lower()
     
@@ -337,7 +416,7 @@ def _get_invite_email_template(role: str, username: str, password: str, name: st
                 
                 <h3 style="color: #006633;">Your Login Credentials</h3>
                 <p style="background-color: #f5f5f5; padding: 15px; border-left: 4px solid #006633;">
-                    <strong>Username/Email:</strong> {username}<br/>
+                    <strong>Coordinator ID:</strong> {coordinator_id}<br/>
                     <strong>Password:</strong> {password}
                 </p>
                 
@@ -359,7 +438,7 @@ def _get_invite_email_template(role: str, username: str, password: str, name: st
                 
                 <h3 style="color: #006633;">Getting Started</h3>
                 <ol>
-                    <li>Log in to the ENERGIA application using your credentials</li>
+                    <li>Log in to the ENERGIA application using your Coordinator ID and password</li>
                     <li>Update your profile with contact information</li>
                     <li>Change your password to a secure one upon first login</li>
                     <li>Review the coordinator dashboard and available reports</li>
@@ -417,27 +496,45 @@ async def invite_user(req: InviteUserRequest):
     otp = secrets.token_urlsafe(12)  # 12-char base64-encoded string
     pw_hash = PWD_CTX.hash(otp)
     role_lower = req.role.lower()
-    
-    # Determine target table based on role
-    table = "class_representatives" if ("student" in role_lower or "representative" in role_lower) else "users"
-    
+    target_table = "class_representatives" if ("student" in role_lower or "representative" in role_lower) else ("coordinators" if "coordinator" in role_lower else "admins")
+
+    # Normalize email field
+    target_email = req.email or req.username
+    if target_table in {"coordinators", "admins"} and not target_email:
+        raise HTTPException(status_code=400, detail="Email is required for admins and coordinators")
+
+    coordinator_id = None
+
     with engine.begin() as conn:
-        # Check if user already exists
+        # Check if user already exists in the chosen table
         existing = conn.execute(
-            text(f"SELECT id FROM {table} WHERE username = :u"),
-            {"u": req.username}
+            text(f"SELECT id FROM {target_table} WHERE { 'username' if target_table == 'class_representatives' else 'email' } = :u"),
+            {"u": req.username if target_table == "class_representatives" else target_email},
         ).fetchone()
 
         if existing:
-            # Update existing user with new password and name
-            query = text(f"UPDATE {table} SET password_hash = :p, name = :n WHERE username = :u")
-            params = {"u": req.username, "p": pw_hash, "n": req.name}
+            if target_table == "class_representatives":
+                query = text("UPDATE class_representatives SET password_hash=:p, name=:n, department=:d, ktu_id=:k, year=:y, email=:e WHERE id=:i")
+                params = {
+                    "p": pw_hash,
+                    "n": req.name,
+                    "d": req.department,
+                    "k": req.ktu_id,
+                    "y": req.year,
+                    "e": target_email,
+                    "i": existing[0],
+                }
+            elif target_table == "coordinators":
+                query = text("UPDATE coordinators SET password_hash=:p, name=:n, department=:d, email=:e WHERE id=:i")
+                params = {"p": pw_hash, "n": req.name, "d": req.department, "e": target_email, "i": existing[0]}
+            else:  # admins
+                query = text("UPDATE admins SET password_hash=:p, name=:n, email=:e WHERE id=:i")
+                params = {"p": pw_hash, "n": req.name, "e": target_email, "i": existing[0]}
             action = "updated"
         else:
-            # Insert new user into appropriate table
-            if table == "class_representatives":
+            if target_table == "class_representatives":
                 query = text(
-                    f"INSERT INTO {table} (username, password_hash, name, department, ktu_id, year, email, created_at) "
+                    "INSERT INTO class_representatives (username, password_hash, name, department, ktu_id, year, email, created_at) "
                     "VALUES (:u, :p, :n, :d, :k, :y, :e, :c)"
                 )
                 params = {
@@ -447,43 +544,99 @@ async def invite_user(req: InviteUserRequest):
                     "d": req.department,
                     "k": req.ktu_id,
                     "y": req.year,
-                    "e": req.username,  # email = username for class reps
+                    "e": target_email,
                     "c": datetime.utcnow(),
                 }
-            else:
-                # Coordinator or admin user
+            elif target_table == "coordinators":
+                # Generate unique coordinator ID by finding the next available number
+                dept_prefix = f"C{req.department[:2].upper()}"
+                
+                # Get all existing coordinator IDs for this department
+                existing_ids = conn.execute(
+                    text("SELECT coordinator_id FROM coordinators WHERE coordinator_id LIKE :prefix ORDER BY coordinator_id"),
+                    {"prefix": f"{dept_prefix}%"}
+                ).fetchall()
+                
+                # Extract numbers from existing IDs and find the next available number
+                existing_numbers = []
+                for (cid,) in existing_ids:
+                    try:
+                        # Extract the numeric part after the department prefix
+                        num = int(cid[len(dept_prefix):])
+                        existing_numbers.append(num)
+                    except (ValueError, IndexError):
+                        continue
+                
+                # Find the next available number
+                next_num = 1
+                while next_num in existing_numbers:
+                    next_num += 1
+                
+                coordinator_id = f"{dept_prefix}{next_num:03d}"
+                
                 query = text(
-                    f"INSERT INTO {table} (username, password_hash, role, name, created_at) "
-                    "VALUES (:u, :p, :r, :n, :c)"
+                    "INSERT INTO coordinators (coordinator_id, email, password_hash, name, department, created_at) "
+                    "VALUES (:cid, :e, :p, :n, :d, :c)"
                 )
                 params = {
-                    "u": req.username,
+                    "cid": coordinator_id,
+                    "e": target_email,
                     "p": pw_hash,
-                    "r": req.role,
+                    "n": req.name,
+                    "d": req.department,
+                    "c": datetime.utcnow(),
+                }
+            else:  # admins
+                query = text(
+                    "INSERT INTO admins (email, password_hash, name, created_at) "
+                    "VALUES (:e, :p, :n, :c)"
+                )
+                params = {
+                    "e": target_email,
+                    "p": pw_hash,
                     "n": req.name,
                     "c": datetime.utcnow(),
                 }
             action = "created"
-        
-        conn.execute(query, params)
+
+        try:
+            conn.execute(query, params)
+        except SQLAlchemyError as e:
+            # Handle database errors, especially unique constraint violations
+            error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+            if "duplicate key" in error_msg.lower() or "unique constraint" in error_msg.lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"User with this identifier already exists. Please try again or contact support."
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Database error: {error_msg}"
+                )
     
     # Prepare role-specific email
     # For class representatives, show KTU ID as the username in the email
     display_username = req.username
     if "student" in role_lower or "representative" in role_lower:
         display_username = req.ktu_id or req.username
+    elif "coordinator" in role_lower:
+        display_username = target_email
+    else:
+        display_username = target_email
     subject, email_body = _get_invite_email_template(
         role=req.role,
         username=display_username,
         password=otp,
-        name=req.name or "User"
+        name=req.name or "User",
+        coordinator_id=coordinator_id
     )
     
     # Send email with credentials
     try:
         message = MessageSchema(
             subject=subject,
-            recipients=[req.username],
+            recipients=[target_email],
             body=email_body,
             subtype="html"
         )
@@ -537,67 +690,163 @@ def register(req: RegisterRequest):
                 {"u": req.username, "p": pw_hash, "k": req.ktu_id, "e": req.email, "d": req.department, "y": req.year, "c": datetime.utcnow()},
             )
     else:
-        # Non-student registration (admin/coordinator) - no KTU verification
+        # Admin or coordinator registration
+        if not req.email:
+            raise HTTPException(status_code=400, detail="Email is required for admin and coordinator registration")
+        if req.role == "coordinator" and not req.department:
+            raise HTTPException(status_code=400, detail="Department is required for coordinator registration")
+        if not req.ktu_id:
+            # keep compatibility; username acts as email for admins/coordinators
+            req.ktu_id = None
+
         with engine.begin() as conn:
-            row = conn.execute(text("SELECT id FROM users WHERE username = :u"), {"u": req.username}).fetchone()
-            if row:
-                raise HTTPException(status_code=400, detail="User already exists")
-            pw_hash = PWD_CTX.hash(req.password)
-            conn.execute(
-                text("INSERT INTO users (username, password_hash, role, created_at) VALUES (:u, :p, :r, :c)"),
-                {"u": req.username, "p": pw_hash, "r": req.role, "c": datetime.utcnow()},
-            )
+            if req.role == "admin":
+                row = conn.execute(text("SELECT id FROM admins WHERE email=:e"), {"e": req.email}).fetchone()
+                if row:
+                    raise HTTPException(status_code=400, detail="Admin already exists")
+                pw_hash = PWD_CTX.hash(req.password)
+                conn.execute(
+                    text("INSERT INTO admins (email, password_hash, name, created_at) VALUES (:e, :p, :n, :c)"),
+                    {"e": req.email, "p": pw_hash, "n": req.username or req.email, "c": datetime.utcnow()},
+                )
+            else:
+                row = conn.execute(text("SELECT id FROM coordinators WHERE email=:e"), {"e": req.email}).fetchone()
+                if row:
+                    raise HTTPException(status_code=400, detail="Coordinator already exists")
+                pw_hash = PWD_CTX.hash(req.password)
+                conn.execute(
+                    text("INSERT INTO coordinators (email, password_hash, name, department, created_at) VALUES (:e, :p, :n, :d, :c)"),
+                    {"e": req.email, "p": pw_hash, "n": req.username or req.email, "d": req.department, "c": datetime.utcnow()},
+                )
     return {"status": "ok"}
 
 
 @app.post("/login")
-def login(req: LoginRequest):
-    with engine.begin() as conn:
-        # Fetch 'name' in the SELECT query
-        res = conn.execute(
-            text("SELECT id, password_hash, department, ktu_id, year, username, name "
-                 "FROM class_representatives WHERE UPPER(ktu_id) = UPPER(:u)"),
-            {"u": req.username.strip()}
-        ).fetchone()
-
-        if res:
-            u_id, pw_hash, dept, ktu, year, email, name = res # Unpack name
-            role = 'student'
-        else:
-            res = conn.execute(
-                text("SELECT id, password_hash, role, department, name FROM users WHERE UPPER(username) = UPPER(:u)"), 
-                {"u": req.username.strip()}
+def login(req: LoginRequest, request: Request):
+    try:
+        client_ip = request.client.host if request.client else "0.0.0.0"
+        
+        with engine.begin() as conn:
+            # Try admin by username first
+            admin_row = conn.execute(
+                text("SELECT id, password_hash, name, email, username FROM admins WHERE UPPER(username)=UPPER(:u)"),
+                {"u": req.username.strip()},
             ).fetchone()
-            if not res: raise HTTPException(status_code=401, detail="User not found")
-            u_id, pw_hash, role, dept, name = res
-            ktu, year, email = None, None, req.username.strip()
 
-        if not PWD_CTX.verify(req.password, pw_hash):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            coordinator_row = None
+            if not admin_row:
+                # Try coordinator by coordinator_id only
+                coordinator_row = conn.execute(
+                    text("SELECT id, password_hash, name, department, email, coordinator_id FROM coordinators WHERE UPPER(coordinator_id)=UPPER(:u)"),
+                    {"u": req.username.strip()},
+                ).fetchone()
+                
+                # Verify department matches if coordinator found
+                if coordinator_row and req.department:
+                    stored_dept = coordinator_row[3]  # department is at index 3
+                    if stored_dept and stored_dept.strip().upper() != req.department.strip().upper():
+                        activity_logger.log_activity(
+                            user_id=req.username,
+                            action_type="login",
+                            action_description="Failed login attempt - department mismatch",
+                            status="failure",
+                            ip_address=client_ip,
+                        )
+                        raise HTTPException(
+                            status_code=401, 
+                            detail="Department mismatch"
+                        )
+                elif coordinator_row and not req.department:
+                    activity_logger.log_activity(
+                        user_id=req.username,
+                        action_type="login",
+                        action_description="Failed login attempt - missing department",
+                        status="failure",
+                        ip_address=client_ip,
+                    )
+                    raise HTTPException(status_code=400, detail="Department is required")
 
-        payload = {
-            "sub": str(u_id),
-            "username": email,
-            "name": name, # No more NameError
-            "role": role,
-            "department": dept,
-            "ktu_id": ktu,
-            "year": year,
-            "exp": datetime.utcnow() + timedelta(hours=12)
-        }
-        return {"access_token": jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG), "token_type": "bearer"}
+            class_rep_row = None
+            if not admin_row and not coordinator_row:
+                class_rep_row = conn.execute(
+                    text("SELECT id, password_hash, department, ktu_id, year, username, name, email FROM class_representatives WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u) OR UPPER(username)=UPPER(:u)"),
+                    {"u": req.username.strip()},
+                ).fetchone()
+
+            if admin_row:
+                u_id, pw_hash, name, email, username = admin_row
+                role = "admin"
+                dept, ktu, year = None, None, None
+            elif coordinator_row:
+                u_id, pw_hash, name, dept, email, coordinator_id = coordinator_row
+                role = "coordinator"
+                ktu, year = None, None
+            elif class_rep_row:
+                u_id, pw_hash, dept, ktu, year, username_val, name, email_from_table = class_rep_row
+                email = email_from_table or username_val
+                role = "student"
+            else:
+                activity_logger.log_activity(
+                    user_id=req.username,
+                    action_type="login",
+                    action_description="Failed login attempt - user not found",
+                    status="failure",
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid username or password")
+
+            if not PWD_CTX.verify(req.password, pw_hash):
+                activity_logger.log_activity(
+                    user_id=req.username,
+                    user_name=name,
+                    user_role=role,
+                    action_type="login",
+                    action_description="Failed login attempt - invalid password",
+                    status="failure",
+                    department=dept,
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid username or password")
+
+            # Log successful login
+            activity_logger.log_activity(
+                user_id=str(u_id),
+                user_name=name,
+                user_role=role,
+                action_type="login",
+                action_description=f"{role.capitalize()} successfully logged in",
+                status="success",
+                department=dept,
+                ip_address=client_ip,
+            )
+
+            payload = {
+                "sub": str(u_id),
+                "username": email,
+                "name": name,
+                "role": role,
+                "department": dept,
+                "ktu_id": ktu,
+                "year": year,
+                "exp": datetime.utcnow() + timedelta(hours=12),
+            }
+            return {"access_token": jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG), "token_type": "bearer"}
+    except HTTPException:
+        # Re-raise HTTP exceptions (credential errors)
+        raise
+    except Exception as e:
+        print(f"Login error: {e}")
+        # For database or system errors, return generic error
+        raise HTTPException(status_code=500, detail="Something went wrong")
 
 @app.get("/users/coordinators")
 def get_coordinators():
     """Fetch all coordinators from the database."""
     with engine.begin() as conn:
         result = conn.execute(
-            text("""
-                SELECT id, username, name, department, created_at 
-                FROM users 
-                WHERE role = 'coordinator'
-                ORDER BY name ASC
-            """)
+            text(
+                "SELECT id, email, name, department, created_at FROM coordinators ORDER BY name ASC"
+            )
         ).fetchall()
         
         coordinators = []
@@ -605,9 +854,9 @@ def get_coordinators():
             coordinators.append({
                 "id": row[0],
                 "username": row[1],
-                "name": row[2] or row[1],  # fallback to username if name is null
+                "name": row[2] or row[1],
                 "department": row[3] or "N/A",
-                "created_at": row[4].isoformat() if row[4] else None
+                "created_at": row[4].isoformat() if row[4] else None,
             })
         
         return {"coordinators": coordinators, "total": len(coordinators)}
@@ -645,29 +894,16 @@ def get_class_representatives():
 def get_user_counts():
     """Fetch user counts from the database."""
     with engine.begin() as conn:
-        # Count coordinators
-        coordinator_count = conn.execute(
-            text("SELECT COUNT(*) FROM users WHERE role = 'coordinator'")
-        ).scalar()
+        coordinator_count = conn.execute(text("SELECT COUNT(*) FROM coordinators")).scalar()
+        class_rep_count = conn.execute(text("SELECT COUNT(*) FROM class_representatives")).scalar()
         
-        # Count class representatives
-        class_rep_count = conn.execute(
-            text("SELECT COUNT(*) FROM class_representatives")
-        ).scalar()
-        
-        # Count admins
-        admin_count = conn.execute(
-            text("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-        ).scalar()
-        
-        # Total users
-        total_users = coordinator_count + class_rep_count + admin_count
+        # Total users (excluding admins)
+        total_users = coordinator_count + class_rep_count
         
         return {
             "total_users": total_users,
             "coordinators": coordinator_count,
-            "class_representatives": class_rep_count,
-            "admins": admin_count
+            "class_representatives": class_rep_count
         }
 
 
@@ -675,24 +911,197 @@ def get_user_counts():
 def delete_user(username: str):
     """Delete a user (coordinator or class representative) by username."""
     with engine.begin() as conn:
-        # Try to delete from users table (coordinators)
-        result_users = conn.execute(
-            text("DELETE FROM users WHERE username = :u AND role IN ('coordinator', 'class_representative')"),
-            {"u": username}
+        result_admin = conn.execute(
+            text("DELETE FROM admins WHERE UPPER(email)=UPPER(:u)"),
+            {"u": username},
         )
-        
-        # Try to delete from class_representatives table
+
+        result_coord = conn.execute(
+            text("DELETE FROM coordinators WHERE UPPER(email)=UPPER(:u)"),
+            {"u": username},
+        )
+
         result_reps = conn.execute(
-            text("DELETE FROM class_representatives WHERE username = :u OR ktu_id = :u"),
-            {"u": username}
+            text("DELETE FROM class_representatives WHERE UPPER(username)=UPPER(:u) OR UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u)"),
+            {"u": username},
         )
-        
-        deleted_count = result_users.rowcount + result_reps.rowcount
-        
+
+        deleted_count = result_admin.rowcount + result_coord.rowcount + result_reps.rowcount
+
         if deleted_count == 0:
             raise HTTPException(status_code=404, detail=f"User '{username}' not found or cannot be deleted")
         
         return {"status": "success", "message": f"User '{username}' deleted successfully", "deleted_count": deleted_count}
+
+
+@app.post("/sensor-data")
+async def receive_sensor_data(request: Request):
+    """
+    Receive sensor data from ESP32 and store it in the database.
+    
+    Expected JSON payload:
+    {
+        "device_id": "ESP32-LAB-001",
+        "voltage": 230.5,
+        "current": 2.3,
+        "power": 529.15,
+        "energy": 1.5,
+        "frequency": 50.0,
+        "power_factor": 0.95
+    }
+    """
+    try:
+        payload = await request.json()
+        
+        # Store raw JSON payload for debugging and data recovery
+        import json
+        raw_json = json.dumps(payload)
+
+        device_id = payload.get("device_id", "unknown")
+
+        # Extract metrics, cast to float where present
+        def _to_float(key, default=None):
+            v = payload.get(key, default)
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid numeric value for '{key}': {v}")
+
+        voltage = _to_float("voltage")
+        current = _to_float("current")
+        power = _to_float("power")
+        energy = _to_float("energy")
+        frequency = _to_float("frequency")
+        power_factor = _to_float("power_factor")
+
+        # Maintain legacy 'value' field (use power if provided)
+        value = power if power is not None else _to_float("value", 0)
+
+        timestamp = datetime.now(timezone.utc)
+
+        with engine.begin() as conn:
+            # Store in sensor_data table (processed)
+            conn.execute(
+                text(
+                    "INSERT INTO sensor_data(ds, device_id, value, voltage, current, power, energy, frequency, power_factor) "
+                    "VALUES (:ds, :device_id, :value, :voltage, :current, :power, :energy, :frequency, :power_factor)"
+                ),
+                {
+                    "ds": timestamp,
+                    "device_id": device_id,
+                    "value": float(value) if value is not None else None,
+                    "voltage": voltage,
+                    "current": current,
+                    "power": power,
+                    "energy": energy,
+                    "frequency": frequency,
+                    "power_factor": power_factor,
+                },
+            )
+            
+            # Store in esp32_raw_data table (raw payload)
+            conn.execute(
+                text(
+                    "INSERT INTO esp32_raw_data(device_id, raw_payload, voltage, current, power, energy, frequency, power_factor, timestamp, processed) "
+                    "VALUES (:device_id, :raw_payload, :voltage, :current, :power, :energy, :frequency, :power_factor, :timestamp, :processed)"
+                ),
+                {
+                    "device_id": device_id,
+                    "raw_payload": raw_json,
+                    "voltage": voltage,
+                    "current": current,
+                    "power": power,
+                    "energy": energy,
+                    "frequency": frequency,
+                    "power_factor": power_factor,
+                    "timestamp": timestamp,
+                    "processed": 1,  # Mark as processed since we're storing it
+                },
+            )
+
+            # Log this activity
+            activity_logger.log_activity(
+                user_id=device_id,
+                action_type="data_submission",
+                resource_type="sensor",
+                resource_id=device_id,
+                action_description=f"Sensor reading inserted: power={power}W",
+            )
+
+        return {
+            "status": "success",
+            "message": f"Sensor data from {device_id} received and stored",
+            "device_id": device_id,
+            "value": value,
+            "voltage": voltage,
+            "current": current,
+            "power": power,
+            "energy": energy,
+            "frequency": frequency,
+            "power_factor": power_factor,
+            "timestamp": timestamp.isoformat(),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error processing sensor data: {str(e)}")
+
+
+@app.get("/sensor-data")
+def get_sensor_data(device_id: str = None, limit: int = 100):
+    """
+    Retrieve sensor data from the database.
+    
+    Query parameters:
+    - device_id: Filter by specific device (optional)
+    - limit: Maximum number of records to return (default: 100)
+    """
+    try:
+        with engine.begin() as conn:
+            if device_id:
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, value 
+                        FROM sensor_data 
+                        WHERE device_id = :device_id
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"device_id": device_id, "limit": limit}
+                )
+            else:
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, value 
+                        FROM sensor_data 
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"limit": limit}
+                )
+            
+            rows = result.fetchall()
+            data = [
+                {
+                    "id": row[0],
+                    "timestamp": row[1].isoformat() if row[1] else None,
+                    "device_id": row[2],
+                    "value": row[3]
+                }
+                for row in rows
+            ]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
 
 
 @app.get("/health")
