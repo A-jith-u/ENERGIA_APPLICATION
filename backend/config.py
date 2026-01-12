@@ -36,7 +36,7 @@ def get_db_url(required: bool = True) -> str:
         if required:
             raise RuntimeError(
                 "DB_URL is not set. Configure it in your environment or .env, e.g.\n"
-                "DB_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/energia"
+                "DB_URL=postgresql+psycopg2://postgres:1234@localhost:5432/energia"
             )
         return ""
 

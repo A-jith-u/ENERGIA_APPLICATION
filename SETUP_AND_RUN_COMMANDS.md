@@ -345,6 +345,19 @@ Once backend is running, access:
 - **Request Password Reset (OTP)**: POST http://localhost:8000/auth/request-password-reset `{ "username": "<email-or-ktu-id>" }`
 - **Confirm Password Reset**: POST http://localhost:8000/auth/confirm-password-reset `{ "username": "<email-or-ktu-id>", "otp": "123456", "new_password": "NewPass" }` (OTP valid 5 minutes)
 
+### Sensor Data Endpoints (ESP32 Integration)
+
+- **Send Sensor Data**: POST http://localhost:8000/api/sensor-data
+  - Receives readings from ESP32 PZEM module
+  - Request: `{ "device_id": "ESP32-LAB-001", "voltage": 230.5, "current": 2.3, "power": 529.15, "energy": 1.5, "frequency": 50.0, "power_factor": 0.95 }`
+
+- **Get Sensor Data**: GET http://localhost:8000/api/sensor-data
+  - Retrieves stored sensor readings from database
+  - Query params: `?device_id=ESP32-LAB-001&limit=100`
+  - Response: Array of sensor readings with timestamps
+
+For detailed ESP32 integration guide, see [ESP32_SENSOR_DATA_GUIDE.md](ESP32_SENSOR_DATA_GUIDE.md)
+
 ---
 
 ## Environment Variables

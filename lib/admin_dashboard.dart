@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
+import 'package:energia/widgets/energy_visualization_widgets.dart';
 import 'services/notifier.dart';
 import 'package:energia/services/pdf_export.dart';
 import 'package:energia/services/csv_export.dart';
@@ -13,8 +14,14 @@ import 'mechanical.dart';
 import 'Itt.dart';
 import 'adminblock.dart';
 import 'dart:convert'; // Fixes 'jsonEncode' error
+import 'dart:async'; // For Timer
 import 'package:http/http.dart' as http; // Fixes 'http' error
 import 'services/api.dart' as api; // Import API functions
+import 'services/user_counts.dart';
+import 'services/user_lists.dart';
+import 'services/validators.dart'; // Import validation functions
+import 'activity_logs_page.dart'; // Import activity logs page
+import 'monthly_report_page.dart'; // Import monthly report page
 import 'dart:ui'; // For ImageFilter (glassmorphism effect)
 
 // --- HELPER WIDGETS ---
@@ -89,6 +96,16 @@ class _CampusEnergyPieChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
+    
+    // Computer Science Department Classrooms/Labs Data
+    final csRooms = [
+      {'name': 'CS Lab 1', 'usage': 4.2, 'capacity': 5.0, 'color': const Color(0xFF2196F3)},
+      {'name': 'CS Lab 2', 'usage': 3.8, 'capacity': 5.0, 'color': const Color(0xFF1976D2)},
+      {'name': 'CS Lab 3', 'usage': 4.5, 'capacity': 5.0, 'color': const Color(0xFF1565C0)},
+      {'name': 'Classroom A', 'usage': 2.1, 'capacity': 3.0, 'color': const Color(0xFF42A5F5)},
+      {'name': 'Classroom B', 'usage': 1.8, 'capacity': 3.0, 'color': const Color(0xFF64B5F6)},
+    ];
     
     return Container(
       decoration: BoxDecoration(
@@ -143,89 +160,185 @@ class _CampusEnergyPieChart extends StatelessWidget {
                     ],
               ),
             ),
-            child: PieChart(
-              PieChartData(
-                sectionsSpace: 3,
-                centerSpaceRadius: 60,
-                startDegreeOffset: -90,
-                sections: [
-                  PieChartSectionData(
-                    value: 30,
-                    color: Colors.blue.shade400,
-                    title: '30%',
-                    radius: 85,
-                    titleStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Header
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2196F3).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.computer,
+                        color: Color(0xFF2196F3),
+                        size: 24,
+                      ),
                     ),
-                    titlePositionPercentageOffset: 0.6,
-                    badgeWidget: _buildGlassyBadge('CS', Colors.blue.shade400),
-                    badgePositionPercentageOffset: 1.4,
-                  ),
-                  PieChartSectionData(
-                    value: 25,
-                    color: Colors.green.shade400,
-                    title: '25%',
-                    radius: 80,
-                    titleStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Computer Science Department',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        Text(
+                          'Real-time Energy Consumption',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: isDark ? Colors.white70 : Colors.black54,
+                          ),
+                        ),
+                      ],
                     ),
-                    titlePositionPercentageOffset: 0.6,
-                    badgeWidget: _buildGlassyBadge('ECE', Colors.green.shade400),
-                    badgePositionPercentageOffset: 1.4,
-                  ),
-                  PieChartSectionData(
-                    value: 20,
-                    color: Colors.orange.shade400,
-                    title: '20%',
-                    radius: 75,
-                    titleStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                  ],
+                ),
+                const SizedBox(height: 24),
+                
+                // Bar Chart
+                Expanded(
+                  child: BarChart(
+                    BarChartData(
+                      alignment: BarChartAlignment.spaceAround,
+                      maxY: 5.5,
+                      barTouchData: BarTouchData(
+                        enabled: true,
+                        touchTooltipData: BarTouchTooltipData(
+                          getTooltipColor: (group) => Colors.black87,
+                          tooltipPadding: const EdgeInsets.all(8),
+                          tooltipMargin: 8,
+                          getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                            return BarTooltipItem(
+                              '${csRooms[group.x.toInt()]['name']}\n${rod.toY.toStringAsFixed(1)} kW',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      titlesData: FlTitlesData(
+                        show: true,
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            getTitlesWidget: (value, meta) {
+                              if (value.toInt() < csRooms.length) {
+                                final room = csRooms[value.toInt()];
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Text(
+                                    room['name'] as String,
+                                    style: TextStyle(
+                                      color: isDark ? Colors.white70 : Colors.black87,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 11,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                );
+                              }
+                              return const SizedBox();
+                            },
+                            reservedSize: 42,
+                          ),
+                        ),
+                        leftTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 40,
+                            getTitlesWidget: (value, meta) {
+                              return Text(
+                                '${value.toInt()} kW',
+                                style: TextStyle(
+                                  color: isDark ? Colors.white70 : Colors.black87,
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 10,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        topTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        rightTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                      ),
+                      gridData: FlGridData(
+                        show: true,
+                        drawVerticalLine: false,
+                        horizontalInterval: 1,
+                        getDrawingHorizontalLine: (value) {
+                          return FlLine(
+                            color: isDark 
+                              ? Colors.white.withOpacity(0.1)
+                              : Colors.black.withOpacity(0.1),
+                            strokeWidth: 1,
+                          );
+                        },
+                      ),
+                      borderData: FlBorderData(
+                        show: false,
+                      ),
+                      barGroups: List.generate(csRooms.length, (index) {
+                        final room = csRooms[index];
+                        final usage = room['usage'] as double;
+                        final capacity = room['capacity'] as double;
+                        final percentage = (usage / capacity * 100).round();
+                        
+                        return BarChartGroupData(
+                          x: index,
+                          barRods: [
+                            BarChartRodData(
+                              toY: usage,
+                              color: room['color'] as Color,
+                              width: 32,
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(8),
+                                topRight: Radius.circular(8),
+                              ),
+                              backDrawRodData: BackgroundBarChartRodData(
+                                show: true,
+                                toY: capacity,
+                                color: isDark
+                                  ? Colors.white.withOpacity(0.1)
+                                  : Colors.black.withOpacity(0.05),
+                              ),
+                              rodStackItems: [],
+                            ),
+                          ],
+                          showingTooltipIndicators: [],
+                        );
+                      }),
                     ),
-                    titlePositionPercentageOffset: 0.6,
-                    badgeWidget: _buildGlassyBadge('Mech', Colors.orange.shade400),
-                    badgePositionPercentageOffset: 1.4,
                   ),
-                  PieChartSectionData(
-                    value: 15,
-                    color: Colors.purple.shade400,
-                    title: '15%',
-                    radius: 70,
-                    titleStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Legend
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildLegendItem('Current Usage', const Color(0xFF2196F3)),
+                    const SizedBox(width: 24),
+                    _buildLegendItem(
+                      'Capacity', 
+                      isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05)
                     ),
-                    titlePositionPercentageOffset: 0.6,
-                    badgeWidget: _buildGlassyBadge('IT', Colors.purple.shade400),
-                    badgePositionPercentageOffset: 1.4,
-                  ),
-                  PieChartSectionData(
-                    value: 10,
-                    color: Colors.cyan.shade400,
-                    title: '10%',
-                    radius: 65,
-                    titleStyle: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [Shadow(color: Colors.black26, blurRadius: 4)],
-                    ),
-                    titlePositionPercentageOffset: 0.6,
-                    badgeWidget: _buildGlassyBadge('Admin', Colors.cyan.shade400),
-                    badgePositionPercentageOffset: 1.4,
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
@@ -233,45 +346,27 @@ class _CampusEnergyPieChart extends StatelessWidget {
     );
   }
 
-  Widget _buildGlassyBadge(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withOpacity(0.9),
-            Colors.white.withOpacity(0.7),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: Colors.white.withOpacity(0.5),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+  Widget _buildLegendItem(String label, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
           ),
-          BoxShadow(
-            color: Colors.white.withOpacity(0.5),
-            blurRadius: 8,
-            offset: const Offset(-2, -2),
-          ),
-        ],
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.bold,
-          color: color,
-          letterSpacing: 0.5,
         ),
-      ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -365,11 +460,22 @@ class _CampusOverviewSection extends StatefulWidget {
 
 class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
   Map<String, int>? _userCounts;
-  bool _isLoading = true;
+  bool _isLoading = false; // show immediately, refresh in background
+
+  void _onCountsChanged() {
+    setState(() {
+      _userCounts = UserCountsStore.instance.counts.value;
+    });
+  }
 
   @override
   void initState() {
     super.initState();
+    // Subscribe to shared user counts
+    UserCountsStore.instance.counts.addListener(_onCountsChanged);
+    // Initialize from current store
+    _userCounts = UserCountsStore.instance.counts.value;
+    // Refresh in background
     _loadUserCounts();
   }
 
@@ -386,9 +492,21 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
       if (mounted) {
         setState(() {
           _isLoading = false;
+          // Use default values on error
+          _userCounts ??= {'coordinators': 0, 'class_representatives': 0};
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    UserCountsStore.instance.counts.removeListener(_onCountsChanged);
+    super.dispose();
+  }
+
+  void _refreshCounts() {
+    _loadUserCounts();
   }
 
   // Helper to build the Department Status Tiles
@@ -459,14 +577,14 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
         
         const SizedBox(height: 32),
         
-        // Department Status (Detailed list is good for Admin oversight)
+        // Department Status - Computer Science Only
         Text(
           'Department Status',
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
         
-        // 1. Computer Science (Navigates to CS Classrooms Page)
+        // Computer Science Department (Primary Focus)
         _buildDepartmentStatusTile(
           context, 
           'Computer Science', 
@@ -481,86 +599,6 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
             );
           },
         ),
-        
-        // 2. Mechanical (Navigates to Mechan Page)
-        _buildDepartmentStatusTile(
-          context, 
-          'Mechanical', 
-          '31.5 kW', 
-          '78%', 
-          Colors.orange.shade600,
-          'Moderate',
-          onTap: () {
-            Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (context) => const Mechan()),
-            );
-          },
-        ),
-        
-        // 3. Electrical (Navigates to Elect Page)
-        _buildDepartmentStatusTile(
-          context, 
-          'Electrical', 
-          '45.7 kW', 
-          '72%', 
-          Colors.red.shade600,
-          'Alert',
-          onTap: () {
-            Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (context) => const Elect()),
-            );
-          },
-        ),
-        
-        // 4. Electronics and communication (Navigates to Electrns Page)
-        _buildDepartmentStatusTile(
-          context, 
-          'Electronics and communication', 
-          '8.2 kW', 
-          '95%', 
-          Colors.cyan.shade600, 
-          'Excellent',
-          onTap: () {
-            Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (context) => const Electrns()),
-            );
-          },
-        ),
-
-        // 5. IT (Navigates to Itpage Page)
-        _buildDepartmentStatusTile(
-          context, 
-          'IT', 
-          '45.7 kW', 
-          '72%', 
-          Colors.yellow.shade600,
-          'Alert',
-          onTap: () {
-            Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (context) => const Itpage()),
-            );
-          },
-        ),
-        
-        // 6. Adminblock (Navigates to AdmPage Page)
-        _buildDepartmentStatusTile(
-          context, 
-          'Adminblock', 
-          '45.7 kW', 
-          '72%', 
-          Colors.blue.shade600,
-          'Alert',
-          onTap: () {
-            Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (context) => const AdmPage()),
-            );
-          },
-        ),
 
         const SizedBox(height: 32),
         
@@ -570,14 +608,16 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
-        _buildActionCard(context, 'Generate Monthly Report', 'Create campus-wide consumption report.', Icons.picture_as_pdf), //
-        _buildActionCard(context, 'Manage Thresholds', 'Adjust campus-level anomaly limits.', Icons.tune), //
+        _buildActionCard(context, 'Generate Monthly Report', 'Create campus-wide consumption report.', Icons.picture_as_pdf, onTap: () {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MonthlyReportPage()));
+        }),
+        _buildActionCard(context, 'Manage Thresholds', 'Adjust campus-level anomaly limits.', Icons.tune),
 
       ],
     );
   }
 
-  Widget _buildActionCard(BuildContext context, String title, String description, IconData icon) {
+  Widget _buildActionCard(BuildContext context, String title, String description, IconData icon, {VoidCallback? onTap}) {
     final theme = Theme.of(context);
     return Card(
       elevation: 2,
@@ -588,7 +628,7 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
         title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         subtitle: Text(description),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-        onTap: () {},
+        onTap: onTap ?? () {},
       ),
     );
   }
@@ -709,11 +749,19 @@ class _UsersManagementSection extends StatefulWidget {
 
 class _UsersManagementSectionState extends State<_UsersManagementSection> {
   Map<String, int>? _userCounts;
-  bool _isLoading = true;
+  bool _isLoading = false;
+
+  void _onCountsChanged() {
+    setState(() {
+      _userCounts = UserCountsStore.instance.counts.value;
+    });
+  }
 
   @override
   void initState() {
     super.initState();
+    UserCountsStore.instance.counts.addListener(_onCountsChanged);
+    _userCounts = UserCountsStore.instance.counts.value;
     _loadUserCounts();
   }
 
@@ -733,6 +781,12 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
         });
       }
     }
+  }
+
+  @override
+  void dispose() {
+    UserCountsStore.instance.counts.removeListener(_onCountsChanged);
+    super.dispose();
   }
 
   @override
@@ -824,13 +878,21 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
         ),
         _buildActionCard(
           context, 
-          'Bulk Import', 
+          'Bulk Export', 
           'Export all users to CSV file', 
           Icons.download_outlined,
           onTap: () => _exportAllUsersCSV(context),
         ),
         _buildActionCard(context, 'User Permissions', 'Manage access controls', Icons.security_outlined),
-        _buildActionCard(context, 'Activity Logs', 'View user activity history', Icons.history_outlined),
+        _buildActionCard(
+          context, 
+          'Activity Logs', 
+          'View user activity history', 
+          Icons.history_outlined,
+          onTap: () {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ActivityLogsPage()));
+          },
+        ),
         
         const SizedBox(height: 24),
         
@@ -841,22 +903,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
         ),
         const SizedBox(height: 12),
         
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
-          ),
-          child: Column(
-            children: [
-              _buildUserActivity(context, 'Rahul Kumar (CS-404)', 'Submitted energy reading', Icons.assignment_turned_in, Colors.green.shade600, '2 min ago'),
-              _buildUserActivity(context, 'Dr. Priya (CS Coord)', 'Generated weekly report', Icons.analytics, Colors.blue.shade600, '15 min ago'),
-              _buildUserActivity(context, 'Arjun S (ECE-302)', 'Reported AC malfunction', Icons.report_problem, Colors.orange.shade600, '1 hour ago'),
-              _buildUserActivity(context, 'System Auto', 'Scheduled maintenance alert', Icons.schedule, Colors.purple.shade600, '2 hours ago'),
-            ],
-          ),
-        ),
+        _ActivityLogWidget(),
       ],
     );
   }
@@ -969,7 +1016,7 @@ class CoordinatorsPage extends StatefulWidget {
 
 class _CoordinatorsPageState extends State<CoordinatorsPage> {
   List<Map<String, dynamic>> _allCoordinators = [];
-  bool _isLoading = true;
+  bool _isLoading = false;
   String? _errorMessage;
 
   final _searchController = TextEditingController();
@@ -979,20 +1026,30 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
   @override
   void initState() {
     super.initState();
+    // Subscribe to shared coordinators list
+    UserListsStore.instance.coordinators.addListener(_onCoordinatorsChanged);
+    // Initialize from cached store for instant display
+    _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
+    _filteredCoordinators = List.from(_allCoordinators);
+    // Refresh in background
     _loadCoordinators();
+  }
+
+  void _onCoordinatorsChanged() {
+    setState(() {
+      _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
+      _filteredCoordinators = List.from(_allCoordinators);
+    });
   }
 
   Future<void> _loadCoordinators() async {
     setState(() {
-      _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      final coordinators = await api.getCoordinators();
+      await api.getCoordinators();
       setState(() {
-        _allCoordinators = coordinators;
-        _filteredCoordinators = List.from(_allCoordinators);
         _isLoading = false;
       });
     } catch (e) {
@@ -1006,6 +1063,7 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
   @override
   void dispose() {
     _searchController.dispose();
+    UserListsStore.instance.coordinators.removeListener(_onCoordinatorsChanged);
     super.dispose();
   }
 
@@ -1077,10 +1135,33 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
 
   Future<void> _deleteUser(String username) async {
     try {
-      await api.deleteUser(username);
-      if (mounted) {
+      // Optimistic update: remove from list immediately
+      final indexToRemove = _allCoordinators.indexWhere((c) => c['username'] == username);
+      if (indexToRemove != -1) {
+        final removedUser = _allCoordinators[indexToRemove];
+        setState(() {
+          _allCoordinators.removeAt(indexToRemove);
+          _filterData(); // Update filtered list
+        });
+        // Reflect change in global user counts immediately
+        UserCountsStore.instance.decrement('coordinators');
         AppNotifier.showSuccess(context, 'User deleted successfully');
-        _loadCoordinators();
+        
+        // Call API in background
+        try {
+          await api.deleteUser(username);
+        } catch (e) {
+          // If delete fails, add user back
+          if (mounted) {
+            setState(() {
+              _allCoordinators.insert(indexToRemove, removedUser);
+              _filterData();
+            });
+            // Revert global counts
+            UserCountsStore.instance.increment('coordinators');
+            AppNotifier.showError(context, 'Failed to delete user: $e');
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -1312,7 +1393,7 @@ class ClassRepresentativesPage extends StatefulWidget {
 
 class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
   List<Map<String, dynamic>> _allReps = [];
-  bool _isLoading = true;
+  bool _isLoading = false;
   String? _errorMessage;
 
   final _searchController = TextEditingController();
@@ -1324,23 +1405,37 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
   @override
   void initState() {
     super.initState();
+    // Subscribe to shared reps list
+    UserListsStore.instance.classReps.addListener(_onRepsChanged);
+    // Initialize from cached store for instant display
+    _allReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
+    _filteredReps = List.from(_allReps);
+    // Refresh in background
     _loadClassRepresentatives();
   }
 
-  Future<void> _loadClassRepresentatives() async {
+  void _onRepsChanged() {
     setState(() {
-      _isLoading = true;
+      _allReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
+      _filteredReps = List.from(_allReps);
+      _sortData();
+    });
+  }
+
+  Future<void> _loadClassRepresentatives() async {
+    if (!mounted) return;
+    setState(() {
       _errorMessage = null;
     });
 
     try {
-      final classReps = await api.getClassRepresentatives();
+      await api.getClassRepresentatives();
+      if (!mounted) return;
       setState(() {
-        _allReps = classReps;
-        _filteredReps = List.from(_allReps);
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Failed to load class representatives: $e';
         _isLoading = false;
@@ -1351,6 +1446,7 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
   @override
   void dispose() {
     _searchController.dispose();
+    UserListsStore.instance.classReps.removeListener(_onRepsChanged);
     super.dispose();
   }
 
@@ -1452,10 +1548,33 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
 
   Future<void> _deleteUser(String username) async {
     try {
-      await api.deleteUser(username);
-      if (mounted) {
+      // Optimistic update: remove from list immediately
+      final indexToRemove = _allReps.indexWhere((r) => r['username'] == username || r['ktu_id'] == username);
+      if (indexToRemove != -1) {
+        final removedUser = _allReps[indexToRemove];
+        setState(() {
+          _allReps.removeAt(indexToRemove);
+          _filterData(); // Update filtered list
+        });
+        // Reflect change in global user counts immediately
+        UserCountsStore.instance.decrement('class_representatives');
         AppNotifier.showSuccess(context, 'User deleted successfully');
-        _loadClassRepresentatives();
+        
+        // Call API in background
+        try {
+          await api.deleteUser(username);
+        } catch (e) {
+          // If delete fails, add user back
+          if (mounted) {
+            setState(() {
+              _allReps.insert(indexToRemove, removedUser);
+              _filterData();
+            });
+            // Revert global counts
+            UserCountsStore.instance.increment('class_representatives');
+            AppNotifier.showError(context, 'Failed to delete user: $e');
+          }
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -1742,14 +1861,13 @@ class _AddUserPageState extends State<AddUserPage> {
   String _role = 'Class Representative';
   String _department = 'CSE';
   String _year = '2';
-  String _semester = 'S3';
   String _classGroup = 'CSE - A';
 
   static const roles = [
     'Class Representative',
     'Coordinator',
   ];
-  static const departments = ['CSE', 'ECE', 'ME', 'CE', 'AD'];
+  static const departments = ['CSE', 'ECE', 'ME', 'IT', 'RA','EEE'];
 
   @override
   void dispose() {
@@ -1790,7 +1908,7 @@ void _submit() async {
   try {
     // Call your new invite API
    /*final response = await http.post(
-  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  Uri.parse('http://localhost:5000/auth/admin/invite-user'),
   headers: {'Content-Type': 'application/json'},
   body: jsonEncode({
     'username': _emailCtl.text.trim(), // Backend expects 'username'
@@ -1803,7 +1921,7 @@ void _submit() async {
 );*/
 // Inside _submit() in admin_dashboard.dart
 final response = await http.post(
-  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  Uri.parse('http://localhost:5000/auth/admin/invite-user'),
   headers: {'Content-Type': 'application/json'},
   body: jsonEncode({
     'username': _emailCtl.text.trim(),
@@ -1853,8 +1971,7 @@ final response = await http.post(
                       labelText: 'Full Name',
                       hintText: 'Rahul Krishnan',
                     ),
-                    validator:
-                        (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
+                    validator: validateFullName,
                   ),
                   const SizedBox(height: 8),
                   TextFormField(
@@ -1864,11 +1981,7 @@ final response = await http.post(
                       hintText: 'rahul.krishnan@geci.ac.in',
                     ),
                     keyboardType: TextInputType.emailAddress,
-                    validator:
-                        (v) =>
-                            (v ?? '').contains('@')
-                                ? null
-                                : 'Enter valid email',
+                    validator: validateEmail,
                   ),
                   const SizedBox(height: 8),
                   TextFormField(
@@ -1878,11 +1991,7 @@ final response = await http.post(
                       hintText: '9876543210',
                     ),
                     keyboardType: TextInputType.phone,
-                    validator:
-                        (v) =>
-                            (v ?? '').trim().length >= 10
-                                ? null
-                                : 'Enter phone',
+                    validator: validatePhone,
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
@@ -1927,22 +2036,11 @@ final response = await http.post(
                               .map(
                                 (y) => DropdownMenuItem(
                                   value: y,
-                                  child: Text('$y'),
+                                  child: Text('Year $y'),
                                 ),
                               )
                               .toList(),
                       onChanged: (v) => setState(() => _year = v!),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      initialValue: _semester,
-                      decoration: const InputDecoration(
-                        labelText: 'Semester',
-                        hintText: 'S3',
-                      ),
-                      onChanged: (v) => _semester = v,
-                      validator:
-                          (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
                     ),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -1962,8 +2060,7 @@ final response = await http.post(
                         labelText: 'Ktu Id',
                         hintText: 'IDK22CS017',
                       ),
-                      validator:
-                          (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
+                      validator: validateKtuIdWithExamples,
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -1982,6 +2079,227 @@ final response = await http.post(
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// Activity Log Widget - fetches and displays real activity logs from backend
+class _ActivityLogWidget extends StatefulWidget {
+  const _ActivityLogWidget({super.key});
+
+  @override
+  State<_ActivityLogWidget> createState() => __ActivityLogWidgetState();
+}
+
+class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
+  late Future<List<Map<String, dynamic>>> _activityLogsFuture;
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _activityLogsFuture = _fetchActivityLogs();
+    // Refresh logs every 30 seconds (reduced from 10 to avoid timeout issues)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted) {
+        setState(() {
+          _activityLogsFuture = _fetchActivityLogs();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchActivityLogs() async {
+    try {
+      final logs = await api.getActivityLogs(limit: 10, days: 1);
+      return logs;
+    } catch (e) {
+      print('Error fetching activity logs: $e');
+      return [];
+    }
+  }
+
+  String _getTimeAgo(String timestamp) {
+    try {
+      final logTime = DateTime.parse(timestamp);
+      final now = DateTime.now();
+      final difference = now.difference(logTime);
+
+      if (difference.inSeconds < 60) {
+        return '${difference.inSeconds}s ago';
+      } else if (difference.inMinutes < 60) {
+        return '${difference.inMinutes}m ago';
+      } else if (difference.inHours < 24) {
+        return '${difference.inHours}h ago';
+      } else {
+        return '${difference.inDays}d ago';
+      }
+    } catch (e) {
+      return 'unknown';
+    }
+  }
+
+  IconData _getActionIcon(String actionType) {
+    switch (actionType.toLowerCase()) {
+      case 'login':
+        return Icons.login;
+      case 'logout':
+        return Icons.logout;
+      case 'data_submission':
+        return Icons.assignment_turned_in;
+      case 'report_generation':
+        return Icons.assessment;
+      case 'alert':
+        return Icons.warning;
+      case 'warning':
+        return Icons.info;
+      default:
+        return Icons.history;
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'success':
+        return Colors.green.shade600;
+      case 'failure':
+        return Colors.red.shade600;
+      case 'warning':
+        return Colors.orange.shade600;
+      default:
+        return Colors.blue.shade600;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.2)),
+      ),
+      child: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _activityLogsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    const SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Loading activity logs...', style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red.shade600, size: 32),
+                    const SizedBox(height: 8),
+                    Text('Error loading activity logs', style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          final logs = snapshot.data ?? [];
+          if (logs.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Icon(Icons.history, color: Colors.grey.shade400, size: 32),
+                    const SizedBox(height: 8),
+                    Text('No activity logs found', style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          return Column(
+            children: List.generate(logs.length, (index) {
+              final log = logs[index];
+              final userName = log['user_name'] ?? 'Unknown User';
+              final action = log['action_description'] ?? 'Unknown action';
+              final timestamp = log['timestamp'] ?? '';
+              final actionType = log['action_type'] ?? 'activity';
+              final status = log['status'] ?? 'success';
+
+              return Padding(
+                padding: EdgeInsets.only(bottom: index < logs.length - 1 ? 12 : 0),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: _getStatusColor(status).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        _getActionIcon(actionType),
+                        color: _getStatusColor(status),
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            userName,
+                            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            action,
+                            style: theme.textTheme.bodySmall,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _getTimeAgo(timestamp),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          );
+        },
       ),
     );
   }

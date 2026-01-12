@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
+import 'services/notifier.dart'; // Added import for notifier
+import 'package:energia/widgets/energy_visualization_widgets.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:async';
+import 'dart:math';
 
 // Assuming Analysis is in graph_adm.dart and Anomaly is in anomaly_adm.dart
 import 'graph_adm.dart'; 
 import 'anomaly_adm.dart'; 
-import 'services/notifier.dart'; // Added import for notifier
 // --- MODIFIED: ADDED IMPORT FOR ROLE SELECTION PAGE ---
 import 'role_selection_page.dart';
 // --- END MODIFIED ---
@@ -20,6 +25,91 @@ class CoordinatorDashboardPage extends StatefulWidget {
 
 class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   int _currentIndex = 0;
+  double _latestPower = 0;
+  double _livePeak = 0;
+  List<FlSpot> _liveSeries = [];
+  bool _liveLoading = true;
+  Timer? _liveTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLiveData();
+    _liveTimer = Timer.periodic(const Duration(minutes: 1), (_) => _loadLiveData());
+  }
+
+  @override
+  void dispose() {
+    _liveTimer?.cancel();
+    super.dispose();
+  }
+
+  // Dynamic active rooms tracking
+  final List<Map<String, dynamic>> _allRooms = [
+    {'room': 'CS-404', 'status': 'Normal', 'usage': '5.2 kW', 'isActive': true},
+    {'room': 'CS-Lab 1', 'status': 'High Usage', 'usage': '8.6 kW', 'isActive': true},
+    {'room': 'CS-Lab 2', 'status': 'Moderate', 'usage': '3.4 kW', 'isActive': true},
+    {'room': 'Server Room', 'status': 'Critical System', 'usage': '4.5 kW', 'isActive': true},
+    {'room': 'CS-Faculty Room', 'status': 'Low Usage', 'usage': '5.2 kW', 'isActive': true},
+    {'room': 'CS-Seminar Hall', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-405', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Lab 3', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Study Area', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Conference', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-406', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Library', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+  ];
+
+  Future<void> _loadLiveData() async {
+    try {
+      const apiCandidates = [
+        'http://10.0.2.2:5000',
+        'http://192.168.160.1:5000',
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+      ];
+
+      for (final baseUrl in apiCandidates) {
+        try {
+          final resp = await http
+              .get(Uri.parse('$baseUrl/api/sensor-data?limit=60'), headers: {'Content-Type': 'application/json'})
+              .timeout(const Duration(seconds: 6));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            final readings = data['data'] as List? ?? [];
+            if (readings.isEmpty) continue;
+
+            double peak = 0;
+            final List<FlSpot> spots = [];
+            for (int i = 0; i < readings.length; i++) {
+              final r = readings[i];
+              final p = (r['power'] as num?)?.toDouble() ?? (r['value'] as num?)?.toDouble() ?? 0;
+              peak = max(peak, p);
+              spots.add(FlSpot(i.toDouble(), p));
+            }
+
+            final latest = (readings.first['power'] as num?)?.toDouble() ??
+                (readings.first['value'] as num?)?.toDouble() ?? 0;
+
+            if (mounted) {
+              setState(() {
+                _latestPower = latest;
+                _livePeak = peak;
+                _liveSeries = spots;
+                _liveLoading = false;
+              });
+            }
+            return;
+          }
+        } catch (_) {
+          continue;
+        }
+      }
+      if (mounted) setState(() => _liveLoading = false);
+    } catch (_) {
+      if (mounted) setState(() => _liveLoading = false);
+    }
+  }
 
   // Placeholder navigation targets (assuming imports would be here)
   void _performLogout() {
@@ -85,9 +175,20 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
-        return _DepartmentOverviewSection(scheme: scheme);
+        return _DepartmentOverviewSection(
+          scheme: scheme, 
+          onActiveRoomsTap: _showActiveRooms, 
+          onAlertsTap: _showAlerts,
+          activeRooms: _allRooms.where((room) => room['isActive'] as bool).toList(),
+          totalRooms: _allRooms.length,
+          onActivateRoom: _activateRandomRoom,
+          latestPower: _latestPower,
+          livePeak: _livePeak,
+          liveSeries: _liveSeries,
+          liveLoading: _liveLoading,
+        );
       case 1:
-        return _DepartmentRoomsSection(scheme: scheme);
+        return _DepartmentRoomsSection(scheme: scheme, rooms: _allRooms);
       case 2:
         return _DepartmentAnalyticsSection(scheme: scheme);
       case 3:
@@ -96,11 +197,129 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
         return const SizedBox.shrink();
     }
   }
+
+  void _showActiveRooms() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Active Rooms'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _allRooms.where((room) => room['isActive'] as bool).length,
+            itemBuilder: (context, index) {
+              final room = _allRooms.where((room) => room['isActive'] as bool).toList()[index];
+              return ListTile(
+                leading: Icon(Icons.room, color: Colors.blue),
+                title: Text(room['room'] as String),
+                subtitle: Text('${room['status']} • ${room['usage']}'),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAlerts() {
+    // Hardcoded alerts for demonstration
+    final alerts = [
+      {'room': 'CS-Lab 1', 'type': 'High Consumption', 'message': 'Energy usage exceeded 8 kW threshold', 'time': '2 hours ago', 'severity': 'High'},
+      {'room': 'CS-404', 'type': 'Anomaly Detected', 'message': 'Unusual power spike detected', 'time': '4 hours ago', 'severity': 'Medium'},
+      {'room': 'Server Room', 'type': 'Temperature Alert', 'message': 'Room temperature above safe limit', 'time': '6 hours ago', 'severity': 'High'},
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Active Alerts'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: alerts.length,
+            itemBuilder: (context, index) {
+              final alert = alerts[index];
+              Color severityColor;
+              switch (alert['severity']) {
+                case 'High':
+                  severityColor = Colors.red;
+                  break;
+                case 'Medium':
+                  severityColor = Colors.orange;
+                  break;
+                default:
+                  severityColor = Colors.yellow;
+              }
+              return ListTile(
+                leading: Icon(Icons.warning, color: severityColor),
+                title: Text('${alert['room']} - ${alert['type']}'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(alert['message'] as String),
+                    Text(alert['time'] as String, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _activateRandomRoom() {
+    setState(() {
+      // Find inactive rooms
+      final inactiveRooms = _allRooms.where((room) => !(room['isActive'] as bool)).toList();
+      if (inactiveRooms.isNotEmpty) {
+        // Activate a random inactive room
+        final randomRoom = inactiveRooms[DateTime.now().millisecondsSinceEpoch % inactiveRooms.length];
+        randomRoom['isActive'] = true;
+        randomRoom['status'] = 'Normal'; // Set a default status
+        randomRoom['usage'] = '${(DateTime.now().millisecondsSinceEpoch % 5 + 1)}.${DateTime.now().millisecondsSinceEpoch % 9} kW'; // Random usage
+      }
+    });
+  }
 }
 
 class _DepartmentOverviewSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _DepartmentOverviewSection({required this.scheme});
+  final VoidCallback onActiveRoomsTap;
+  final VoidCallback onAlertsTap;
+  final List<Map<String, dynamic>> activeRooms;
+  final int totalRooms;
+  final VoidCallback onActivateRoom;
+  final double latestPower;
+  final double livePeak;
+  final List<FlSpot> liveSeries;
+  final bool liveLoading;
+  const _DepartmentOverviewSection({
+    required this.scheme, 
+    required this.onActiveRoomsTap, 
+    required this.onAlertsTap,
+    required this.activeRooms,
+    required this.totalRooms,
+    required this.onActivateRoom,
+    required this.latestPower,
+    required this.livePeak,
+    required this.liveSeries,
+    required this.liveLoading,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -208,42 +427,537 @@ class _DepartmentOverviewSection extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         
-        // Department Stats
+        // Department Stats - Using proper responsive layout
         Text(
           'Department Overview',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
+        
+        // Key Metrics - Horizontal Layout
         Wrap(
-          spacing: 16,
-          runSpacing: 16,
-          alignment: WrapAlignment.center,
-          children: const [
-            _DepartmentStatCard(label: 'Total Usage', value: '18.4 kW', icon: Icons.electric_bolt_outlined, color: Colors.green),
-            _DepartmentStatCard(label: 'Active Rooms', value: '8 of 12', icon: Icons.room_outlined, color: Colors.blue),
-            _DepartmentStatCard(label: 'Alerts', value: '3 Active', icon: Icons.warning_outlined, color: Colors.orange),
-            _DepartmentStatCard(label: 'Efficiency', value: '87%', icon: Icons.trending_up_outlined, color: Colors.purple),
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _buildStatCard(
+              context,
+              'Total Department Usage',
+              '18.4',
+              'kW',
+              Icons.electric_bolt_outlined,
+              Colors.orange,
+            ),
+            _buildStatCard(
+              context,
+              'Active Rooms',
+              '${activeRooms.length}',
+              'of $totalRooms',
+              Icons.room_outlined,
+              Colors.blue,
+            ),
+            _buildStatCard(
+              context,
+              'Department Efficiency',
+              '87',
+              '%',
+              Icons.trending_up_outlined,
+              Colors.green,
+            ),
+            _buildStatCard(
+              context,
+              'Active Alerts',
+              '3',
+              'anomalies',
+              Icons.warning_outlined,
+              Colors.red,
+            ),
           ],
         ),
         const SizedBox(height: 32),
         
-        // Real-time Chart
+        // Active Rooms Section
         Text(
-          'Department Energy Flow (Last 24 Hours)',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+          'Active Rooms',
+          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
-        SizedBox(height: 200, child: _DepartmentUsageChart()),
-        
+        if (activeRooms.isNotEmpty)
+          SizedBox(
+            height: 280,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: activeRooms.length,
+              itemBuilder: (context, index) {
+                final room = activeRooms[index];
+                return Padding(
+                  padding: EdgeInsets.only(right: index < activeRooms.length - 1 ? 16 : 0),
+                  child: _buildActiveRoomCard(context, room, theme, scheme),
+                );
+              },
+            ),
+          )
+        else
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'No active rooms',
+                style: theme.textTheme.bodyLarge?.copyWith(color: Colors.grey),
+              ),
+            ),
+          ),
         const SizedBox(height: 32),
         
-        // Optimization Suggestions
+        // Live energy meters and charts (responsive grid)
+        Text(
+          'Top Energy Consumers',
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 1100;
+            final cardWidth = isWide ? (constraints.maxWidth - 32) / 2 : constraints.maxWidth;
+
+            return Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              children: [
+                SizedBox(
+                  width: cardWidth,
+                  child: LiveEnergyMeter(
+                    currentPower: latestPower,
+                    maxCapacity: 10.0,
+                    label: 'CS-Lab 1',
+                    status: liveLoading ? 'Loading...' : (latestPower > 0 ? 'Active Usage' : 'Idle'),
+                    showTrend: true,
+                    trendPercentage: latestPower > 5 ? 5 : -2,
+                  ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: LiveEnergyMeter(
+                    currentPower: latestPower,
+                    maxCapacity: 8.0,
+                    label: 'Server Room',
+                    status: liveLoading ? 'Loading...' : (latestPower > 0 ? 'Active Usage' : 'Idle'),
+                    showTrend: true,
+                    trendPercentage: latestPower > 5 ? 5 : -2,
+                  ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: EnergyDistributionDonut(
+                    labels: const ['AC Systems', 'Lighting', 'Lab Equipment', 'Server', 'Other'],
+                    values: const [32.5, 18.3, 28.7, 15.2, 5.3],
+                    title: 'Department Energy Distribution',
+                  ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: ComparativeBarChart(
+                    labels: const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                    values: const [156.2, 162.4, 158.9, 171.3, 165.8, 98.4, 102.6],
+                    title: 'Weekly Department Usage (kWh)',
+                    unit: 'kWh',
+                    maxY: 180.0,
+                  ),
+                ),
+                SizedBox(
+                  width: constraints.maxWidth,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Department Energy Flow (Last 24 Hours)',
+                        style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 12),
+                      ResponsiveLineChart(
+                        spots: liveSeries.isNotEmpty
+                            ? liveSeries
+                            : [
+                                const FlSpot(0, 8.5), const FlSpot(1, 9.2), const FlSpot(2, 8.8), const FlSpot(3, 12.5),
+                                const FlSpot(4, 15.2), const FlSpot(5, 18.4), const FlSpot(6, 19.5), const FlSpot(7, 17.8),
+                                const FlSpot(8, 16.2), const FlSpot(9, 14.5), const FlSpot(10, 13.2), const FlSpot(11, 12.8),
+                                const FlSpot(12, 14.5), const FlSpot(13, 15.8), const FlSpot(14, 16.2), const FlSpot(15, 17.1),
+                                const FlSpot(16, 18.4), const FlSpot(17, 16.9), const FlSpot(18, 15.3), const FlSpot(19, 13.5),
+                                const FlSpot(20, 12.2), const FlSpot(21, 10.8), const FlSpot(22, 9.5), const FlSpot(23, 8.8),
+                              ],
+                        title: liveSeries.isNotEmpty ? 'Department Load Profile (live)' : 'Department Load Profile',
+                        unit: 'kW',
+                        maxY: (livePeak * 1.2).clamp(10.0, 25.0),
+                        isMonthly: false,
+                        lineColor: EnergyColorScheme.infoTeal,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 32),
         
-        const SizedBox(height: 12),
-        //_buildOptimizationCard(context, 'Adjust AC Schedules', 'CS-Lab 1 has 20% avoidable peak usage after 5 PM.', Icons.ac_unit, Colors.red.shade600),
-        //_buildOptimizationCard(context, 'Motion Sensor Audit', 'CS-Seminar Hall motion sensor reporting low usage despite being marked active.', Icons.sensors, Colors.orange.shade600),
+        // Action Buttons
+        Center(
+          child: ElevatedButton.icon(
+            onPressed: onActivateRoom,
+            icon: const Icon(Icons.power),
+            label: const Text('Simulate Room Activation'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: scheme.primary,
+              foregroundColor: scheme.onPrimary,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+          ),
+        ),
         
+        const SizedBox(height: 32),
       ],
+    );
+  }
+
+  Widget _buildActiveRoomCard(BuildContext context, Map<String, dynamic> room, ThemeData theme, ColorScheme scheme) {
+    Color statusColor;
+    switch (room['status']) {
+      case 'Normal':
+        statusColor = Colors.green;
+        break;
+      case 'High Usage':
+        statusColor = Colors.red;
+        break;
+      case 'Moderate':
+        statusColor = Colors.orange;
+        break;
+      case 'Critical System':
+        statusColor = Colors.purple;
+        break;
+      case 'Low Usage':
+        statusColor = Colors.blue;
+        break;
+      default:
+        statusColor = Colors.grey;
+    }
+
+    return GestureDetector(
+      onTap: () {
+        _showActiveRoomDetailsDialog(context, room, theme, statusColor);
+      },
+      child: Card(
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          width: 200,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                statusColor.withOpacity(0.1),
+                statusColor.withOpacity(0.05),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            border: Border.all(color: statusColor.withOpacity(0.3), width: 1.5),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Room Number Header
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  room['room'] as String,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: statusColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              
+              // Status Badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  room['status'] as String,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: statusColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(height: 12),
+              
+              // Usage Display
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    room['usage'] as String,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+              
+              // Active Indicator
+              const SizedBox(height: 8),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.green.withOpacity(0.5),
+                            blurRadius: 4,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Active',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: Colors.green,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Tap to view details hint
+              const SizedBox(height: 8),
+              Text(
+                'Tap for details',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: Colors.grey.shade600,
+                  fontSize: 11,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showActiveRoomDetailsDialog(BuildContext context, Map<String, dynamic> room, ThemeData theme, Color statusColor) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              colors: [
+                statusColor.withOpacity(0.05),
+                statusColor.withOpacity(0.02),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.room,
+                      color: statusColor,
+                      size: 28,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          room['room'] as String,
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Active Room Details',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                    splashRadius: 24,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              
+              // Divider
+              Container(height: 1, color: Colors.grey.shade300),
+              const SizedBox(height: 24),
+              
+              // Details Grid
+              _buildDetailRow(theme, 'Room Number', room['room'] as String, Icons.room),
+              const SizedBox(height: 16),
+              _buildDetailRow(theme, 'Current Status', room['status'] as String, Icons.info_outline, statusColor),
+              const SizedBox(height: 16),
+              _buildDetailRow(theme, 'Energy Usage', room['usage'] as String, Icons.electric_bolt, Colors.orange),
+              const SizedBox(height: 16),
+              _buildDetailRow(theme, 'Status', 'ACTIVE', Icons.check_circle, Colors.green),
+              const SizedBox(height: 24),
+              
+              // Divider
+              Container(height: 1, color: Colors.grey.shade300),
+              const SizedBox(height: 24),
+              
+              // Quick Stats
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatBox(
+                      theme,
+                      'Uptime',
+                      '2h 34m',
+                      Icons.timer,
+                      Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatBox(
+                      theme,
+                      'Efficiency',
+                      '92%',
+                      Icons.trending_up,
+                      Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              
+              // Close Button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: statusColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Close', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(ThemeData theme, String label, String value, IconData icon, [Color? iconColor]) {
+    return Row(
+      children: [
+        Icon(icon, color: iconColor ?? Colors.grey.shade600, size: 20),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatBox(ThemeData theme, String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: Colors.grey.shade600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -269,22 +983,88 @@ class _DepartmentOverviewSection extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildStatCard(
+    BuildContext context,
+    String label,
+    String value,
+    String unit,
+    IconData icon,
+    Color color,
+  ) {
+    final theme = Theme.of(context);
+    return Expanded(
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                color.withOpacity(0.08),
+                color.withOpacity(0.02),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 24),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    value,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    unit,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _DepartmentRoomsSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _DepartmentRoomsSection({required this.scheme});
-  
-  // MODIFIED: Sample data adjusted for requested percentages (15, 25, 10, 13, 15, 22)
-  // Total Usage maintained around 34.5 kW
-  final List<Map<String, dynamic>> _roomData = const [
-    {'room': 'CS-404', 'usage_kw': 5.2, 'load': 0.6, 'status': 'Normal', 'color': Colors.green}, // ~15.1%
-    {'room': 'CS-Lab 1', 'usage_kw': 8.6, 'load': 0.9, 'status': 'High Usage', 'color': Colors.red}, // ~24.9%
-    {'room': 'CS-Lab 2', 'usage_kw': 3.4, 'load': 0.7, 'status': 'Moderate', 'color': Colors.orange}, // ~9.9%
-    {'room': 'Server Room', 'usage_kw': 4.5, 'load': 0.8, 'status': 'Critical System', 'color': Colors.purple}, // ~13.0%
-    {'room': 'CS-Faculty Room', 'usage_kw': 5.2, 'load': 0.3, 'status': 'Low Usage', 'color': Colors.blue}, // ~15.1%
-    {'room': 'CS-Seminar Hall', 'usage_kw': 7.6, 'load': 0.5, 'status': 'Offline', 'color': Colors.grey}, // ~22.0%
-  ];
+  final List<Map<String, dynamic>> rooms;
+  const _DepartmentRoomsSection({required this.scheme, required this.rooms});
 
   // Refactored helper function for a more compact, ListTile-like appearance
   Widget _buildRoomMonitorCard(BuildContext context, String room, String usage, double load, Color statusColor, String status) {
@@ -374,13 +1154,36 @@ class _DepartmentRoomsSection extends StatelessWidget {
         const SizedBox(height: 24),
         
         // Rooms List using the new compact card layout
-        ..._roomData.map((data) {
+        ...rooms.map((data) {
+          Color statusColor;
+          switch (data['status']) {
+            case 'Normal':
+              statusColor = Colors.green;
+              break;
+            case 'High Usage':
+              statusColor = Colors.red;
+              break;
+            case 'Moderate':
+              statusColor = Colors.orange;
+              break;
+            case 'Critical System':
+              statusColor = Colors.purple;
+              break;
+            case 'Low Usage':
+              statusColor = Colors.blue;
+              break;
+            case 'Offline':
+              statusColor = Colors.grey;
+              break;
+            default:
+              statusColor = Colors.grey;
+          }
           return _buildRoomMonitorCard(
             context, 
             data['room'] as String, 
-            '${(data['usage_kw'] as double).toStringAsFixed(1)} kW', 
-            data['load'] as double, 
-            data['color'] as Color, 
+            data['usage'] as String, 
+            0.5, // Default load
+            statusColor, 
             data['status'] as String
           );
         }).toList(),
@@ -395,7 +1198,38 @@ class _DepartmentRoomsSection extends StatelessWidget {
         const SizedBox(height: 16),
         SizedBox(
           height: 250,
-          child: _DepartmentRoomsDistributionChart(roomData: _roomData),
+          child: _DepartmentRoomsDistributionChart(roomData: rooms.map((room) {
+            Color statusColor;
+            switch (room['status']) {
+              case 'Normal':
+                statusColor = Colors.green;
+                break;
+              case 'High Usage':
+                statusColor = Colors.red;
+                break;
+              case 'Moderate':
+                statusColor = Colors.orange;
+                break;
+              case 'Critical System':
+                statusColor = Colors.purple;
+                break;
+              case 'Low Usage':
+                statusColor = Colors.blue;
+                break;
+              case 'Offline':
+                statusColor = Colors.grey;
+                break;
+              default:
+                statusColor = Colors.grey;
+            }
+            final usageStr = room['usage'] as String;
+            final usageKw = double.tryParse(usageStr.split(' ')[0]) ?? 0.0;
+            return {
+              'room': room['room'],
+              'usage_kw': usageKw,
+              'color': statusColor,
+            };
+          }).toList()),
         ),
         
       ],
@@ -491,15 +1325,21 @@ class _DepartmentRoomsDistributionChart extends StatelessWidget {
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
                 'Total Live Usage: ${totalUsage.toStringAsFixed(1)} kW',
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
-              // Use Expanded/Wrap if the legend is too long, but simple column works for this data size
-              ...legendItems,
+              // Make legend scrollable to prevent overflow
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: legendItems,
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -746,7 +1586,8 @@ class _DepartmentStatCard extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color color;
-  const _DepartmentStatCard({required this.label, required this.value, required this.icon, required this.color});
+  final VoidCallback? onTap;
+  const _DepartmentStatCard({required this.label, required this.value, required this.icon, required this.color, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -759,17 +1600,21 @@ class _DepartmentStatCard extends StatelessWidget {
         elevation: 2,
         shadowColor: Colors.transparent,
         color: isDark ? theme.colorScheme.surfaceContainerHighest : theme.cardTheme.color,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 28, color: color),
-              const Spacer(),
-              Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(label, style: theme.textTheme.labelLarge),
-            ],
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 28, color: color),
+                const Spacer(),
+                Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(label, style: theme.textTheme.labelLarge),
+              ],
+            ),
           ),
         ),
       ),
