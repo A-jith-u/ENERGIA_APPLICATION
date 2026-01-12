@@ -16,10 +16,10 @@ import 'user_lists.dart';
 const String _envBase = String.fromEnvironment('ENERGIA_API_BASE');
 final List<String> _candidates = [
   if (_envBase.isNotEmpty) _envBase,
-  'http://10.0.2.2:8000',
-  'http://192.168.160.1:8000', // Host machine IP for Android emulator
-  'http://localhost:8000',
-  'http://127.0.0.1:8000',
+  'http://10.0.2.2:5000',
+  'http://192.168.160.1:5000', // Host machine IP for Android emulator
+  'http://localhost:5000',
+  'http://127.0.0.1:5000',
 ];
 
 class ApiError implements Exception {
@@ -283,7 +283,6 @@ Future<Map<String, int>> getUserCounts() async {
           'total_users': data['total_users'] as int,
           'coordinators': data['coordinators'] as int,
           'class_representatives': data['class_representatives'] as int,
-          'admins': data['admins'] as int,
         };
         // Update shared store so UI can react instantly
         UserCountsStore.instance.setCounts(result);

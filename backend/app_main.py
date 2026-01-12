@@ -20,6 +20,7 @@ auth_api = _load("auth_api")
 notify_api = _load("notify_api")
 recommendation_api = _load("recommendation_api")
 activity_log_api = _load("activity_log_api")
+monthly_report_api = _load("monthly_report_api")
 
 # Import model app lazily: it's optional for dev (heavy ML deps may be absent).
 try:
@@ -38,6 +39,7 @@ app.mount("/api", auth_api.app)
 app.mount("/notify", notify_api.app)
 app.mount("/recommendations", recommendation_api.app)
 app.mount("/activity", activity_log_api.app)
+app.mount("/reports", monthly_report_api.router)
 if _model_app is not None:
     app.mount("/model", _model_app)
 else:

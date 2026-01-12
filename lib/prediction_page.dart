@@ -4,6 +4,7 @@ import 'package:energia/widgets/energy_visualization_widgets.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:async';
+import 'package:intl/intl.dart';
 
 class PredictionPage extends StatefulWidget {
   const PredictionPage({super.key});
@@ -17,6 +18,8 @@ class _PredictionPageState extends State<PredictionPage> {
   bool _isLoading = false;
   String? _errorMessage;
   Timer? _refreshTimer;
+  int _intervalMinutes = 15;
+  DateTime? _lastUpdated;
 
   @override
   void initState() {
@@ -39,30 +42,78 @@ class _PredictionPageState extends State<PredictionPage> {
     });
 
     try {
-      // Update with your actual backend URL
-      final response = await http.post(
-        Uri.parse('http://localhost:8000/model/predict_15min'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({}),
-      );
+      // Try different backend URLs for flexibility
+      final List<String> apiCandidates = [
+        'http://10.0.2.2:5000',     // Android emulator
+        'http://192.168.160.1:5000', // Common local IP
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+      ];
+      
+      Exception? lastError;
+      
+      for (final baseUrl in apiCandidates) {
+        try {
+          final response = await http.post(
+            Uri.parse('$baseUrl/model/predict_15min'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'horizon_minutes': _intervalMinutes,
+            }),
+            ).timeout(const Duration(seconds: 8));
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        setState(() {
-          _prediction = data;
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _errorMessage = 'Failed to fetch prediction: ${response.statusCode}';
-          _isLoading = false;
-        });
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            
+            // Try to fetch latest sensor data as well
+            await _fetchLatestSensorData(baseUrl);
+            
+            setState(() {
+              _prediction = data;
+              _isLoading = false;
+              _lastUpdated = DateTime.now();
+            });
+            return;
+          }
+        } catch (e) {
+          lastError = e as Exception;
+          continue;
+        }
       }
+      
+      setState(() {
+        _errorMessage = 'Failed to fetch prediction. ${lastError?.toString() ?? 'No backends available'}';
+        _isLoading = false;
+      });
     } catch (e) {
       setState(() {
         _errorMessage = 'Error: $e';
         _isLoading = false;
       });
+    }
+  }
+  
+  Future<void> _fetchLatestSensorData(String baseUrl) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/sensor-data?limit=1'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['data'] != null && data['data'].isNotEmpty) {
+          final latestSensor = data['data'][0];
+          if (mounted) {
+            setState(() {
+              _prediction?['latest_sensor_reading'] = latestSensor;
+              _prediction?['sensor_data_available'] = true;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      print('Error fetching sensor data: $e');
     }
   }
 
@@ -111,6 +162,12 @@ class _PredictionPageState extends State<PredictionPage> {
                     children: [
                       // Header Section
                       _buildHeader(theme, scheme),
+                      const SizedBox(height: 24),
+
+                      _buildIntervalControls(theme, scheme),
+                      const SizedBox(height: 12),
+
+                      _buildInfoRow(theme),
                       const SizedBox(height: 24),
 
                       // Main Prediction Card
@@ -200,16 +257,101 @@ class _PredictionPageState extends State<PredictionPage> {
     );
   }
 
+  Widget _buildIntervalControls(ThemeData theme, ColorScheme scheme) {
+    final intervals = [5, 15, 30, 60];
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text('Forecast horizon:', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+        ...intervals.map((minutes) => ChoiceChip(
+              label: Text('$minutes min'),
+              selected: _intervalMinutes == minutes,
+              onSelected: (_) {
+                setState(() => _intervalMinutes = minutes);
+                _fetchPrediction();
+              },
+            )),
+      ],
+    );
+  }
+
+  Widget _buildInfoRow(ThemeData theme) {
+    final lastUpdateText = _lastUpdated != null
+        ? DateFormat('h:mm a').format(_lastUpdated!)
+        : '—';
+    final livePower = _prediction?['latest_sensor_reading']?['power'] ??
+      _prediction?['latest_sensor_reading']?['value'];
+    final livePowerText = livePower != null ? '${(livePower as num).toStringAsFixed(2)} kW' : 'No live data';
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        _infoChip(Icons.schedule, 'Last update', lastUpdateText),
+        _infoChip(Icons.timelapse, 'Horizon', '$_intervalMinutes min ahead'),
+        _infoChip(Icons.power, 'Live power', livePowerText),
+      ],
+    );
+  }
+
+  Widget _infoChip(IconData icon, String label, String value) {
+    return Chip(
+      avatar: Icon(icon, size: 18),
+      label: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ],
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    );
+  }
+
   Widget _buildPredictionCardNew(ThemeData theme, ColorScheme scheme) {
-    final predictedEnergy = _prediction!['predicted_energy'] as double;
-    final currentEnergy = _prediction!['current_energy'] as double? ?? 3.2;
-    final confidence = _prediction!['confidence'] as double? ?? 0.92;
+    final predictedEnergy = _prediction!['predicted_energy'] as double? ?? 3.5;
+    final lowerBound = _prediction!['lower_bound'] as double? ?? predictedEnergy * 0.8;
+    final upperBound = _prediction!['upper_bound'] as double? ?? predictedEnergy * 1.2;
+    
+    // Extract live sensor data if available
+    dynamic latestSensor = _prediction!['latest_sensor_reading'];
+    double currentEnergy = 0;
+    String sensorStatus = 'No recent data';
+    String lastUpdate = '';
+    
+    if (latestSensor != null) {
+      if (latestSensor is Map) {
+        currentEnergy = (latestSensor['value'] as num?)?.toDouble() ?? 0;
+        lastUpdate = latestSensor['timestamp'] as String? ?? '';
+        if (lastUpdate.isNotEmpty) {
+          try {
+            final dt = DateTime.parse(lastUpdate);
+            final now = DateTime.now();
+            final diff = now.difference(dt);
+            if (diff.inSeconds < 120) {
+              sensorStatus = 'Live (${diff.inSeconds}s ago)';
+            } else if (diff.inMinutes < 60) {
+              sensorStatus = 'Recent (${diff.inMinutes}m ago)';
+            } else {
+              sensorStatus = '${diff.inHours}h ago';
+            }
+          } catch (e) {
+            sensorStatus = 'Latest reading available';
+          }
+        }
+      }
+    }
 
     return PredictionCard(
       predictedUsage: predictedEnergy,
-      currentUsage: currentEnergy,
+      currentUsage: currentEnergy > 0 ? currentEnergy : 3.2,
       timeframe: '15 minutes',
-      confidence: confidence,
+      confidence: ((upperBound - lowerBound) / predictedEnergy) * 100,
+      liveDataAvailable: currentEnergy > 0,
+      sensorStatus: sensorStatus,
     );
   }
 
@@ -769,6 +911,22 @@ class _PredictionPageState extends State<PredictionPage> {
 
   Widget _buildDetailsSection(ThemeData theme, ColorScheme scheme) {
     final generatedAt = _prediction!['generated_at'] as String;
+    
+    // Extract live sensor data if available
+    dynamic latestSensor = _prediction!['latest_sensor_reading'];
+    double voltage = 0;
+    double current = 0;
+    double power = 0;
+    double powerFactor = 0;
+    bool hasSensorData = false;
+    
+    if (latestSensor != null && latestSensor is Map) {
+      voltage = (latestSensor['value'] as num?)?.toDouble() ?? 0;
+      current = (latestSensor['current'] as num?)?.toDouble() ?? 0;
+      power = (latestSensor['power'] as num?)?.toDouble() ?? 0;
+      powerFactor = (latestSensor['power_factor'] as num?)?.toDouble() ?? 0;
+      hasSensorData = power > 0;
+    }
 
     return Card(
       elevation: 2,
@@ -792,6 +950,120 @@ class _PredictionPageState extends State<PredictionPage> {
             _buildDetailRow(Icons.update, 'Generated At', _formatTime(generatedAt), theme),
             const SizedBox(height: 12),
             _buildDetailRow(Icons.psychology, 'Confidence', 'High', theme),
+            
+            // Show live sensor data if available
+            if (hasSensorData) ...[
+              const SizedBox(height: 24),
+              Divider(color: Colors.grey.shade300),
+              const SizedBox(height: 16),
+              Text(
+                'Live Sensor Data (ESP32)',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: EnergyColorScheme.successGreen,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(Icons.electric_bolt, 
+                    size: 20, 
+                    color: EnergyColorScheme.warningOrange,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Power',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${power.toStringAsFixed(1)} W',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (voltage > 0)
+                Row(
+                  children: [
+                    Icon(Icons.electrical_services, 
+                      size: 20, 
+                      color: Colors.blue.shade600,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Voltage',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${voltage.toStringAsFixed(1)} V',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              if (voltage > 0) const SizedBox(height: 8),
+              if (current > 0)
+                Row(
+                  children: [
+                    Icon(Icons.power, 
+                      size: 20, 
+                      color: Colors.red.shade600,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Current',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${current.toStringAsFixed(2)} A',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              if (current > 0) const SizedBox(height: 8),
+              if (powerFactor > 0)
+                Row(
+                  children: [
+                    Icon(Icons.tune, 
+                      size: 20, 
+                      color: Colors.purple.shade600,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Power Factor',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${powerFactor.toStringAsFixed(2)}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+            
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
@@ -806,7 +1078,9 @@ class _PredictionPageState extends State<PredictionPage> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Predictions update every 5 minutes automatically',
+                      hasSensorData 
+                        ? 'Predictions use live ESP32 sensor data updated every 60 seconds'
+                        : 'Predictions update every 5 minutes automatically',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.blue.shade900,

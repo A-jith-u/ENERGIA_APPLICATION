@@ -7,16 +7,29 @@ Check if ESP32 sensor data is being received and stored in the database.
 import psycopg2
 from datetime import datetime, timedelta
 import sys
+from config import get_db_url
+from urllib.parse import urlparse, unquote
 
 def check_sensor_data():
     try:
+        # Parse database URL from .env file
+        db_url = get_db_url()
+        parsed = urlparse(db_url)
+        
+        # Extract connection parameters and decode URL-encoded values
+        host = parsed.hostname or "localhost"
+        database = parsed.path.lstrip('/') or "energia"
+        user = unquote(parsed.username) if parsed.username else "postgres"
+        password = unquote(parsed.password) if parsed.password else ""
+        port = parsed.port or 5432
+        
         # Connect to PostgreSQL
         conn = psycopg2.connect(
-            host="localhost",
-            database="energia",
-            user="postgres",
-            password="postgresql",
-            port=5432
+            host=host,
+            database=database,
+            user=user,
+            password=password,
+            port=port
         )
         cur = conn.cursor()
         
@@ -35,6 +48,17 @@ def check_sensor_data():
             return False
         print("    ✅ sensor_data table exists")
         
+        # 1b. Check if esp32_raw_data table exists
+        print("\n[1b] Checking esp32_raw_data table exists...")
+        cur.execute("""
+            SELECT COUNT(*) FROM information_schema.tables 
+            WHERE table_name = 'esp32_raw_data'
+        """)
+        if cur.fetchone()[0] == 0:
+            print("    ❌ ERROR: esp32_raw_data table does not exist!")
+            return False
+        print("    ✅ esp32_raw_data table exists")
+        
         # 2. Check table schema
         print("\n[2] Checking sensor_data table columns...")
         cur.execute("""
@@ -47,115 +71,126 @@ def check_sensor_data():
         for col_name, col_type in columns:
             print(f"    • {col_name}: {col_type}")
         
-        # 3. Count total records
+        # 2b. Check esp32_raw_data schema
+        print("\n[2b] Checking esp32_raw_data table columns...")
+        cur.execute("""
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_name = 'esp32_raw_data'
+            ORDER BY ordinal_position
+        """)
+        columns = cur.fetchall()
+        for col_name, col_type in columns:
+            print(f"    • {col_name}: {col_type}")
+        
+        # 3. Count total records in sensor_data
         print("\n[3] Checking total records in sensor_data...")
         cur.execute("SELECT COUNT(*) FROM sensor_data")
-        total = cur.fetchone()[0]
-        if total == 0:
-            print(f"    ❌ No records found (yet)")
+        total_sensor = cur.fetchone()[0]
+        print(f"    ✅ Total sensor_data records: {total_sensor}")
+        
+        # 3b. Count total records in esp32_raw_data
+        print("\n[3b] Checking total records in esp32_raw_data...")
+        cur.execute("SELECT COUNT(*) FROM esp32_raw_data")
+        total_raw = cur.fetchone()[0]
+        print(f"    ✅ Total esp32_raw_data records: {total_raw}")
+        
+        if total_raw == 0:
+            print("    ⚠️  No raw data found yet - data should be saved here!")
             print("    ℹ️  ESP32 will send data every 60 seconds")
             print("    ℹ️  Check back in a minute")
-        else:
-            print(f"    ✅ Total records: {total}")
         
-        # 4. Get unique devices
-        print("\n[4] Checking connected devices...")
-        cur.execute("SELECT DISTINCT device_id FROM sensor_data ORDER BY device_id")
+        # 4. Get unique devices from esp32_raw_data
+        print("\n[4] Checking connected devices (from esp32_raw_data)...")
+        cur.execute("SELECT DISTINCT device_id FROM esp32_raw_data ORDER BY device_id")
         devices = [row[0] for row in cur.fetchall()]
         if devices:
             for device in devices:
                 print(f"    ✅ Device: {device}")
         else:
-            print("    ❌ No devices found")
+            print("    ❌ No devices found in esp32_raw_data")
         
-        # 5. Show latest records
-        if total > 0:
-            print("\n[5] Latest 5 records from sensor_data...")
+        # 5. Show latest records from esp32_raw_data
+        if total_raw > 0:
+            print("\n[5] Latest 5 records from esp32_raw_data...")
             cur.execute("""
-                SELECT id, device_id, value, ds 
-                FROM sensor_data 
+                SELECT id, device_id, power, timestamp, processed 
+                FROM esp32_raw_data 
                 ORDER BY id DESC LIMIT 5
             """)
-            print("    " + "-" * 66)
+            print("    " + "-" * 80)
             for row in cur.fetchall():
-                print(f"    ID: {row[0]} | Device: {row[1]} | Value: {row[2]:.2f} | Time: {row[3]}")
-            print("    " + "-" * 66)
+                status = "✅ Processed" if row[4] == 1 else "⏳ Unprocessed"
+                print(f"    ID: {row[0]} | Device: {row[1]} | Power: {row[2] if row[2] else 'N/A':.2f}W | Time: {row[3]} | {status}")
+            print("    " + "-" * 80)
         
-        # 6. Check records by device (if exists)
-        if 'ESP32-LAB-001' in [d[0] for d in devices]:
-            print("\n[6] Records from ESP32-LAB-001...")
+        # 6. Show raw payload sample
+        if total_raw > 0:
+            print("\n[6] Sample raw payload from esp32_raw_data...")
             cur.execute("""
-                SELECT COUNT(*) FROM sensor_data 
-                WHERE device_id = 'ESP32-LAB-001'
+                SELECT raw_payload 
+                FROM esp32_raw_data 
+                ORDER BY id DESC LIMIT 1
             """)
-            esp32_count = cur.fetchone()[0]
-            print(f"    ✅ Records from ESP32-LAB-001: {esp32_count}")
-            
-            # Show latest reading
-            if esp32_count > 0:
-                cur.execute("""
-                    SELECT ds, value FROM sensor_data 
-                    WHERE device_id = 'ESP32-LAB-001'
-                    ORDER BY id DESC LIMIT 1
-                """)
-                last_reading = cur.fetchone()
-                print(f"    ✅ Latest reading: {last_reading[1]:.2f}W at {last_reading[0]}")
+            raw_payload = cur.fetchone()[0]
+            print(f"    {raw_payload}")
         
-        # 7. Check records in last hour
-        print("\n[7] Records in last hour...")
+        # 7. Check records in last hour (esp32_raw_data)
+        print("\n[7] Records in last hour (esp32_raw_data)...")
         cur.execute("""
-            SELECT COUNT(*) FROM sensor_data 
-            WHERE ds > NOW() - INTERVAL '1 hour'
+            SELECT COUNT(*) FROM esp32_raw_data 
+            WHERE timestamp > NOW() - INTERVAL '1 hour'
         """)
         last_hour = cur.fetchone()[0]
         print(f"    ✅ Records in last hour: {last_hour}")
         
-        # 8. Check records in last 10 minutes
-        print("\n[8] Records in last 10 minutes...")
+        # 8. Check records in last 10 minutes (esp32_raw_data)
+        print("\n[8] Records in last 10 minutes (esp32_raw_data)...")
         cur.execute("""
-            SELECT COUNT(*) FROM sensor_data 
-            WHERE ds > NOW() - INTERVAL '10 minutes'
+            SELECT COUNT(*) FROM esp32_raw_data 
+            WHERE timestamp > NOW() - INTERVAL '10 minutes'
         """)
         last_10min = cur.fetchone()[0]
         if last_10min > 0:
             print(f"    ✅ Records in last 10 minutes: {last_10min}")
-            print("    ✅ BACKEND IS RECEIVING DATA!")
+            print("    ✅ BACKEND IS RECEIVING RAW DATA!")
         else:
             print(f"    ⏳ No records in last 10 minutes (waiting for ESP32...)")
         
         # 9. Final verdict
         print("\n" + "=" * 70)
-        if total > 0:
-            print("✅ SUCCESS: Backend is receiving sensor data!")
+        if total_raw > 0:
+            print("✅ SUCCESS: Backend is receiving ESP32 RAW data!")
             print("=" * 70)
             if devices:
                 print(f"\nSummary:")
-                print(f"  • Total records: {total}")
+                print(f"  • Total raw records: {total_raw}")
                 print(f"  • Devices: {', '.join(devices)}")
                 print(f"  • Last 10 min: {last_10min} records")
                 if last_10min > 0:
-                    print(f"  • Status: Data is actively being received ✅")
+                    print(f"  • Status: Raw data is actively being received ✅")
                 else:
-                    print(f"  • Status: Data has been received before, waiting for new data...")
+                    print(f"  • Status: Raw data has been received before, waiting for new data...")
         else:
-            print("❌ NO DATA RECEIVED YET")
+            print("❌ NO RAW DATA RECEIVED YET")
             print("=" * 70)
             print("\n⏳ Possible reasons:")
             print("  1. ESP32 hasn't sent data yet (sends every 60 seconds)")
             print("  2. Backend endpoint not responding")
             print("  3. ESP32 WiFi connection issue")
+            print("  4. Backend code not saving to esp32_raw_data table")
             print("\nℹ️  Next steps:")
             print("  1. Check ESP32 serial monitor for:")
             print("     - 'WiFi connected' message")
             print("     - '✓ HTTP Response: 200' message")
             print("  2. Verify backend is running: python start_server.py")
             print("  3. Test endpoint manually:")
-            print("     curl http://10.111.183.200:5000/api/sensor-data")
+            print("     python test_esp32_save.py")
         
         print("\n" + "=" * 70)
         
         conn.close()
-        return total > 0
+        return total_raw > 0
     
     except psycopg2.Error as e:
         print(f"❌ Database error: {e}")

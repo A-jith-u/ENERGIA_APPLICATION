@@ -548,12 +548,31 @@ async def invite_user(req: InviteUserRequest):
                     "c": datetime.utcnow(),
                 }
             elif target_table == "coordinators":
-                # Generate unique coordinator ID
-                seq_res = conn.execute(
-                    text("SELECT COUNT(*) FROM coordinators WHERE department=:d"),
-                    {"d": req.department}
-                ).scalar() or 0
-                coordinator_id = f"C{req.department[:2].upper()}{seq_res + 1:03d}"
+                # Generate unique coordinator ID by finding the next available number
+                dept_prefix = f"C{req.department[:2].upper()}"
+                
+                # Get all existing coordinator IDs for this department
+                existing_ids = conn.execute(
+                    text("SELECT coordinator_id FROM coordinators WHERE coordinator_id LIKE :prefix ORDER BY coordinator_id"),
+                    {"prefix": f"{dept_prefix}%"}
+                ).fetchall()
+                
+                # Extract numbers from existing IDs and find the next available number
+                existing_numbers = []
+                for (cid,) in existing_ids:
+                    try:
+                        # Extract the numeric part after the department prefix
+                        num = int(cid[len(dept_prefix):])
+                        existing_numbers.append(num)
+                    except (ValueError, IndexError):
+                        continue
+                
+                # Find the next available number
+                next_num = 1
+                while next_num in existing_numbers:
+                    next_num += 1
+                
+                coordinator_id = f"{dept_prefix}{next_num:03d}"
                 
                 query = text(
                     "INSERT INTO coordinators (coordinator_id, email, password_hash, name, department, created_at) "
@@ -580,7 +599,21 @@ async def invite_user(req: InviteUserRequest):
                 }
             action = "created"
 
-        conn.execute(query, params)
+        try:
+            conn.execute(query, params)
+        except SQLAlchemyError as e:
+            # Handle database errors, especially unique constraint violations
+            error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+            if "duplicate key" in error_msg.lower() or "unique constraint" in error_msg.lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"User with this identifier already exists. Please try again or contact support."
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Database error: {error_msg}"
+                )
     
     # Prepare role-specific email
     # For class representatives, show KTU ID as the username in the email
@@ -863,16 +896,14 @@ def get_user_counts():
     with engine.begin() as conn:
         coordinator_count = conn.execute(text("SELECT COUNT(*) FROM coordinators")).scalar()
         class_rep_count = conn.execute(text("SELECT COUNT(*) FROM class_representatives")).scalar()
-        admin_count = conn.execute(text("SELECT COUNT(*) FROM admins")).scalar()
         
-        # Total users
-        total_users = coordinator_count + class_rep_count + admin_count
+        # Total users (excluding admins)
+        total_users = coordinator_count + class_rep_count
         
         return {
             "total_users": total_users,
             "coordinators": coordinator_count,
-            "class_representatives": class_rep_count,
-            "admins": admin_count
+            "class_representatives": class_rep_count
         }
 
 
@@ -921,6 +952,10 @@ async def receive_sensor_data(request: Request):
     """
     try:
         payload = await request.json()
+        
+        # Store raw JSON payload for debugging and data recovery
+        import json
+        raw_json = json.dumps(payload)
 
         device_id = payload.get("device_id", "unknown")
 
@@ -947,6 +982,7 @@ async def receive_sensor_data(request: Request):
         timestamp = datetime.now(timezone.utc)
 
         with engine.begin() as conn:
+            # Store in sensor_data table (processed)
             conn.execute(
                 text(
                     "INSERT INTO sensor_data(ds, device_id, value, voltage, current, power, energy, frequency, power_factor) "
@@ -962,6 +998,26 @@ async def receive_sensor_data(request: Request):
                     "energy": energy,
                     "frequency": frequency,
                     "power_factor": power_factor,
+                },
+            )
+            
+            # Store in esp32_raw_data table (raw payload)
+            conn.execute(
+                text(
+                    "INSERT INTO esp32_raw_data(device_id, raw_payload, voltage, current, power, energy, frequency, power_factor, timestamp, processed) "
+                    "VALUES (:device_id, :raw_payload, :voltage, :current, :power, :energy, :frequency, :power_factor, :timestamp, :processed)"
+                ),
+                {
+                    "device_id": device_id,
+                    "raw_payload": raw_json,
+                    "voltage": voltage,
+                    "current": current,
+                    "power": power,
+                    "energy": energy,
+                    "frequency": frequency,
+                    "power_factor": power_factor,
+                    "timestamp": timestamp,
+                    "processed": 1,  # Mark as processed since we're storing it
                 },
             )
 

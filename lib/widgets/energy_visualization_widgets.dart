@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 
 /// ============================================================================
 /// UNIFIED ENERGY VISUALIZATION WIDGET LIBRARY
@@ -222,7 +223,10 @@ class ResponsiveLineChart extends StatelessWidget {
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       return monthIndex < months.length ? months[monthIndex] : '';
     } else {
-      return '${(30 - value.toInt()).toString()}d';
+      // Live views: index 0 is most recent, roughly 1-minute spacing; show wall-clock time in 12-hour format.
+      final minutesAgo = value.toInt();
+      final timestamp = DateTime.now().subtract(Duration(minutes: minutesAgo));
+      return DateFormat('h:mm a').format(timestamp);
     }
   }
 
@@ -247,26 +251,58 @@ class ResponsiveLineChart extends StatelessWidget {
           children: [
             // Header
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Energy Consumption Trend',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: Colors.grey.shade600,
+                      const SizedBox(height: 4),
+                      Text(
+                        spots.isEmpty
+                            ? 'No data yet'
+                            : isMonthly
+                                ? 'Monthly trend (${spots.length} months)'
+                                : 'Last ${spots.length} readings',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
+                const SizedBox(width: 8),
+                if (spots.isNotEmpty && !isMonthly)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.green, width: 1),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.circle, color: Colors.green, size: 8),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Live',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: Colors.green.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (onRefresh != null)
                   IconButton(
                     icon: const Icon(Icons.refresh),
@@ -298,30 +334,58 @@ class ResponsiveLineChart extends StatelessWidget {
                       topTitles: const AxisTitles(
                           sideTitles: SideTitles(showTitles: false)),
                       leftTitles: AxisTitles(
-                        axisNameWidget: Text(unit,
+                        axisNameWidget: Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            unit,
                             style: theme.textTheme.labelSmall?.copyWith(
                               fontWeight: FontWeight.w600,
-                            )),
+                            ),
+                          ),
+                        ),
                         sideTitles: SideTitles(
                           showTitles: true,
-                          reservedSize: 40,
-                          getTitlesWidget: (value, meta) => Text(
-                            value.toStringAsFixed(0),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.grey.shade700,
+                          reservedSize: 50,
+                          getTitlesWidget: (value, meta) => Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Text(
+                              value.toStringAsFixed(0),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.grey.shade700,
+                                fontSize: 11,
+                              ),
+                              textAlign: TextAlign.right,
                             ),
                           ),
                         ),
                       ),
                       bottomTitles: AxisTitles(
+                        axisNameWidget: Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            isMonthly
+                                ? 'Month'
+                                : 'Time (newest on left)',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey.shade700,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                         sideTitles: SideTitles(
                           showTitles: true,
-                          reservedSize: 30,
+                          reservedSize: 38,
                           interval: isMonthly ? 1 : 5,
-                          getTitlesWidget: (value, meta) => Text(
-                            _getLabel(value),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.grey.shade700,
+                          getTitlesWidget: (value, meta) => Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              _getLabel(value),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.grey.shade700,
+                                fontSize: 10,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ),
@@ -741,6 +805,8 @@ class PredictionCard extends StatelessWidget {
   final double currentUsage;
   final String timeframe;
   final double confidence;
+  final bool liveDataAvailable;
+  final String sensorStatus;
 
   const PredictionCard({
     super.key,
@@ -748,6 +814,8 @@ class PredictionCard extends StatelessWidget {
     required this.currentUsage,
     required this.timeframe,
     required this.confidence,
+    this.liveDataAvailable = false,
+    this.sensorStatus = 'No data',
   });
 
   Color get _confidenceColor {
@@ -799,6 +867,33 @@ class PredictionCard extends StatelessWidget {
                         color: Colors.grey.shade600,
                       ),
                     ),
+                    if (liveDataAvailable) ...[
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: EnergyColorScheme.successGreen.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.radio_button_on, 
+                              size: 10,
+                              color: EnergyColorScheme.successGreen,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              sensorStatus,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: EnergyColorScheme.successGreen,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ),
                 Icon(Icons.trending_up, color: EnergyColorScheme.infoTeal),

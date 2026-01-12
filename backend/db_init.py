@@ -92,6 +92,23 @@ sensor_table = Table(
     Column("power_factor", Float, nullable=True),
 )
 
+# ESP32 Raw Data table - stores raw JSON payloads from ESP32 devices
+esp32_raw_data_table = Table(
+    "esp32_raw_data",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("device_id", String, nullable=False),
+    Column("raw_payload", Text, nullable=False),  # Store complete JSON payload
+    Column("voltage", Float, nullable=True),
+    Column("current", Float, nullable=True),
+    Column("power", Float, nullable=True),
+    Column("energy", Float, nullable=True),
+    Column("frequency", Float, nullable=True),
+    Column("power_factor", Float, nullable=True),
+    Column("timestamp", DateTime, nullable=False, server_default=func.now()),
+    Column("processed", Integer, default=0),  # 0=unprocessed, 1=processed
+)
+
 # Authorized student representatives table for registration verification
 authorized_students_table = Table(
     "authorized_students",
@@ -148,6 +165,23 @@ with engine.begin() as conn:
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp ON activity_logs(timestamp DESC)"))
     
     # Index on timestamp and status for filtering queries
+    if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_timestamp_status'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp_status ON activity_logs(timestamp DESC, status)"))
+    
+    # Index on user_id for user-specific queries
+    if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_user_id'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON activity_logs(user_id, timestamp DESC)"))
+    
+    # Index on action_type for action filtering
+    if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_action_type'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_action_type ON activity_logs(action_type, timestamp DESC)"))
+    
+    # Create indexes for esp32_raw_data table
+    if not _index_exists(conn, 'esp32_raw_data', 'idx_esp32_raw_device_timestamp'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_esp32_raw_device_timestamp ON esp32_raw_data(device_id, timestamp DESC)"))
+    
+    if not _index_exists(conn, 'esp32_raw_data', 'idx_esp32_raw_processed'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_esp32_raw_processed ON esp32_raw_data(processed, timestamp DESC)"))
     if not _index_exists(conn, 'activity_logs', 'idx_activity_logs_timestamp_status'):
         conn.execute(text("CREATE INDEX IF NOT EXISTS idx_activity_logs_timestamp_status ON activity_logs(timestamp DESC, status)"))
     
