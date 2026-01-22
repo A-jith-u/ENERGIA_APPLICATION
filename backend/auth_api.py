@@ -655,6 +655,37 @@ async def invite_user(req: InviteUserRequest):
         "email_status": email_status,
         "message": f"Invitation {'sent' if email_status == 'sent' else 'created but email sending failed'}"
     }
+@app.get("/anomalies")
+def get_anomalies(limit: int = 10):
+    """Fetch recent anomalies from the sensor_data table."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(
+                text("""
+                    SELECT id, ds, device_id, power, occupancy, anomaly_score
+                    FROM sensor_data 
+                    WHERE is_anomaly = -1
+                    ORDER BY ds DESC 
+                    LIMIT :limit
+                """),
+                {"limit": limit}
+            )
+            
+            rows = result.fetchall()
+            return [
+                {
+                    "id": row[0],
+                    "timestamp": row[1].isoformat() if row[1] else None,
+                    "device_id": row[2],
+                    "power": row[3],
+                    "occupancy": row[4],
+                    "score": round(row[5], 4) if row[5] else 0
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/register")
 def register(req: RegisterRequest):
     # For student registration, verify KTU ID, Department, and Year against authorized list
@@ -727,9 +758,9 @@ def login(req: LoginRequest, request: Request):
         client_ip = request.client.host if request.client else "0.0.0.0"
         
         with engine.begin() as conn:
-            # Try admin by username first
+            # Try admin by username or email (accept either identifier)
             admin_row = conn.execute(
-                text("SELECT id, password_hash, name, email, username FROM admins WHERE UPPER(username)=UPPER(:u)"),
+                text("SELECT id, password_hash, name, email, username FROM admins WHERE UPPER(username)=UPPER(:u) OR UPPER(email)=UPPER(:u)"),
                 {"u": req.username.strip()},
             ).fetchone()
 
@@ -1050,38 +1081,28 @@ async def receive_sensor_data(request: Request):
         raise HTTPException(status_code=400, detail=f"Error processing sensor data: {str(e)}")
 
 
+# --- CLEANED SENSOR DATA ROUTE ---
 @app.get("/sensor-data")
-def get_sensor_data(device_id: str = None, limit: int = 100):
-    """
-    Retrieve sensor data from the database.
-    
-    Query parameters:
-    - device_id: Filter by specific device (optional)
-    - limit: Maximum number of records to return (default: 100)
-    """
+def get_sensor_data(limit: int = 60, device_id: str = None):
+    """Fetch recent sensor readings for the Flutter Overview and Analytics charts."""
     try:
-        with engine.begin() as conn:
+        with engine.connect() as conn:
             if device_id:
-                result = conn.execute(
-                    text("""
-                        SELECT id, ds, device_id, value 
-                        FROM sensor_data 
-                        WHERE device_id = :device_id
-                        ORDER BY ds DESC 
-                        LIMIT :limit
-                    """),
-                    {"device_id": device_id, "limit": limit}
-                )
+                query = text("""
+                    SELECT id, ds, device_id, power, current, voltage 
+                    FROM sensor_data 
+                    WHERE device_id = :device_id 
+                    ORDER BY ds DESC LIMIT :limit
+                """)
+                result = conn.execute(query, {"device_id": device_id, "limit": limit})
             else:
-                result = conn.execute(
-                    text("""
-                        SELECT id, ds, device_id, value 
-                        FROM sensor_data 
-                        ORDER BY ds DESC 
-                        LIMIT :limit
-                    """),
-                    {"limit": limit}
-                )
+                query = text("""
+                    SELECT id, ds, device_id, power, current, voltage 
+                    
+                    FROM sensor_data 
+                    ORDER BY ds DESC LIMIT :limit
+                """)
+                result = conn.execute(query, {"limit": limit})
             
             rows = result.fetchall()
             data = [
@@ -1089,21 +1110,18 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
                     "id": row[0],
                     "timestamp": row[1].isoformat() if row[1] else None,
                     "device_id": row[2],
-                    "value": row[3]
-                }
-                for row in rows
+                    "power": float(row[3]) if row[3] else 0.0,
+                    "current": float(row[4]) if row[4] else 0.0,
+                    "voltage": float(row[5]) if row[5] else 0.0
+                } for row in rows
             ]
-            
-            return {
-                "status": "success",
-                "count": len(data),
-                "data": data
-            }
-    
+            return {"status": "success", "data": data}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
+        print(f"Database error in get_sensor_data: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error accessing sensor data")
 
-
+# Keep only ONE health check at the very end
 @app.get("/health")
 def health():
     return {"status": "ok"}
+

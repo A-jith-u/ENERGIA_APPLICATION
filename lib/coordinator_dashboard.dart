@@ -30,11 +30,36 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   List<FlSpot> _liveSeries = [];
   bool _liveLoading = true;
   Timer? _liveTimer;
+  List<dynamic> _anomalies = []; // Added for AI alerts
+  bool _isLoadingAnomalies = false;
+  // FETCH METHOD: Call this to get data from your FastAPI backend
+  Future<void> _fetchAnomalyAlerts() async {
+    setState(() => _isLoadingAnomalies = true);
+    try {
+      // Ensure the URL matches your backend address
+      final response = await http.get(Uri.parse('http://127.0.0.1:5000/auth/anomalies'));
+      if (response.statusCode == 200) {
+        setState(() {
+          _anomalies = json.decode(response.body);
+        });
+      }
+    } catch (e) {
+      debugPrint("Error fetching anomalies: $e");
+    } finally {
+      setState(() => _isLoadingAnomalies = false);
+    }
+  }
 
+// 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
   void initState() {
     super.initState();
-    _loadLiveData();
+    
+    // Load initial data
+    _loadLiveData(); 
+    _fetchAnomalyAlerts(); 
+    
+    // Setup the periodic timer for live updates
     _liveTimer = Timer.periodic(const Duration(minutes: 1), (_) => _loadLiveData());
   }
 
@@ -60,6 +85,12 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
     {'room': 'CS-Library', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
   ];
 
+Widget _buildAnomalyTab() {
+  return _DepartmentAlertsSection(
+    anomalies: _anomalies, 
+    onRefresh: _fetchAnomalyAlerts,
+  );
+}
   Future<void> _loadLiveData() async {
     try {
       const apiCandidates = [
@@ -137,13 +168,17 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
         child: _buildPage(_currentIndex, colorScheme),
       ),
       currentIndex: _currentIndex,
-      onBottomNavTapped: (index) {
-        if (index == 4) { // Assuming a 5th item (Logout) might be added
+     onBottomNavTapped: (index) {
+        if (index == 4) {
            _performLogout();
         } else {
            setState(() {
              _currentIndex = index;
            });
+           // --- NEW: Auto-refresh data when the user enters the Alerts tab ---
+           if (index == 3) {
+             _fetchAnomalyAlerts();
+           }
         }
       },
       bottomNavItems: const [
@@ -172,7 +207,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
     );
   }
 
-  Widget _buildPage(int index, ColorScheme scheme) {
+Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
         return _DepartmentOverviewSection(
@@ -192,7 +227,11 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       case 2:
         return _DepartmentAnalyticsSection(scheme: scheme);
       case 3:
-        return _DepartmentAlertsSection(scheme: scheme);
+        // --- UPDATED: Pass the AI anomalies and refresh logic here ---
+        return _DepartmentAlertsSection(
+          anomalies: _anomalies, 
+          onRefresh: _fetchAnomalyAlerts,
+        );
       default:
         return const SizedBox.shrink();
     }
@@ -984,81 +1023,90 @@ class _DepartmentOverviewSection extends StatelessWidget {
     );
   }
 
-  Widget _buildStatCard(
-    BuildContext context,
-    String label,
-    String value,
-    String unit,
-    IconData icon,
-    Color color,
-  ) {
-    final theme = Theme.of(context);
-    return Expanded(
-      child: Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: LinearGradient(
-              colors: [
-                color.withOpacity(0.08),
-                color.withOpacity(0.02),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+Widget _buildStatCard(
+  BuildContext context,
+  String label,
+  String value,
+  String unit,
+  IconData icon,
+  Color color,
+) {
+  final theme = Theme.of(context);
+  
+  // Calculate width to fit 2 cards per row in a Wrap, minus spacing
+  final cardWidth = (MediaQuery.of(context).size.width / 2) - 24;
+
+  // REMOVED: Expanded widget (Fixes the crash)
+  return SizedBox(
+    width: cardWidth,
+    child: Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.08),
+              color.withOpacity(0.02),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: color, size: 24),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
               ),
-              const SizedBox(height: 12),
-              Text(
-                label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
               ),
-              const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    value,
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: color,
-                    ),
+              maxLines: 1, // Reduced to 1 to keep cards aligned
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  value,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: color,
                   ),
-                  const SizedBox(width: 4),
-                  Text(
+                ),
+                const SizedBox(width: 4),
+                Flexible( // Added Flexible to prevent overflow of units
+                  child: Text(
                     unit,
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: Colors.grey.shade600,
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              ),
-            ],
-          ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class _DepartmentRoomsSection extends StatelessWidget {
@@ -1437,47 +1485,65 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
 }
 
 class _DepartmentAlertsSection extends StatelessWidget {
-  final ColorScheme scheme;
-  const _DepartmentAlertsSection({required this.scheme});
+  final List<dynamic> anomalies;
+  final VoidCallback onRefresh;
+
+  const _DepartmentAlertsSection({
+    super.key, 
+    required this.anomalies, 
+    required this.onRefresh
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          'Department Alerts',
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'All alerts from CS Department rooms',
-          style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 24),
-        
-        _buildAlertCard(context, 'Critical', 'CS-Lab 2: Power surge detected - 12.5 kW', Icons.error_outline, Colors.red.shade600, '15 min ago'),
-        _buildAlertCard(context, 'High Usage', 'CS-404: AC running after 6 PM - 5.2 kW', Icons.power_outlined, Colors.orange.shade600, '1 hour ago'),
-        _buildAlertCard(context, 'Temperature', 'Server Room: High temperature alert - 28°C', Icons.thermostat_outlined, Colors.blue.shade600, '2 hours ago'),
-        _buildAlertCard(context, 'Sensor Issue', 'CS-Seminar: Motion sensor offline', Icons.sensors_off_outlined, Colors.grey.shade500, '4 hours ago'),
-        _buildAlertCard(context, 'Maintenance', 'CS-Lab 1: Scheduled maintenance reminder', Icons.build_outlined, Colors.purple.shade600, '1 day ago'),
-      ],
+
+    return RefreshIndicator(
+      onRefresh: () async => onRefresh(),
+      child: anomalies.isEmpty
+          ? const Center(child: Text("No anomaly alerts detected."))
+          : ListView.builder(
+              padding: const EdgeInsets.all(8),
+              itemCount: anomalies.length,
+              itemBuilder: (context, index) {
+                final alert = anomalies[index];
+                return Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: Colors.red.withOpacity(0.1),
+                      child: const Icon(Icons.warning_amber_rounded, color: Colors.red),
+                    ),
+                    title: Text(
+                      "Anomaly in ${alert['device_id']}",
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      "Power: ${alert['power']}W | Occupancy: ${alert['occupancy']}\nScore: ${alert['score']}",
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      // Logic to show alert details or navigate
+                      _showAlertDialog(context, alert);
+                    },
+                  ),
+                );
+              },
+            ),
     );
   }
 
-  Widget _buildAlertCard(BuildContext context, String type, String message, IconData icon, Color color, String time) {
-    final theme = Theme.of(context);
-    return Card(
-      elevation: 2,
-      shadowColor: Colors.transparent,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: ListTile(
-        leading: Icon(icon, color: color, size: 32),
-        title: Text(type, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: color)),
-        subtitle: Text(message),
-        trailing: Text(time, style: theme.textTheme.bodySmall),
-        onTap: () {},
+  void _showAlertDialog(BuildContext context, dynamic alert) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Alert Detail: ${alert['device_id']}"),
+        content: Text("An unusual power consumption of ${alert['power']}W was detected when occupancy was ${alert['occupancy']}.\n\nTimestamp: ${alert['timestamp']}"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Dismiss")),
+        ],
       ),
     );
   }
