@@ -16,6 +16,7 @@ from passlib.context import CryptContext
 import jwt
 from datetime import datetime, timedelta, timezone
 import secrets
+import string
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -492,8 +493,8 @@ async def invite_user(req: InviteUserRequest):
     Saves credentials to appropriate DB table and sends personalized welcome email
     with login credentials and role-specific instructions.
     """
-    # Generate a secure temporary password
-    otp = secrets.token_urlsafe(12)  # 12-char base64-encoded string
+    # Generate a secure temporary password (6 chars, letters+digits+symbol)
+    otp = _generate_short_password(6)
     pw_hash = PWD_CTX.hash(otp)
     role_lower = req.role.lower()
     target_table = "class_representatives" if ("student" in role_lower or "representative" in role_lower) else ("coordinators" if "coordinator" in role_lower else "admins")
@@ -525,6 +526,13 @@ async def invite_user(req: InviteUserRequest):
                     "i": existing[0],
                 }
             elif target_table == "coordinators":
+                # Fetch existing coordinator_id so email never shows None
+                coordinator_id_row = conn.execute(
+                    text("SELECT coordinator_id FROM coordinators WHERE id = :i"),
+                    {"i": existing[0]}
+                ).fetchone()
+                coordinator_id = coordinator_id_row[0] if coordinator_id_row else None
+
                 query = text("UPDATE coordinators SET password_hash=:p, name=:n, department=:d, email=:e WHERE id=:i")
                 params = {"p": pw_hash, "n": req.name, "d": req.department, "e": target_email, "i": existing[0]}
             else:  # admins
@@ -554,14 +562,13 @@ async def invite_user(req: InviteUserRequest):
                 # Get all existing coordinator IDs for this department
                 existing_ids = conn.execute(
                     text("SELECT coordinator_id FROM coordinators WHERE coordinator_id LIKE :prefix ORDER BY coordinator_id"),
-                    {"prefix": f"{dept_prefix}%"}
+                    {"prefix": f"{dept_prefix}%"},
                 ).fetchall()
                 
                 # Extract numbers from existing IDs and find the next available number
                 existing_numbers = []
                 for (cid,) in existing_ids:
                     try:
-                        # Extract the numeric part after the department prefix
                         num = int(cid[len(dept_prefix):])
                         existing_numbers.append(num)
                     except (ValueError, IndexError):
@@ -1064,7 +1071,7 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
             if device_id:
                 result = conn.execute(
                     text("""
-                        SELECT id, ds, device_id, value 
+                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
                         FROM sensor_data 
                         WHERE device_id = :device_id
                         ORDER BY ds DESC 
@@ -1075,7 +1082,7 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
             else:
                 result = conn.execute(
                     text("""
-                        SELECT id, ds, device_id, value 
+                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
                         FROM sensor_data 
                         ORDER BY ds DESC 
                         LIMIT :limit
@@ -1089,7 +1096,13 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
                     "id": row[0],
                     "timestamp": row[1].isoformat() if row[1] else None,
                     "device_id": row[2],
-                    "value": row[3]
+                    "value": row[3],
+                    "voltage": row[4],
+                    "current": row[5],
+                    "power": row[6],
+                    "energy": row[7],
+                    "frequency": row[8],
+                    "power_factor": row[9]
                 }
                 for row in rows
             ]
@@ -1107,3 +1120,28 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+def _generate_short_password(length: int = 6) -> str:
+    """Generate a 6-char password with letters, digits, and a symbol (unique chars)."""
+    if length < 3:
+        raise ValueError("Password length must be at least 3")
+
+    letters = string.ascii_letters
+    digits = string.digits
+    symbols = "!@#$%*"
+
+    # Ensure at least one of each
+    password_chars = [
+        secrets.choice(letters),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+
+    # Fill the rest with unique characters
+    pool = list(set(letters + digits + symbols) - set(password_chars))
+    secrets.SystemRandom().shuffle(pool)
+    password_chars.extend(pool[: length - 3])
+
+    # Shuffle final password
+    secrets.SystemRandom().shuffle(password_chars)
+    return "".join(password_chars)
