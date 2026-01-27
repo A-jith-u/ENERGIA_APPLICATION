@@ -1117,6 +1117,160 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
         raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
 
 
+@app.get("/rooms")
+def get_all_rooms():
+    """Get all rooms with their floor and threshold information."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    ORDER BY floor_number, room_name
+                """)
+            ).fetchall()
+            
+            data = [
+                {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": row[3]
+                }
+                for row in rows
+            ]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
+
+
+@app.get("/rooms/floor/{floor_number}")
+def get_rooms_by_floor(floor_number: int):
+    """Get all rooms on a specific floor."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    WHERE floor_number = :floor
+                    ORDER BY room_name
+                """),
+                {"floor": floor_number}
+            ).fetchall()
+            
+            data = [
+                {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": row[3]
+                }
+                for row in rows
+            ]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
+
+
+@app.get("/rooms/floors")
+def get_all_floors():
+    """Get all unique floors."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT DISTINCT floor_number 
+                    FROM rooms 
+                    ORDER BY floor_number
+                """)
+            ).fetchall()
+            
+            data = [{"floor_number": row[0]} for row in rows]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving floors: {str(e)}")
+
+
+@app.put("/rooms/{room_id}/threshold")
+def update_room_threshold(room_id: str, threshold: float = None):
+    """Update the threshold for a specific room."""
+    try:
+        if threshold is None:
+            raise HTTPException(status_code=400, detail="Threshold value is required")
+        
+        if threshold <= 0:
+            raise HTTPException(status_code=400, detail="Threshold must be greater than 0")
+        
+        with engine.begin() as conn:
+            # Check if room exists first
+            check_row = conn.execute(
+                text("""
+                    SELECT id FROM rooms WHERE room_id = :room_id
+                """),
+                {"room_id": room_id}
+            ).fetchone()
+            
+            if not check_row:
+                raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+            
+            result = conn.execute(
+                text("""
+                    UPDATE rooms 
+                    SET threshold = :threshold, updated_at = NOW() 
+                    WHERE room_id = :room_id
+                """),
+                {"threshold": threshold, "room_id": room_id}
+            )
+            
+            if result.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Failed to update room")
+            
+            # Retrieve updated room data
+            row = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    WHERE room_id = :room_id
+                """),
+                {"room_id": room_id}
+            ).fetchone()
+            
+            return {
+                "status": "success",
+                "message": "Threshold updated successfully",
+                "data": {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": float(row[3])
+                }
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error updating threshold: {str(e)}")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

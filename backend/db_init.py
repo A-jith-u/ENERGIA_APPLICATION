@@ -135,6 +135,19 @@ class_representatives_table = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
+# Rooms table - stores all room names with floor and threshold information
+rooms_table = Table(
+    "rooms",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("room_id", String, unique=True, nullable=False),
+    Column("room_name", String, nullable=False),
+    Column("floor_number", Integer, nullable=False),  # 0 = Ground floor, 1 = First floor, etc.
+    Column("threshold", Float, nullable=False, default=3.0),  # Default threshold in kW
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
+)
+
 # Activity Logs table - tracks all user actions in the system
 activity_logs_table = Table(
     "activity_logs",
@@ -318,10 +331,61 @@ authorized_students = [
     ("TVE21CS046", "CSE", "3"),
 ]
 
+# Room seed data (room_id, room_name, floor_number, threshold)
+room_seeds = [
+    # Ground Floor (0) - Classrooms
+    ("Floor-0-Class-G01", "Class G01", 0, 2.5),
+    ("Floor-0-Class-G02", "Class G02", 0, 2.5),
+    ("Floor-0-Class-G03", "Class G03", 0, 2.5),
+    ("Floor-0-Lab-G1", "Computer Lab G1", 0, 4.5),
+    ("Floor-0-Lab-G2", "Computer Lab G2", 0, 4.5),
+    ("Floor-0-StaffRoom-G", "Staff Room Ground Floor", 0, 2.0),
+    
+    # Floor 1 - Classrooms
+    ("Floor-1-Class-101", "Class 101", 1, 2.5),
+    ("Floor-1-Class-102", "Class 102", 1, 2.5),
+    ("Floor-1-Class-103", "Class 103", 1, 2.5),
+    ("Floor-1-Lab-1", "Computer Lab 1", 1, 4.5),
+    ("Floor-1-Lab-2", "Computer Lab 2", 1, 4.5),
+    ("Floor-1-StaffRoom", "Staff Room Floor 1", 1, 2.0),
+    
+    # Floor 2 - Classrooms
+    ("Floor-2-Class-201", "Class 201", 2, 2.5),
+    ("Floor-2-Class-202", "Class 202", 2, 2.5),
+    ("Floor-2-Class-203", "Class 203", 2, 2.5),
+    ("Floor-2-Lab-3", "Computer Lab 3", 2, 4.5),
+    ("Floor-2-Lab-4", "Computer Lab 4", 2, 4.5),
+    ("Floor-2-StaffRoom", "Staff Room Floor 2", 2, 2.0),
+    
+    # Floor 3 - Classrooms
+    ("Floor-3-Class-301", "Class 301", 3, 2.5),
+    ("Floor-3-Class-302", "Class 302", 3, 2.5),
+    ("Floor-3-Lab-5", "Electronics Lab", 3, 4.5),
+    ("Floor-3-StaffRoom", "Staff Room Floor 3", 3, 2.0),
+]
+
 with engine.begin() as conn:
     for ktu_id, department, year in authorized_students:
         res = conn.execute(select(authorized_students_table.c.id).where(authorized_students_table.c.ktu_id == ktu_id)).fetchone()
         if not res:
             conn.execute(authorized_students_table.insert().values(ktu_id=ktu_id, department=department, year=year))
+    
+    # Seed rooms data
+    for room_id, room_name, floor_number, threshold in room_seeds:
+        res = conn.execute(select(rooms_table.c.id).where(rooms_table.c.room_id == room_id)).fetchone()
+        if not res:
+            conn.execute(rooms_table.insert().values(
+                room_id=room_id,
+                room_name=room_name,
+                floor_number=floor_number,
+                threshold=threshold,
+            ))
+    
+    # Create indexes for rooms table
+    if not _index_exists(conn, 'rooms', 'idx_rooms_floor_number'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rooms_floor_number ON rooms(floor_number)"))
+    
+    if not _index_exists(conn, 'rooms', 'idx_rooms_room_id'):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_rooms_room_id ON rooms(room_id)"))
 
 print("DB initialized and test users ensured")
