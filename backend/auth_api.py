@@ -914,6 +914,119 @@ def get_user_counts():
         }
 
 
+# Cache for dashboard overview to reduce DB load
+_overview_cache = {"data": None, "timestamp": None}
+_overview_cache_ttl = 30  # seconds
+
+@app.get("/dashboard/overview")
+def get_dashboard_overview(active_window_minutes: int = 5, usage_window_hours: int = 1):
+    """Return campus-wide live metrics for the admin dashboard (cached for 30s).
+
+    - total_usage_kwh: Sum of power over time in the last hour (kWh estimate)
+    - active_rooms / total_rooms: Distinct device_ids sending data within `active_window_minutes`
+    - inactive_rooms: List of device_ids that have NOT reported within the active window
+    - efficiency_percent: Simple availability metric = active_rooms / total_rooms * 100
+    """
+    
+    # Check cache first
+    now = datetime.now(timezone.utc)
+    if _overview_cache["data"] and _overview_cache["timestamp"]:
+        age = (now - _overview_cache["timestamp"]).total_seconds()
+        if age < _overview_cache_ttl:
+            return _overview_cache["data"]
+
+    # Sanitize windows - use shorter defaults for speed
+    active_window_minutes = max(1, min(active_window_minutes, 60))
+    usage_window_hours = max(1, min(usage_window_hours, 24))
+
+    active_interval = f"{active_window_minutes} minutes"
+    usage_interval = f"{usage_window_hours} hours"
+
+    with engine.begin() as conn:
+        # Optimized: Sum power (watts) over time and convert to kWh
+        # If power readings are per minute, divide by 60 to get kWh
+        total_usage_wh = conn.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(COALESCE(power, value, 0)), 0) / 60.0
+                FROM (
+                    SELECT power, value FROM sensor_data
+                    WHERE ds >= NOW() - CAST(:usage_interval AS INTERVAL)
+                    ORDER BY ds DESC
+                    LIMIT 10000
+                ) subq
+                """
+            ),
+            {"usage_interval": usage_interval},
+        ).scalar() or 0
+
+        # Fast total rooms count from recent data only
+        total_rooms = conn.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT device_id) 
+                FROM sensor_data 
+                WHERE ds >= NOW() - INTERVAL '7 days'
+                """
+            )
+        ).scalar() or 0
+
+        # Active rooms in last N minutes
+        active_rooms = conn.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT device_id)
+                FROM sensor_data
+                WHERE ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                """
+            ),
+            {"active_interval": active_interval},
+        ).scalar() or 0
+
+        # Inactive rooms - simplified query
+        inactive_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT d1.device_id
+                FROM (
+                    SELECT DISTINCT device_id FROM sensor_data
+                    WHERE ds >= NOW() - INTERVAL '7 days'
+                    LIMIT 100
+                ) d1
+                WHERE d1.device_id NOT IN (
+                    SELECT DISTINCT device_id
+                    FROM sensor_data
+                    WHERE ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                )
+                ORDER BY d1.device_id
+                LIMIT 100
+                """
+            ),
+            {"active_interval": active_interval},
+        ).fetchall()
+
+    total_usage_kwh = float(total_usage_wh) / 1000.0
+    efficiency_percent = 0.0
+    if total_rooms > 0:
+        efficiency_percent = (active_rooms / total_rooms) * 100.0
+
+    result = {
+        "total_usage_kwh": round(total_usage_kwh, 3),
+        "active_rooms": active_rooms,
+        "total_rooms": total_rooms,
+        "inactive_rooms": [row[0] for row in inactive_rows],
+        "efficiency_percent": round(efficiency_percent, 1),
+        "active_window_minutes": active_window_minutes,
+        "usage_window_hours": usage_window_hours,
+    }
+    
+    # Cache the result
+    _overview_cache["data"] = result
+    _overview_cache["timestamp"] = now
+    
+    return result
+
+
 @app.delete("/users/{username}")
 def delete_user(username: str):
     """Delete a user (coordinator or class representative) by username."""
