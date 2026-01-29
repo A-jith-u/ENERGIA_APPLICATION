@@ -46,7 +46,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
 
   // Dynamic active rooms tracking
   final List<Map<String, dynamic>> _allRooms = [
-    {'room': 'CS-404', 'status': 'Normal', 'usage': '5.2 kW', 'isActive': true},
+    {'room': 'CS-201', 'status': 'Normal', 'usage': '5.2 kW', 'isActive': true},
     {'room': 'CS-Lab 1', 'status': 'High Usage', 'usage': '8.6 kW', 'isActive': true},
     {'room': 'CS-Lab 2', 'status': 'Moderate', 'usage': '3.4 kW', 'isActive': true},
     {'room': 'Server Room', 'status': 'Critical System', 'usage': '4.5 kW', 'isActive': true},
@@ -308,9 +308,10 @@ class _DepartmentOverviewSection extends StatelessWidget {
   final double livePeak;
   final List<FlSpot> liveSeries;
   final bool liveLoading;
+
   const _DepartmentOverviewSection({
-    required this.scheme, 
-    required this.onActiveRoomsTap, 
+    required this.scheme,
+    required this.onActiveRoomsTap,
     required this.onAlertsTap,
     required this.activeRooms,
     required this.totalRooms,
@@ -321,19 +322,92 @@ class _DepartmentOverviewSection extends StatelessWidget {
     required this.liveLoading,
   });
 
+  // ✅ ADD THIS METHOD
+  Widget _buildStatCard(
+    BuildContext context,
+    String label,
+    String value,
+    String unit,
+    IconData icon,
+    Color color,
+  ) {
+    final theme = Theme.of(context);
+
+    VoidCallback? onTap;
+    if (label.toLowerCase().contains('active rooms')) {
+      onTap = onActiveRoomsTap;
+    } else if (label.toLowerCase().contains('active alerts')) {
+      onTap = onAlertsTap;
+    }
+
+    return SizedBox(
+      width: 220, // Wrap-friendly (no Expanded)
+      child: Card(
+        elevation: 2,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(icon, color: color, size: 22),
+                    ),
+                    const Spacer(),
+                    if (onTap != null)
+                      Icon(Icons.open_in_new, size: 16, color: theme.colorScheme.outline),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '$value $unit'.trim(),
+                  style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  label,
+                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.outline),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        // Animated Welcome Message for Coordinator
+        // Animated Welcome Message for Coordinator (FIXED BRACKETS)
         TweenAnimationBuilder<Offset>(
           duration: const Duration(milliseconds: 1000),
-          tween: Tween(begin: const Offset(-1.0, 0.0), end: const Offset(0.0, 0.0)),
+          tween: Tween<Offset>(
+            begin: const Offset(-1.0, 0.0),
+            end: const Offset(0.0, 0.0),
+          ),
           builder: (context, offset, child) {
             return SlideTransition(
-              position: AlwaysStoppedAnimation(offset),
+              position: AlwaysStoppedAnimation<Offset>(offset),
               child: Container(
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
@@ -347,8 +421,11 @@ class _DepartmentOverviewSection extends StatelessWidget {
                     end: Alignment.bottomRight,
                   ),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: scheme.primary.withOpacity(0.3), width: 2),
-                    boxShadow: [
+                  border: Border.all(
+                    color: scheme.primary.withOpacity(0.3),
+                    width: 2,
+                  ),
+                  boxShadow: [
                     BoxShadow(
                       color: scheme.primary.withOpacity(0.3),
                       blurRadius: 15,
@@ -378,7 +455,7 @@ class _DepartmentOverviewSection extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Welcome, Department Leader! 👋',
+                                'Welcome, Department Leader!',
                                 style: theme.textTheme.headlineMedium?.copyWith(
                                   fontWeight: FontWeight.bold,
                                   color: scheme.onPrimaryContainer,
@@ -412,7 +489,7 @@ class _DepartmentOverviewSection extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        '✨ Your leadership drives campus-wide energy transformation',
+                        'Your leadership drives campus-wide energy transformation',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: scheme.primary,
                           fontWeight: FontWeight.w500,
@@ -422,9 +499,10 @@ class _DepartmentOverviewSection extends StatelessWidget {
                   ],
                 ),
               ),
-            );
+              );
           },
         ),
+
         const SizedBox(height: 24),
         
         // Department Stats - Using proper responsive layout
@@ -767,298 +845,55 @@ class _DepartmentOverviewSection extends StatelessWidget {
     );
   }
 
-  void _showActiveRoomDetailsDialog(BuildContext context, Map<String, dynamic> room, ThemeData theme, Color statusColor) {
-    showDialog(
+  void _showActiveRoomDetailsDialog(
+    BuildContext context,
+    Map<String, dynamic> room,
+    ThemeData theme,
+    Color statusColor,
+  ) {
+    showDialog<void>(
       context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            gradient: LinearGradient(
-              colors: [
-                statusColor.withOpacity(0.05),
-                statusColor.withOpacity(0.02),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          padding: const EdgeInsets.all(24),
-          child: Column(
+      builder: (ctx) {
+        final roomName = (room['room'] ?? room['name'] ?? 'Room').toString();
+        final status = (room['status'] ?? '—').toString();
+        final usage = (room['usage'] ?? '—').toString();
+
+        return AlertDialog(
+          title: Text(roomName),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(12),
+                    width: 10,
+                    height: 10,
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      Icons.room,
                       color: statusColor,
-                      size: 28,
+                      shape: BoxShape.circle,
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          room['room'] as String,
-                          style: theme.textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Active Room Details',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close),
-                    splashRadius: 24,
-                  ),
+                  const SizedBox(width: 8),
+                  Text('Status: $status'),
                 ],
-              ),
-              const SizedBox(height: 24),
-              
-              // Divider
-              Container(height: 1, color: Colors.grey.shade300),
-              const SizedBox(height: 24),
-              
-              // Details Grid
-              _buildDetailRow(theme, 'Room Number', room['room'] as String, Icons.room),
-              const SizedBox(height: 16),
-              _buildDetailRow(theme, 'Current Status', room['status'] as String, Icons.info_outline, statusColor),
-              const SizedBox(height: 16),
-              _buildDetailRow(theme, 'Energy Usage', room['usage'] as String, Icons.electric_bolt, Colors.orange),
-              const SizedBox(height: 16),
-              _buildDetailRow(theme, 'Status', 'ACTIVE', Icons.check_circle, Colors.green),
-              const SizedBox(height: 24),
-              
-              // Divider
-              Container(height: 1, color: Colors.grey.shade300),
-              const SizedBox(height: 24),
-              
-              // Quick Stats
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildStatBox(
-                      theme,
-                      'Uptime',
-                      '2h 34m',
-                      Icons.timer,
-                      Colors.blue,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildStatBox(
-                      theme,
-                      'Efficiency',
-                      '92%',
-                      Icons.trending_up,
-                      Colors.green,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              
-              // Close Button
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: statusColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text('Close', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDetailRow(ThemeData theme, String label, String value, IconData icon, [Color? iconColor]) {
-    return Row(
-      children: [
-        Icon(icon, color: iconColor ?? Colors.grey.shade600, size: 20),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                value,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStatBox(ThemeData theme, String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: Colors.grey.shade600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOptimizationCard(BuildContext context, String title, String description, IconData icon, Color color) {
-    final theme = Theme.of(context);
-    return Card(
-      elevation: 2,
-      shadowColor: Colors.transparent,
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Icon(icon, color: color, size: 28),
-        title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-        subtitle: Text(description),
-        trailing: ElevatedButton(
-          onPressed: () {},
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color.withOpacity(0.1),
-            foregroundColor: color,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          ),
-          child: const Text('Apply'),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatCard(
-    BuildContext context,
-    String label,
-    String value,
-    String unit,
-    IconData icon,
-    Color color,
-  ) {
-    final theme = Theme.of(context);
-    return Expanded(
-      child: Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            gradient: LinearGradient(
-              colors: [
-                color.withOpacity(0.08),
-                color.withOpacity(0.02),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: color, size: 24),
               ),
               const SizedBox(height: 12),
-              Text(
-                label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    value,
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: color,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    unit,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                ],
-              ),
+              Text('Current usage: $usage'),
             ],
           ),
-        ),
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
     );
   }
+
+  // ...existing code...
 }
 
 class _DepartmentRoomsSection extends StatelessWidget {
@@ -1075,10 +910,10 @@ class _DepartmentRoomsSection extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8), // Reduced margin for compactness
       child: InkWell(
         onTap: () {
-          // Placeholder: Navigate to detailed room control/analytics page
-          // Provide consistent in-app feedback
-          // ignore: use_build_context_synchronously
-          AppNotifier.showInfo(context, 'Opening Control Panel for $room');
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => RoomDetailsPage(roomName: room)),
+          );
         },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0), // Tighter vertical padding (8.0 instead of 12.0)
@@ -1235,7 +1070,6 @@ class _DepartmentRoomsSection extends StatelessWidget {
       ],
     );
   }
-
 }
 
 class _DepartmentRoomsDistributionChart extends StatelessWidget {
@@ -1679,6 +1513,185 @@ class _DepartmentUsageChart extends StatelessWidget {
         minY: 0,
         maxY: 25,
       ),
+    );
+  }
+}
+
+class RoomDetailsPage extends StatefulWidget {
+  final String roomName;
+  const RoomDetailsPage({super.key, required this.roomName});
+
+  @override
+  State<RoomDetailsPage> createState() => _RoomDetailsPageState();
+}
+
+class _RoomDetailsPageState extends State<RoomDetailsPage> {
+  bool _loading = true;
+  String? _error;
+  List<FlSpot> _series = [];
+  Map<String, dynamic>? _latest;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRoomData();
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _loadRoomData());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadRoomData() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    const apiCandidates = [
+      'http://10.0.2.2:5000',
+      'http://192.168.160.1:5000',
+      'http://localhost:5000',
+      'http://127.0.0.1:5000',
+    ];
+
+    for (final baseUrl in apiCandidates) {
+      try {
+        final url = Uri.parse('$baseUrl/api/sensor-data?limit=120&room=${Uri.encodeComponent(widget.roomName)}');
+        final resp = await http.get(url, headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 6));
+
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body);
+          final readings = (data['data'] as List?) ?? [];
+
+          // If backend doesn’t support room filter, filter client-side
+          final filtered = readings.where((r) {
+            final room = (r['room'] ?? r['room_name'] ?? r['location'] ?? '').toString();
+            return room.toLowerCase() == widget.roomName.toLowerCase();
+          }).toList();
+
+          final usable = filtered.isNotEmpty ? filtered : readings;
+          if (usable.isEmpty) continue;
+
+          final List<FlSpot> spots = [];
+          for (int i = 0; i < usable.length; i++) {
+            final r = usable[i] as Map<String, dynamic>;
+            final p = (r['power'] as num?)?.toDouble()
+                ?? (r['value'] as num?)?.toDouble()
+                ?? 0;
+            spots.add(FlSpot(i.toDouble(), p));
+          }
+
+          setState(() {
+            _series = spots;
+            _latest = usable.first as Map<String, dynamic>;
+            _loading = false;
+          });
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    setState(() {
+      _loading = false;
+      _error = 'Unable to load live room data';
+    });
+  }
+
+  Widget _metricTile(String label, dynamic value, {String unit = ''}) {
+    final display = (value == null) ? '—' : value.toString();
+    return ListTile(
+      title: Text(label),
+      trailing: Text('$display $unit'.trim()),
+      dense: true,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${widget.roomName} Details'),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Text(_error!))
+              : ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Text(
+                      'Live Usage (Power)',
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 220,
+                      child: LineChart(
+                        LineChartData(
+                          gridData: FlGridData(show: false),
+                          titlesData: FlTitlesData(
+                            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                          ),
+                          borderData: FlBorderData(show: false),
+                          lineBarsData: [
+                            LineChartBarData(
+                              spots: _series,
+                              isCurved: true,
+                              color: theme.colorScheme.primary,
+                              barWidth: 3,
+                              dotData: FlDotData(show: false),
+                              belowBarData: BarAreaData(show: true, color: theme.colorScheme.primary.withOpacity(0.15)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    Text(
+                      'Latest Sensor Readings',
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+
+                    Card(
+                      child: Column(
+                        children: [
+                          _metricTile('Timestamp', _latest?['ds'] ?? _latest?['ts'] ?? _latest?['timestamp']),
+                          _metricTile('Voltage', _latest?['voltage'], unit: 'V'),
+                          _metricTile('Current', _latest?['current'], unit: 'A'),
+                          _metricTile('Power', _latest?['power'], unit: 'W'),
+                          _metricTile('Energy', _latest?['energy'], unit: 'kWh'),
+                          _metricTile('Frequency', _latest?['frequency'], unit: 'Hz'),
+                          _metricTile('Power Factor', _latest?['power_factor']),
+                          _metricTile('Value', _latest?['value']),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+                    Text(
+                      'Notes',
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Live readings are refreshed every minute.',
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
     );
   }
 }

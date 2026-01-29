@@ -150,41 +150,67 @@ class LiveEnergyMeter extends StatelessWidget {
               ),
               const SizedBox(height: 20),
 
-              // Current Power Display
-              Text(
-                '${currentPower.toStringAsFixed(2)} kW',
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: _powerColor,
-                ),
+              // Current Power Display - Raw sensor value in Watts
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    currentPower.toStringAsFixed(2),
+                    style: theme.textTheme.headlineLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: _powerColor,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Watts (W)',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: _powerColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
+              const SizedBox(height: 8),
               Text(
-                'of ${maxCapacity.toStringAsFixed(1)} kW capacity',
+                'Capacity: ${maxCapacity.toStringAsFixed(2)} Watts',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: Colors.grey.shade600,
                 ),
               ),
               const SizedBox(height: 16),
 
-              // Progress Bar
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: LinearProgressIndicator(
-                  value: percentage / 100,
-                  minHeight: 12,
-                  backgroundColor: Colors.grey.shade300,
-                  valueColor: AlwaysStoppedAnimation<Color>(_powerColor),
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              // Percentage Text
-              Text(
-                '${percentage.toStringAsFixed(1)}% utilization',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: Colors.grey.shade700,
-                  fontWeight: FontWeight.w500,
-                ),
+              // Progress Bar with Label
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Usage Level',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: percentage / 100,
+                      minHeight: 12,
+                      backgroundColor: Colors.grey.shade300,
+                      valueColor: AlwaysStoppedAnimation<Color>(_powerColor),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${percentage.toStringAsFixed(1)}% of capacity',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -265,17 +291,24 @@ class ResponsiveLineChart extends StatelessWidget {
                         maxLines: 2,
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        spots.isEmpty
-                            ? 'No data yet'
-                            : isMonthly
-                                ? 'Monthly trend (${spots.length} months)'
-                                : 'Last ${spots.length} readings',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: Colors.grey.shade600,
+                      if (spots.isEmpty)
+                        Text(
+                          'No data available',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.red.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      else
+                        Text(
+                          isMonthly
+                              ? 'Monthly trend (${spots.length} months)'
+                              : 'Last ${spots.length} readings • Unit: $unit',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.grey.shade600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
                     ],
                   ),
                 ),
@@ -294,9 +327,32 @@ class ResponsiveLineChart extends StatelessWidget {
                         const Icon(Icons.circle, color: Colors.green, size: 8),
                         const SizedBox(width: 4),
                         Text(
-                          'Live',
+                          '📡 Live Data',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: Colors.green.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (spots.isEmpty && !isMonthly)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red, width: 1),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.circle, color: Colors.red, size: 8),
+                        const SizedBox(width: 4),
+                        Text(
+                          '⚠️ No Data',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: Colors.red.shade700,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -313,13 +369,45 @@ class ResponsiveLineChart extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // Chart
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: chartWidth,
+            // Chart or No Data Message
+            if (spots.isEmpty)
+              SizedBox(
                 height: chartHeight,
-                child: LineChart(
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.wifi_off_rounded,
+                        size: 48,
+                        color: Colors.red.shade400,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No Live Readings Available',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade400,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Sensor is not connected or offline',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: chartWidth,
+                  height: chartHeight,
+                  child: LineChart(
                   LineChartData(
                     gridData: FlGridData(
                       show: true,
@@ -549,39 +637,60 @@ class RoomEnergyCard extends StatelessWidget {
                 ),
               const Spacer(),
 
-              // Usage Display
-              Text(
-                '${currentUsage.toStringAsFixed(1)}',
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  color: _usageColor,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                'kW',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: Colors.grey.shade600,
-                ),
+              // Usage Display - Raw sensor value in Watts
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    currentUsage.toStringAsFixed(2),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: _usageColor,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'W',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: _usageColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
 
               const SizedBox(height: 12),
 
-              // Mini Progress Bar
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: percentage / 100,
-                  minHeight: 6,
-                  backgroundColor: Colors.grey.shade300,
-                  valueColor: AlwaysStoppedAnimation<Color>(_usageColor),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '${percentage.toStringAsFixed(0)}%',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: Colors.grey.shade700,
-                ),
+              // Mini Progress Bar with label
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Usage %',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.grey.shade600,
+                      fontSize: 10,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: percentage / 100,
+                      minHeight: 6,
+                      backgroundColor: Colors.grey.shade300,
+                      valueColor: AlwaysStoppedAnimation<Color>(_usageColor),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${percentage.toStringAsFixed(0)}%',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -819,8 +928,9 @@ class PredictionCard extends StatelessWidget {
   });
 
   Color get _confidenceColor {
-    if (confidence >= 0.8) return EnergyColorScheme.successGreen;
-    if (confidence >= 0.6) return EnergyColorScheme.warningOrange;
+    final validConfidence = confidence.clamp(0.0, 1.0);
+    if (validConfidence >= 0.8) return EnergyColorScheme.successGreen;
+    if (validConfidence >= 0.6) return EnergyColorScheme.warningOrange;
     return EnergyColorScheme.criticalRed;
   }
 
@@ -907,16 +1017,29 @@ class PredictionCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Current',
+                      'Current (Live)',
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: Colors.grey.shade600,
                       ),
                     ),
-                    Text(
-                      '${currentUsage.toStringAsFixed(2)} kW',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          currentUsage.toStringAsFixed(2),
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'W',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -926,19 +1049,35 @@ class PredictionCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      'Predicted',
+                      'Predicted ($timeframe)',
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: Colors.grey.shade600,
                       ),
                     ),
-                    Text(
-                      '${predictedUsage.toStringAsFixed(2)} kW',
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        color: difference > 0
-                            ? EnergyColorScheme.criticalRed
-                            : EnergyColorScheme.successGreen,
-                      ),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text(
+                          predictedUsage.toStringAsFixed(2),
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: difference > 0
+                                ? EnergyColorScheme.criticalRed
+                                : EnergyColorScheme.successGreen,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'W',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: difference > 0
+                                ? EnergyColorScheme.criticalRed
+                                : EnergyColorScheme.successGreen,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1001,7 +1140,7 @@ class PredictionCard extends StatelessWidget {
                             color: Colors.grey.shade300,
                           ),
                           child: FractionallySizedBox(
-                            widthFactor: confidence,
+                            widthFactor: confidence.clamp(0.0, 1.0),
                             child: Container(
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(3),
@@ -1012,7 +1151,7 @@ class PredictionCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         Text(
-                          '${(confidence * 100).toStringAsFixed(0)}%',
+                          '${(confidence.clamp(0.0, 1.0) * 100).toStringAsFixed(0)}%',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: _confidenceColor,
                             fontWeight: FontWeight.w600,
