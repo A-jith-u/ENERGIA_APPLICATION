@@ -77,21 +77,35 @@ coordinators_table = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
+# Updated sensor_data table - matches current production schema
 sensor_table = Table(
     "sensor_data",
     metadata,
     Column("id", BigInteger, primary_key=True),
     Column("ds", DateTime, nullable=False),
     Column("device_id", String),
-    Column("value", Float),
-    Column("voltage", Float, nullable=True),
-    Column("current", Float, nullable=True),
     Column("power", Float, nullable=True),
+    Column("current", Float, nullable=True),
+    Column("power_factor", Float, nullable=True),
+    Column("occupancy", Integer, nullable=True),
+    Column("voltage", Float, nullable=True),
     Column("energy", Float, nullable=True),
     Column("frequency", Float, nullable=True),
-    Column("power_factor", Float, nullable=True),
 )
 
+# New anomaly_logs table for AI detection results
+anomaly_logs_table = Table(
+    "anomaly_logs",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("ds", DateTime(timezone=True), nullable=False),
+    Column("device_id", Text),
+    Column("power", Float),
+    Column("occupancy", Integer),
+    Column("is_anomaly", Integer),
+    Column("anomaly_score", Float),
+    Column("energy_accumulated", Float),
+)
 # ESP32 Raw Data table - stores raw JSON payloads from ESP32 devices
 esp32_raw_data_table = Table(
     "esp32_raw_data",

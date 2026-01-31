@@ -56,13 +56,14 @@ def run_preprocessing():
     df = df.dropna(subset=['ds']).sort_values('ds').reset_index(drop=True)
 
     # 5. Feature Engineering for Isolation Forest
+   # Inside preprocess.py -> run_preprocessing()
+# 5. Feature Engineering for Isolation Forest
     processed_df = df[['ds', 'power', 'current', 'power_factor']].copy()
     processed_df['power_change_rate'] = processed_df['power'].diff().fillna(0)
     processed_df['rolling_avg_power'] = processed_df['power'].rolling(window=5).mean().fillna(processed_df['power'])
     processed_df['rolling_std_power'] = processed_df['power'].rolling(window=5).std().fillna(0)
     processed_df['is_holiday'] = processed_df['ds'].dt.dayofweek.apply(lambda x: 1 if x >= 5 else 0)
-    processed_df['occupancy'] = (processed_df['power'] > 5).astype(int)
-
+    processed_df['occupancy'] = (processed_df['power'] > 10).astype(int) # Using 10W as a baseline
     # 6. Save the final file
     processed_df.to_csv(OUTPUT_PATH, index=False)
     print(f"✨ Success! Preprocessed data stored in: {OUTPUT_PATH}")

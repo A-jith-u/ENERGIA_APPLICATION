@@ -103,7 +103,7 @@ Widget _buildAnomalyTab() {
       for (final baseUrl in apiCandidates) {
         try {
           final resp = await http
-              .get(Uri.parse('$baseUrl/api/sensor-data?limit=60'), headers: {'Content-Type': 'application/json'})
+              .get(Uri.parse('$baseUrl/auth/api/sensor-data?limit=60'), headers: {'Content-Type': 'application/json'})
               .timeout(const Duration(seconds: 6));
           if (resp.statusCode == 200) {
             final data = jsonDecode(resp.body);
@@ -363,6 +363,7 @@ class _DepartmentOverviewSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+   
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -604,6 +605,7 @@ class _DepartmentOverviewSection extends StatelessWidget {
                 ),
                 SizedBox(
                   width: constraints.maxWidth,
+                  
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1034,8 +1036,8 @@ Widget _buildStatCard(
   final theme = Theme.of(context);
   
   // Calculate width to fit 2 cards per row in a Wrap, minus spacing
-  final cardWidth = (MediaQuery.of(context).size.width / 2) - 24;
-
+  //final cardWidth = (MediaQuery.of(context).size.width / 2) - 24;
+ final cardWidth = MediaQuery.of(context).size.width - 70;
   // REMOVED: Expanded widget (Fixes the crash)
   return SizedBox(
     width: cardWidth,

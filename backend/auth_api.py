@@ -18,7 +18,30 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from sqlalchemy.exc import SQLAlchemyError
+from fastapi import APIRouter, Request, HTTPException
+from datetime import datetime, timezone
+import pandas as pd
+import numpy as np
+from sqlalchemy import text
+import joblib
 
+
+# --- AI MODEL LOADING ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) 
+MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "isolation_forest_model.pkl")
+FEATURES_PATH = os.path.join(BASE_DIR, "..", "models", "model_features.pkl")
+
+# Initialize these variables so the functions can see them
+model = None
+model_features = None
+
+try:
+    if os.path.exists(MODEL_PATH):
+        model = joblib.load(MODEL_PATH)
+        model_features = joblib.load(FEATURES_PATH)
+        print("✅ Anomaly Detection Model Loaded Successfully")
+except Exception as e:
+    print(f"❌ Error loading AI model: {e}")
 def _load_cfg():
     """Load config module handling both package and script execution."""
     if __package__:
@@ -121,6 +144,10 @@ class PasswordResetConfirmRequest(BaseModel):
     username: str
     otp: str
     new_password: str
+
+
+
+
 
 # Use this version of the change-password endpoint
 @app.post("/change-password")
@@ -657,13 +684,14 @@ async def invite_user(req: InviteUserRequest):
     }
 @app.get("/anomalies")
 def get_anomalies(limit: int = 10):
-    """Fetch recent anomalies from the sensor_data table."""
+    """Fetch recent anomalies from the NEW anomaly_logs table."""
     try:
         with engine.connect() as conn:
+            # Querying the new table instead of sensor_data
             result = conn.execute(
                 text("""
-                    SELECT id, ds, device_id, power, occupancy, anomaly_score
-                    FROM sensor_data 
+                    SELECT id, ds, device_id, power, occupancy, anomaly_score, energy_accumulated
+                    FROM anomaly_logs 
                     WHERE is_anomaly = -1
                     ORDER BY ds DESC 
                     LIMIT :limit
@@ -679,13 +707,14 @@ def get_anomalies(limit: int = 10):
                     "device_id": row[2],
                     "power": row[3],
                     "occupancy": row[4],
-                    "score": round(row[5], 4) if row[5] else 0
+                    "score": round(row[5], 4) if row[5] else 0,
+                    "energy": row[6]  # Now providing energy in the alert
                 }
                 for row in rows
             ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+        print(f"Error fetching anomalies: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error fetching alerts")
 @app.post("/register")
 def register(req: RegisterRequest):
     # For student registration, verify KTU ID, Department, and Year against authorized list
@@ -964,162 +993,158 @@ def delete_user(username: str):
         
         return {"status": "success", "message": f"User '{username}' deleted successfully", "deleted_count": deleted_count}
 
-
-@app.post("/sensor-data")
+@app.post("/api/sensor-data")
 async def receive_sensor_data(request: Request):
-    """
-    Receive sensor data from ESP32 and store it in the database.
-    
-    Expected JSON payload:
-    {
-        "device_id": "ESP32-LAB-001",
-        "voltage": 230.5,
-        "current": 2.3,
-        "power": 529.15,
-        "energy": 1.5,
-        "frequency": 50.0,
-        "power_factor": 0.95
-    }
-    """
+    global model, model_features
     try:
         payload = await request.json()
-        
-        # Store raw JSON payload for debugging and data recovery
-        import json
-        raw_json = json.dumps(payload)
-
         device_id = payload.get("device_id", "unknown")
-
-        # Extract metrics, cast to float where present
-        def _to_float(key, default=None):
-            v = payload.get(key, default)
-            if v is None:
-                return None
-            try:
-                return float(v)
-            except Exception:
-                raise HTTPException(status_code=400, detail=f"Invalid numeric value for '{key}': {v}")
-
-        voltage = _to_float("voltage")
-        current = _to_float("current")
-        power = _to_float("power")
-        energy = _to_float("energy")
-        frequency = _to_float("frequency")
-        power_factor = _to_float("power_factor")
-
-        # Maintain legacy 'value' field (use power if provided)
-        value = power if power is not None else _to_float("value", 0)
-
         timestamp = datetime.now(timezone.utc)
 
+        # 1. Identify what data we just received
+        has_power = "power" in payload and payload.get("power") is not None
+        has_occ = "human_present" in payload and payload.get("human_present") is not None
+
         with engine.begin() as conn:
-            # Store in sensor_data table (processed)
-            conn.execute(
-                text(
-                    "INSERT INTO sensor_data(ds, device_id, value, voltage, current, power, energy, frequency, power_factor) "
-                    "VALUES (:ds, :device_id, :value, :voltage, :current, :power, :energy, :frequency, :power_factor)"
-                ),
-                {
-                    "ds": timestamp,
-                    "device_id": device_id,
-                    "value": float(value) if value is not None else None,
-                    "voltage": voltage,
-                    "current": current,
-                    "power": power,
-                    "energy": energy,
-                    "frequency": frequency,
-                    "power_factor": power_factor,
-                },
-            )
-            
-            # Store in esp32_raw_data table (raw payload)
-            conn.execute(
-                text(
-                    "INSERT INTO esp32_raw_data(device_id, raw_payload, voltage, current, power, energy, frequency, power_factor, timestamp, processed) "
-                    "VALUES (:device_id, :raw_payload, :voltage, :current, :power, :energy, :frequency, :power_factor, :timestamp, :processed)"
-                ),
-                {
-                    "device_id": device_id,
-                    "raw_payload": raw_json,
-                    "voltage": voltage,
-                    "current": current,
-                    "power": power,
-                    "energy": energy,
-                    "frequency": frequency,
-                    "power_factor": power_factor,
-                    "timestamp": timestamp,
-                    "processed": 1,  # Mark as processed since we're storing it
-                },
-            )
+            # 2. LOOKUP: Check for a row from this device created in the last 60 seconds
+            # This window bridges the asynchronous nature of your two ESP32s
+            existing = conn.execute(
+                text("""SELECT id, occupancy, power, current, voltage, energy, power_factor 
+                        FROM sensor_data 
+                        WHERE device_id = :id 
+                        AND ds > :window 
+                        ORDER BY ds DESC LIMIT 1"""),
+                {"id": device_id, "window": timestamp - timedelta(seconds=60)}
+            ).fetchone()
 
-            # Log this activity
-            activity_logger.log_activity(
-                user_id=device_id,
-                action_type="data_submission",
-                resource_type="sensor",
-                resource_id=device_id,
-                action_description=f"Sensor reading inserted: power={power}W",
-            )
+            if existing:
+                row_id = existing[0]
+                # 3. UPDATE: Fill the gaps in the existing 1-minute row
+                if has_occ:
+                    occupancy = payload.get("human_present")
+                    conn.execute(
+                        text("UPDATE sensor_data SET occupancy = :occ WHERE id = :rid"),
+                        {"occ": occupancy, "rid": row_id}
+                    )
+                    # Use existing electrical data for AI processing
+                    p, c, pf, v, e = existing[2], existing[3], existing[5], existing[4], existing[6]
+                
+                if has_power:
+                    p = float(payload.get("power", 0))
+                    c = float(payload.get("current", 0))
+                    pf = float(payload.get("power_factor", 0))
+                    v = float(payload.get("voltage", 0))
+                    e = float(payload.get("energy", 0))
+                    
+                    conn.execute(
+                        text("""UPDATE sensor_data SET 
+                                power=:p, current=:c, voltage=:v, energy=:e, power_factor=:pf 
+                                WHERE id = :rid"""),
+                        {"p": p, "c": c, "v": v, "e": e, "pf": pf, "rid": row_id}
+                    )
+                    # Use existing occupancy context for AI processing
+                    occupancy = existing[1] if existing[1] is not None else 0
+            else:
+                # 4. INSERT: Create a fresh row if no recent entry exists
+                p = float(payload.get("power", 0)) if has_power else 0.0
+                c = float(payload.get("current", 0)) if has_power else 0.0
+                pf = float(payload.get("power_factor", 0)) if has_power else 0.0
+                v = float(payload.get("voltage", 0)) if has_power else 0.0
+                e = float(payload.get("energy", 0)) if has_power else 0.0
+                occupancy = payload.get("human_present") if has_occ else 0
+                
+                # If this is power data without occupancy, perform a quick history lookup
+                if has_power and not has_occ:
+                    occ_q = conn.execute(
+                        text("SELECT occupancy FROM sensor_data WHERE device_id = :id AND occupancy IS NOT NULL ORDER BY ds DESC LIMIT 1"),
+                        {"id": device_id}
+                    ).fetchone()
+                    occupancy = occ_q[0] if occ_q else 0
 
-        return {
-            "status": "success",
-            "message": f"Sensor data from {device_id} received and stored",
-            "device_id": device_id,
-            "value": value,
-            "voltage": voltage,
-            "current": current,
-            "power": power,
-            "energy": energy,
-            "frequency": frequency,
-            "power_factor": power_factor,
-            "timestamp": timestamp.isoformat(),
+                conn.execute(
+                    text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, power_factor, occupancy) 
+                            VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
+                    {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
+                )
+
+            # 5. Fetch history for rolling AI features
+            hist_res = conn.execute(
+                text("SELECT power FROM sensor_data WHERE device_id = :id AND power IS NOT NULL ORDER BY ds DESC LIMIT 5"),
+                {"id": device_id}
+            ).fetchall()
+            history = [r[0] for r in hist_res] if hist_res else [p]
+
+        # --- AI Processing Section (Remains the same using merged values) ---
+        rolling_avg = sum(history) / len(history)
+        rolling_std = np.std(history) if len(history) > 1 else 0
+        p_change = p - history[0] if len(history) > 0 else 0
+        is_holiday = 1 if timestamp.weekday() >= 5 else 0
+
+        input_data = {
+            'power': p, 'current': c, 'power_factor': pf, 'occupancy': occupancy,
+            'power_change_rate': p_change, 'rolling_avg_power': rolling_avg,
+            'rolling_std_power': rolling_std, 'is_holiday': is_holiday
         }
+        
+        # Isolation Forest Prediction
+        if p < 10.0:
+            prediction, score = 1, 0.5
+        else:
+            if model is not None and model_features is not None:
+                input_df = pd.DataFrame([input_data])[model_features]
+                prediction = model.predict(input_df)[0]
+                score = model.decision_function(input_df)[0]
+            else:
+                prediction, score = 1, 0.0
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error processing sensor data: {str(e)}")
+        # Log to Anomaly Table for Flutter
+        with engine.begin() as conn:
+            conn.execute(
+                text("""INSERT INTO anomaly_logs (ds, device_id, power, occupancy, is_anomaly, anomaly_score, energy_accumulated)
+                        VALUES (:ds, :id, :p, :o, :ia, :as, :e)"""),
+                {"ds": timestamp, "id": device_id, "p": p, "o": occupancy, 
+                 "ia": int(prediction), "as": float(score), "e": e}
+            )
 
+        return {"status": "success", "is_anomaly": int(prediction), "score": round(score, 4)}
 
-# --- CLEANED SENSOR DATA ROUTE ---
-@app.get("/sensor-data")
+    except Exception as err:
+        return {"status": "error", "message": str(err)}
+# B. PROVIDE DATA (GET) - For Flutter Charts
+# B. PROVIDE DATA (GET) - For Flutter Charts
+
+# Modified GET endpoint in auth_api.py
+@app.get("/api/sensor-data")
 def get_sensor_data(limit: int = 60, device_id: str = None):
-    """Fetch recent sensor readings for the Flutter Overview and Analytics charts."""
     try:
         with engine.connect() as conn:
-            if device_id:
-                query = text("""
-                    SELECT id, ds, device_id, power, current, voltage 
-                    FROM sensor_data 
-                    WHERE device_id = :device_id 
-                    ORDER BY ds DESC LIMIT :limit
-                """)
-                result = conn.execute(query, {"device_id": device_id, "limit": limit})
-            else:
-                query = text("""
-                    SELECT id, ds, device_id, power, current, voltage 
-                    
-                    FROM sensor_data 
-                    ORDER BY ds DESC LIMIT :limit
-                """)
-                result = conn.execute(query, {"limit": limit})
+            # Filters out camera-only rows that lack power data
+            base_sql = "SELECT ds, power, voltage, current, occupancy FROM sensor_data WHERE power IS NOT NULL"
             
-            rows = result.fetchall()
+            if device_id:
+                query = text(f"{base_sql} AND device_id = :id ORDER BY ds DESC LIMIT :l")
+                result = conn.execute(query, {"id": device_id, "l": limit})
+            else:
+                query = text(f"{base_sql} ORDER BY ds DESC LIMIT :l")
+                result = conn.execute(query, {"l": limit})
+            
+            # CRITICAL: Ensure 'rows' is defined from the result
+            rows = result.fetchall() 
+            
             data = [
                 {
-                    "id": row[0],
-                    "timestamp": row[1].isoformat() if row[1] else None,
-                    "device_id": row[2],
-                    "power": float(row[3]) if row[3] else 0.0,
-                    "current": float(row[4]) if row[4] else 0.0,
-                    "voltage": float(row[5]) if row[5] else 0.0
-                } for row in rows
+                    "timestamp": r[0].isoformat() if r[0] else None,
+                    "power": float(r[1]) if r[1] else 0.0,
+                    "voltage": float(r[2]) if r[2] else 0.0,
+                    "current": float(r[3]) if r[3] else 0.0,
+                    "occupancy": int(r[4]) if r[4] is not None else 0
+                } for r in rows
             ]
             return {"status": "success", "data": data}
+            
     except Exception as e:
-        print(f"Database error in get_sensor_data: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error accessing sensor data")
-
+        print(f"Error fetching sensor data: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 # Keep only ONE health check at the very end
 @app.get("/health")
 def health():
