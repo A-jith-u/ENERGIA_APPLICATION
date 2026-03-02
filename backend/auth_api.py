@@ -16,6 +16,7 @@ from passlib.context import CryptContext
 import jwt
 from datetime import datetime, timedelta, timezone
 import secrets
+import string
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from sqlalchemy.exc import SQLAlchemyError
 from fastapi import APIRouter, Request, HTTPException
@@ -519,8 +520,8 @@ async def invite_user(req: InviteUserRequest):
     Saves credentials to appropriate DB table and sends personalized welcome email
     with login credentials and role-specific instructions.
     """
-    # Generate a secure temporary password
-    otp = secrets.token_urlsafe(12)  # 12-char base64-encoded string
+    # Generate a secure temporary password (6 chars, letters+digits+symbol)
+    otp = _generate_short_password(6)
     pw_hash = PWD_CTX.hash(otp)
     role_lower = req.role.lower()
     target_table = "class_representatives" if ("student" in role_lower or "representative" in role_lower) else ("coordinators" if "coordinator" in role_lower else "admins")
@@ -552,6 +553,13 @@ async def invite_user(req: InviteUserRequest):
                     "i": existing[0],
                 }
             elif target_table == "coordinators":
+                # Fetch existing coordinator_id so email never shows None
+                coordinator_id_row = conn.execute(
+                    text("SELECT coordinator_id FROM coordinators WHERE id = :i"),
+                    {"i": existing[0]}
+                ).fetchone()
+                coordinator_id = coordinator_id_row[0] if coordinator_id_row else None
+
                 query = text("UPDATE coordinators SET password_hash=:p, name=:n, department=:d, email=:e WHERE id=:i")
                 params = {"p": pw_hash, "n": req.name, "d": req.department, "e": target_email, "i": existing[0]}
             else:  # admins
@@ -581,14 +589,13 @@ async def invite_user(req: InviteUserRequest):
                 # Get all existing coordinator IDs for this department
                 existing_ids = conn.execute(
                     text("SELECT coordinator_id FROM coordinators WHERE coordinator_id LIKE :prefix ORDER BY coordinator_id"),
-                    {"prefix": f"{dept_prefix}%"}
+                    {"prefix": f"{dept_prefix}%"},
                 ).fetchall()
                 
                 # Extract numbers from existing IDs and find the next available number
                 existing_numbers = []
                 for (cid,) in existing_ids:
                     try:
-                        # Extract the numeric part after the department prefix
                         num = int(cid[len(dept_prefix):])
                         existing_numbers.append(num)
                     except (ValueError, IndexError):
@@ -899,6 +906,99 @@ def login(req: LoginRequest, request: Request):
         # For database or system errors, return generic error
         raise HTTPException(status_code=500, detail="Something went wrong")
 
+@app.post("/coordinator/login")
+def coordinator_login(req: LoginRequest, request: Request):
+    """Dedicated coordinator login endpoint with department validation."""
+    try:
+        client_ip = request.client.host if request.client else "0.0.0.0"
+        
+        with engine.begin() as conn:
+            # Look up coordinator by coordinator_id
+            coordinator_row = conn.execute(
+                text("""
+                    SELECT id, password_hash, name, department, email, coordinator_id, created_at 
+                    FROM coordinators 
+                    WHERE UPPER(coordinator_id)=UPPER(:u)
+                """),
+                {"u": req.username.strip()},
+            ).fetchone()
+            
+            if not coordinator_row:
+                activity_logger.log_activity(
+                    user_id=req.username,
+                    action_type="login",
+                    action_description="Failed coordinator login - user not found",
+                    status="failure",
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            u_id, pw_hash, name, dept, email, coordinator_id, created_at = coordinator_row
+            
+            # Verify password
+            if not PWD_CTX.verify(req.password, pw_hash):
+                activity_logger.log_activity(
+                    user_id=coordinator_id,
+                    user_name=name,
+                    user_role="coordinator",
+                    action_type="login",
+                    action_description="Failed coordinator login - invalid password",
+                    status="failure",
+                    department=dept,
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            # Update last_login timestamp
+            conn.execute(
+                text("UPDATE coordinators SET last_login = NOW() WHERE id = :id"),
+                {"id": u_id}
+            )
+            
+            # Log successful login
+            activity_logger.log_activity(
+                user_id=str(u_id),
+                user_name=name,
+                user_role="coordinator",
+                action_type="login",
+                action_description="Coordinator successfully logged in",
+                status="success",
+                department=dept,
+                ip_address=client_ip,
+            )
+            
+            # Create JWT token
+            payload = {
+                "sub": str(u_id),
+                "username": coordinator_id,
+                "email": email,
+                "name": name,
+                "role": "coordinator",
+                "department": dept,
+                "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+            }
+            
+            token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+            
+            # Return coordinator data with token
+            return {
+                "id": u_id,
+                "coordinator_id": coordinator_id,
+                "name": name,
+                "email": email,
+                "department": dept,
+                "created_at": created_at.isoformat() if created_at else None,
+                "token": token,
+                "token_type": "bearer"
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Coordinator login error: {e}")
+        raise HTTPException(status_code=500, detail="Something went wrong")
+
+
 @app.get("/users/coordinators")
 def get_coordinators():
     """Fetch all coordinators from the database."""
@@ -965,6 +1065,119 @@ def get_user_counts():
             "coordinators": coordinator_count,
             "class_representatives": class_rep_count
         }
+
+
+# Cache for dashboard overview to reduce DB load
+_overview_cache = {"data": None, "timestamp": None}
+_overview_cache_ttl = 30  # seconds
+
+@app.get("/dashboard/overview")
+def get_dashboard_overview(active_window_minutes: int = 5, usage_window_hours: int = 1):
+    """Return campus-wide live metrics for the admin dashboard (cached for 30s).
+
+    - total_usage_kwh: Sum of power over time in the last hour (kWh estimate)
+    - active_rooms / total_rooms: Distinct device_ids sending data within `active_window_minutes`
+    - inactive_rooms: List of device_ids that have NOT reported within the active window
+    - efficiency_percent: Simple availability metric = active_rooms / total_rooms * 100
+    """
+    
+    # Check cache first
+    now = datetime.now(timezone.utc)
+    if _overview_cache["data"] and _overview_cache["timestamp"]:
+        age = (now - _overview_cache["timestamp"]).total_seconds()
+        if age < _overview_cache_ttl:
+            return _overview_cache["data"]
+
+    # Sanitize windows - use shorter defaults for speed
+    active_window_minutes = max(1, min(active_window_minutes, 60))
+    usage_window_hours = max(1, min(usage_window_hours, 24))
+
+    active_interval = f"{active_window_minutes} minutes"
+    usage_interval = f"{usage_window_hours} hours"
+
+    with engine.begin() as conn:
+        # Optimized: Sum power (watts) over time and convert to kWh
+        # If power readings are per minute, divide by 60 to get kWh
+        total_usage_wh = conn.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(COALESCE(power, value, 0)), 0) / 60.0
+                FROM (
+                    SELECT power, value FROM sensor_data
+                    WHERE ds >= NOW() - CAST(:usage_interval AS INTERVAL)
+                    ORDER BY ds DESC
+                    LIMIT 10000
+                ) subq
+                """
+            ),
+            {"usage_interval": usage_interval},
+        ).scalar() or 0
+
+        # Fast total rooms count from recent data only
+        total_rooms = conn.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT device_id) 
+                FROM sensor_data 
+                WHERE ds >= NOW() - INTERVAL '7 days'
+                """
+            )
+        ).scalar() or 0
+
+        # Active rooms in last N minutes
+        active_rooms = conn.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT device_id)
+                FROM sensor_data
+                WHERE ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                """
+            ),
+            {"active_interval": active_interval},
+        ).scalar() or 0
+
+        # Inactive rooms - simplified query
+        inactive_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT d1.device_id
+                FROM (
+                    SELECT DISTINCT device_id FROM sensor_data
+                    WHERE ds >= NOW() - INTERVAL '7 days'
+                    LIMIT 100
+                ) d1
+                WHERE d1.device_id NOT IN (
+                    SELECT DISTINCT device_id
+                    FROM sensor_data
+                    WHERE ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                )
+                ORDER BY d1.device_id
+                LIMIT 100
+                """
+            ),
+            {"active_interval": active_interval},
+        ).fetchall()
+
+    total_usage_kwh = float(total_usage_wh) / 1000.0
+    efficiency_percent = 0.0
+    if total_rooms > 0:
+        efficiency_percent = (active_rooms / total_rooms) * 100.0
+
+    result = {
+        "total_usage_kwh": round(total_usage_kwh, 3),
+        "active_rooms": active_rooms,
+        "total_rooms": total_rooms,
+        "inactive_rooms": [row[0] for row in inactive_rows],
+        "efficiency_percent": round(efficiency_percent, 1),
+        "active_window_minutes": active_window_minutes,
+        "usage_window_hours": usage_window_hours,
+    }
+    
+    # Cache the result
+    _overview_cache["data"] = result
+    _overview_cache["timestamp"] = now
+    
+    return result
 
 
 @app.delete("/users/{username}")
@@ -1122,31 +1335,227 @@ def get_sensor_data(limit: int = 60, device_id: str = None):
             base_sql = "SELECT ds, power, voltage, current, occupancy FROM sensor_data WHERE power IS NOT NULL"
             
             if device_id:
-                query = text(f"{base_sql} AND device_id = :id ORDER BY ds DESC LIMIT :l")
-                result = conn.execute(query, {"id": device_id, "l": limit})
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
+                        FROM sensor_data 
+                        WHERE device_id = :device_id
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"device_id": device_id, "limit": limit}
+                )
             else:
-                query = text(f"{base_sql} ORDER BY ds DESC LIMIT :l")
-                result = conn.execute(query, {"l": limit})
-            
-            # CRITICAL: Ensure 'rows' is defined from the result
-            rows = result.fetchall() 
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
+                        FROM sensor_data 
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"limit": limit}
+                )
             
             data = [
                 {
-                    "timestamp": r[0].isoformat() if r[0] else None,
-                    "power": float(r[1]) if r[1] else 0.0,
-                    "voltage": float(r[2]) if r[2] else 0.0,
-                    "current": float(r[3]) if r[3] else 0.0,
-                    "occupancy": int(r[4]) if r[4] is not None else 0
-                } for r in rows
+                    "id": row[0],
+                    "timestamp": row[1].isoformat() if row[1] else None,
+                    "device_id": row[2],
+                    "value": row[3],
+                    "voltage": row[4],
+                    "current": row[5],
+                    "power": row[6],
+                    "energy": row[7],
+                    "frequency": row[8],
+                    "power_factor": row[9]
+                }
+                for row in rows
             ]
             return {"status": "success", "data": data}
             
     except Exception as e:
-        print(f"Error fetching sensor data: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-# Keep only ONE health check at the very end
+        raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
+
+
+@app.get("/rooms")
+def get_all_rooms():
+    """Get all rooms with their floor and threshold information."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    ORDER BY floor_number, room_name
+                """)
+            ).fetchall()
+            
+            data = [
+                {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": row[3]
+                }
+                for row in rows
+            ]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
+
+
+@app.get("/rooms/floor/{floor_number}")
+def get_rooms_by_floor(floor_number: int):
+    """Get all rooms on a specific floor."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    WHERE floor_number = :floor
+                    ORDER BY room_name
+                """),
+                {"floor": floor_number}
+            ).fetchall()
+            
+            data = [
+                {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": row[3]
+                }
+                for row in rows
+            ]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
+
+
+@app.get("/rooms/floors")
+def get_all_floors():
+    """Get all unique floors."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT DISTINCT floor_number 
+                    FROM rooms 
+                    ORDER BY floor_number
+                """)
+            ).fetchall()
+            
+            data = [{"floor_number": row[0]} for row in rows]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving floors: {str(e)}")
+
+
+@app.put("/rooms/{room_id}/threshold")
+def update_room_threshold(room_id: str, threshold: float = None):
+    """Update the threshold for a specific room."""
+    try:
+        if threshold is None:
+            raise HTTPException(status_code=400, detail="Threshold value is required")
+        
+        if threshold <= 0:
+            raise HTTPException(status_code=400, detail="Threshold must be greater than 0")
+        
+        with engine.begin() as conn:
+            # Check if room exists first
+            check_row = conn.execute(
+                text("""
+                    SELECT id FROM rooms WHERE room_id = :room_id
+                """),
+                {"room_id": room_id}
+            ).fetchone()
+            
+            if not check_row:
+                raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+            
+            result = conn.execute(
+                text("""
+                    UPDATE rooms 
+                    SET threshold = :threshold, updated_at = NOW() 
+                    WHERE room_id = :room_id
+                """),
+                {"threshold": threshold, "room_id": room_id}
+            )
+            
+            if result.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Failed to update room")
+            
+            # Retrieve updated room data
+            row = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    WHERE room_id = :room_id
+                """),
+                {"room_id": room_id}
+            ).fetchone()
+            
+            return {
+                "status": "success",
+                "message": "Threshold updated successfully",
+                "data": {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": float(row[3])
+                }
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error updating threshold: {str(e)}")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+def _generate_short_password(length: int = 6) -> str:
+    """Generate a 6-char password with letters, digits, and a symbol (unique chars)."""
+    if length < 3:
+        raise ValueError("Password length must be at least 3")
+
+    letters = string.ascii_letters
+    digits = string.digits
+    symbols = "!@#$%*"
+
+    # Ensure at least one of each
+    password_chars = [
+        secrets.choice(letters),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+
+    # Fill the rest with unique characters
+    pool = list(set(letters + digits + symbols) - set(password_chars))
+    secrets.SystemRandom().shuffle(pool)
+    password_chars.extend(pool[: length - 3])
+
+    # Shuffle final password
+    secrets.SystemRandom().shuffle(password_chars)
+    return "".join(password_chars)

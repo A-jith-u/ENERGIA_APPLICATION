@@ -23,9 +23,21 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
   String? _errorMessage;
 
   void _login() {
-    if (_formKey.currentState?.validate() != true) return;
+    if (_formKey.currentState?.validate() != true) {
+      setState(() {
+        _errorMessage = 'Please fill all the credentials correctly';
+      });
+      return;
+    }
     // call backend
     _performLogin();
+  }
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 
   Future<void> _performLogin() async {
@@ -56,10 +68,19 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     required IconData icon,
     bool obscure = false,
     String? Function(String?)? validator,
+    VoidCallback? onSubmit,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: obscure && !_isPasswordVisible,
+      enableInteractiveSelection: true,
+      maxLines: 1,
+      onChanged: (_) {
+        setState(() {
+          _errorMessage = null; // Clear error message when user types
+        });
+      },
+      onFieldSubmitted: onSubmit != null ? (_) => onSubmit() : null,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
@@ -184,6 +205,7 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                                     label: 'Password',
                                     icon: Icons.lock_outline,
                                     obscure: true,
+                                    onSubmit: _login,
                                     validator: (v) {
                                       if (v == null || v.isEmpty) return 'Enter password';
                                       return null;

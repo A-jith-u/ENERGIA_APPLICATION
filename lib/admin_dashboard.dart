@@ -23,6 +23,7 @@ import 'services/validators.dart'; // Import validation functions
 import 'activity_logs_page.dart'; // Import activity logs page
 import 'monthly_report_page.dart'; // Import monthly report page
 import 'dart:ui'; // For ImageFilter (glassmorphism effect)
+import 'package:flutter/foundation.dart';
 
 // --- HELPER WIDGETS ---
 
@@ -31,7 +32,8 @@ class _CampusStatCard extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color color;
-  const _CampusStatCard({required this.label, required this.value, required this.icon, required this.color});
+  final VoidCallback? onTap;
+  const _CampusStatCard({required this.label, required this.value, required this.icon, required this.color, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -40,21 +42,25 @@ class _CampusStatCard extends StatelessWidget {
     return SizedBox(
       width: 160,
       height: 120,
-      child: Card(
-        elevation: 2,
-        shadowColor: Colors.transparent,
-        color: isDark ? theme.colorScheme.surfaceContainerHighest : theme.cardTheme.color,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 28, color: color),
-              const Spacer(),
-              Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(label, style: theme.textTheme.labelLarge),
-            ],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Card(
+          elevation: 2,
+          shadowColor: Colors.transparent,
+          color: isDark ? theme.colorScheme.surfaceContainerHighest : theme.cardTheme.color,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 28, color: color),
+                const Spacer(),
+                Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(label, style: theme.textTheme.labelLarge),
+              ],
+            ),
           ),
         ),
       ),
@@ -460,7 +466,15 @@ class _CampusOverviewSection extends StatefulWidget {
 
 class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
   Map<String, int>? _userCounts;
-  bool _isLoading = false; // show immediately, refresh in background
+  bool _isLoading = false; // user counts
+  bool _isOverviewLoading = true;
+  Timer? _refreshTimer;
+
+  double? _totalUsageKwh;
+  int _activeRooms = 0;
+  int _totalRooms = 0;
+  double? _efficiencyPercent;
+  List<String> _inactiveRooms = const [];
 
   void _onCountsChanged() {
     setState(() {
@@ -477,6 +491,12 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
     _userCounts = UserCountsStore.instance.counts.value;
     // Refresh in background
     _loadUserCounts();
+    _loadCampusOverview();
+    
+    // Auto-refresh every 30 seconds
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _loadCampusOverview();
+    });
   }
 
   Future<void> _loadUserCounts() async {
@@ -499,9 +519,32 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
     }
   }
 
+  Future<void> _loadCampusOverview() async {
+    try {
+      final data = await api.getCampusOverview(activeWindowMinutes: 5, usageWindowHours: 1);
+      if (!mounted) return;
+      setState(() {
+        _totalUsageKwh = (data['total_usage_kwh'] as num?)?.toDouble();
+        _activeRooms = data['active_rooms'] as int? ?? 0;
+        _totalRooms = data['total_rooms'] as int? ?? 0;
+        _inactiveRooms = List<String>.from(data['inactive_rooms'] ?? const []);
+        _efficiencyPercent = (data['efficiency_percent'] as num?)?.toDouble();
+        _isOverviewLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isOverviewLoading = false;
+      });
+      // Keep silent in UI but log to console
+      debugPrint('Failed to load campus overview: $e');
+    }
+  }
+
   @override
   void dispose() {
     UserCountsStore.instance.counts.removeListener(_onCountsChanged);
+    _refreshTimer?.cancel();
     super.dispose();
   }
 
@@ -557,12 +600,60 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
           runSpacing: 16,
           alignment: WrapAlignment.center,
           children: [
-            const _CampusStatCard(label: 'Total Usage', value: '247.8 kW', icon: Icons.electric_bolt_outlined, color: Colors.red),
-            _isLoading 
-              ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
-              : _CampusStatCard(label: 'Active Users', value: '$totalUsers', icon: Icons.people_outlined, color: Colors.blue),
-            const _CampusStatCard(label: 'Buildings', value: '12 Online', icon: Icons.business_outlined, color: Colors.purple),
-            const _CampusStatCard(label: 'Efficiency', value: '94.2%', icon: Icons.eco_outlined, color: Colors.green),
+            _isOverviewLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+                : _CampusStatCard(
+                    label: 'Total Usage (1h)',
+                    value: _totalUsageKwh != null ? '${_totalUsageKwh!.toStringAsFixed(2)} kWh' : '--',
+                    icon: Icons.electric_bolt_outlined,
+                    color: Colors.red,
+                  ),
+            _isLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+                : _CampusStatCard(label: 'Active Users', value: '$totalUsers', icon: Icons.people_outlined, color: Colors.blue),
+            _isOverviewLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+                : _CampusStatCard(
+                    label: 'Active Rooms',
+                    value: _totalRooms > 0 ? '$_activeRooms / $_totalRooms' : '--',
+                    icon: Icons.business_outlined,
+                    color: Colors.purple,
+                    onTap: _inactiveRooms.isEmpty
+                        ? null
+                        : () {
+                            showModalBottomSheet(
+                              context: context,
+                              builder: (ctx) {
+                                return Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Inactive Rooms', style: Theme.of(context).textTheme.titleLarge),
+                                      const SizedBox(height: 12),
+                                      if (_inactiveRooms.isEmpty)
+                                        const Text('All rooms are reporting live data')
+                                      else
+                                        ..._inactiveRooms.map((id) => ListTile(
+                                              leading: const Icon(Icons.meeting_room_outlined),
+                                              title: Text(id),
+                                            )),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                  ),
+            _isOverviewLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+                : _CampusStatCard(
+                    label: 'Efficiency',
+                    value: _efficiencyPercent != null ? '${_efficiencyPercent!.toStringAsFixed(1)}%' : '--',
+                    icon: Icons.eco_outlined,
+                    color: Colors.green,
+                  ),
           ],
         ),
         const SizedBox(height: 32),
