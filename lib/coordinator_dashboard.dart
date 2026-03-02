@@ -2,14 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
 import 'package:energia/models/room_data_simulator.dart';
+import 'package:energia/models/user_role_model.dart';
+import 'package:energia/services/department_customization_service.dart';
+import 'package:energia/widgets/department_dashboard_widget.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'role_selection_page.dart';
 
 class CoordinatorDashboardPage extends StatefulWidget {
-  const CoordinatorDashboardPage({super.key});
+  final EnhancedUser? user; // Accept user object with department info
+
+  const CoordinatorDashboardPage({super.key, this.user});
 
   @override
   State<CoordinatorDashboardPage> createState() =>
@@ -28,15 +34,54 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   List<Map<String, dynamic>> _thirdDropdownOptions =
       []; // For floorwise third dropdown
   Timer? _dataRefreshTimer;
+  EnhancedUser? _currentUser;
+  late DepartmentCustomizationService _customizationService;
+  List<String> _accessibleRooms = [];
 
   @override
   void initState() {
     super.initState();
-    _initializeSecondDropdown();
-    _loadSensorData();
+    _customizationService = DepartmentCustomizationService();
+    _loadUserAndInitialize();
+  }
+
+  Future<void> _loadUserAndInitialize() async {
+    // Load user from widget or shared preferences
+    if (widget.user != null) {
+      _currentUser = widget.user;
+      _filterRoomsByDepartment();
+      _initializeSecondDropdown();
+      _loadSensorData();
+    } else {
+      // Try to load from shared preferences
+      final prefs = await SharedPreferences.getInstance();
+      final userJson = prefs.getString('current_user');
+      if (userJson != null) {
+        try {
+          final userData = jsonDecode(userJson);
+          _currentUser = EnhancedUser.fromJson(userData);
+          _filterRoomsByDepartment();
+          _initializeSecondDropdown();
+          _loadSensorData();
+        } catch (e) {
+          print('Error loading user: $e');
+        }
+      }
+    }
+    
+    // Start refresh timer
     _dataRefreshTimer = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _loadSensorData(),
+    );
+  }
+
+  void _filterRoomsByDepartment() {
+    if (_currentUser == null) return;
+    
+    // Get rooms accessible to this department
+    _accessibleRooms = _customizationService.getAccessibleRoomsByDepartment(
+      _currentUser!.department,
     );
   }
 
@@ -47,9 +92,30 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   }
 
   void _initializeSecondDropdown() {
+    // Get options based on filter type
     _secondDropdownOptions = RoomDataSimulator.getSecondDropdownOptions(
       _firstDropdownValue,
     );
+    
+    // Filter by accessible rooms if user is available
+    if (_currentUser != null && _accessibleRooms.isNotEmpty) {
+      if (_firstDropdownValue == 'all') {
+        // Filter to only show accessible rooms
+        _secondDropdownOptions = _secondDropdownOptions.where((room) {
+          final roomId = room['id'] as String;
+          return _accessibleRooms.contains(roomId);
+        }).toList();
+      } else if (_firstDropdownValue == 'department') {
+        // Show only this user's department
+        final deptName = departmentNames[_currentUser!.department] ?? '';
+        _secondDropdownOptions = _secondDropdownOptions.where((room) {
+          final roomLabel = room['label'] as String? ?? '';
+          return roomLabel.toLowerCase().contains(deptName.toLowerCase()) ||
+                 _accessibleRooms.contains(room['id'] as String);
+        }).toList();
+      }
+    }
+    
     if (_secondDropdownOptions.isNotEmpty) {
       _secondDropdownValue = _secondDropdownOptions.first['id'] as String;
       // If floorwise, also initialize third dropdown
@@ -199,10 +265,97 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    // If user is loaded, use department-themed dashboard
+    if (_currentUser != null) {
+      final departmentTheme = _customizationService.getDepartmentTheme(_currentUser!.department);
+      return Theme(
+        data: departmentTheme,
+        child: _buildDepartmentDashboard(departmentTheme.colorScheme),
+      );
+    }
+    
+    // Fallback to default theme if user not loaded
     final colorScheme = Theme.of(context).colorScheme;
     return DashboardScaffold(
-      title: '🏢 CS Department ENERGIA',
+      title: '🏢 ENERGIA Dashboard',
       actions: [
+        IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Logout',
+          onPressed: _performLogout,
+        ),
+      ],
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        child: _buildPage(_currentIndex, colorScheme),
+      ),
+      currentIndex: _currentIndex,
+      onBottomNavTapped: (index) {
+        setState(() {
+          _currentIndex = index;
+        });
+      },
+      bottomNavItems: const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.dashboard_outlined),
+          activeIcon: Icon(Icons.dashboard),
+          label: 'Overview',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.room_outlined),
+          activeIcon: Icon(Icons.room),
+          label: 'Rooms',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.analytics_outlined),
+          activeIcon: Icon(Icons.analytics),
+          label: 'Analytics',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.notifications_outlined),
+          activeIcon: Icon(Icons.notifications),
+          label: 'Alerts',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDepartmentDashboard(ColorScheme colorScheme) {
+    final departmentName = departmentNames[_currentUser!.department] ?? 'Department';
+    final departmentColor = departmentColors[_currentUser!.department] ?? Colors.blue;
+    
+    return DashboardScaffold(
+      title: '🏢 $departmentName ENERGIA',
+      actions: [
+        // Department indicator
+        Container(
+          margin: const EdgeInsets.only(right: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: departmentColor.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: departmentColor, width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                departmentIcons[_currentUser!.department],
+                size: 16,
+                color: departmentColor,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                departmentName,
+                style: TextStyle(
+                  color: departmentColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
         IconButton(
           icon: const Icon(Icons.logout),
           tooltip: 'Logout',

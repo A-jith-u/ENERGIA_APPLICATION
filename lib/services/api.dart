@@ -299,6 +299,34 @@ Future<Map<String, int>> getUserCounts() async {
   throw ApiError('Get user counts failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
 }
 
+/// Fetch campus overview metrics: total usage, active/total rooms, efficiency, inactive rooms
+Future<Map<String, dynamic>> getCampusOverview({int activeWindowMinutes = 5, int usageWindowHours = 24}) async {
+  Exception? lastError;
+  print('[API] Fetching campus overview');
+
+  for (final base in _candidates) {
+    final uri = Uri.parse('$base/auth/dashboard/overview?active_window_minutes=$activeWindowMinutes&usage_window_hours=$usageWindowHours');
+    print('[API] Trying: $uri');
+    try {
+      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      print('[API] Response from $base: ${resp.statusCode}');
+
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        print('[API] Overview: $data');
+        return data;
+      }
+      throw ApiError('Get campus overview failed (${base}): ${resp.statusCode} ${resp.body}');
+    } catch (e) {
+      print('[API] Error with $base: $e');
+      lastError = e as Exception;
+      continue;
+    }
+  }
+  print('[API] All candidates failed. Last error: $lastError');
+  throw ApiError('Get campus overview failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+}
+
 /// Delete a user (coordinator or class representative) by username
 Future<void> deleteUser(String username) async {
   Exception? lastError;

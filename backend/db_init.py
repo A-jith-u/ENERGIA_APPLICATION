@@ -52,7 +52,7 @@ pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 metadata = MetaData()
 
-# Admins table - standalone store for admin accounts
+# Admins table - standalone store for admin accounts with department assignment
 admins_table = Table(
     "admins",
     metadata,
@@ -61,10 +61,15 @@ admins_table = Table(
     Column("email", String, unique=True, nullable=False),
     Column("password_hash", String, nullable=False),
     Column("name", String, nullable=False),
+    Column("department", String, nullable=False),  # Department this admin manages (or 'admin' for system-wide)
+    Column("role_level", String, nullable=False, default="department_admin"),  # "superadmin" or "department_admin"
+    Column("is_active", Integer, default=1),  # 0=inactive, 1=active
+    Column("last_login", DateTime, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
 )
 
-# Coordinators table - standalone store for coordinators
+# Coordinators table - standalone store for coordinators with department assignment
 coordinators_table = Table(
     "coordinators",
     metadata,
@@ -73,8 +78,12 @@ coordinators_table = Table(
     Column("email", String, unique=True, nullable=False),
     Column("password_hash", String, nullable=False),
     Column("name", String, nullable=False),
-    Column("department", String, nullable=False),
+    Column("department", String, nullable=False),  # Department this coordinator manages
+    Column("assigned_rooms", String, nullable=True),  # JSON list of assigned room IDs
+    Column("is_active", Integer, default=1),  # 0=inactive, 1=active
+    Column("last_login", DateTime, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
 )
 
 sensor_table = Table(
@@ -120,7 +129,7 @@ authorized_students_table = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
-# Class Representatives table - stores registered student representatives
+# Class Representatives table - stores registered student representatives with department
 class_representatives_table = Table(
     "class_representatives",
     metadata,
@@ -130,9 +139,14 @@ class_representatives_table = Table(
     Column("ktu_id", String, unique=True, nullable=False),
     Column("email", String, unique=True, nullable=False),
     Column("name", String, nullable=True),
-    Column("department", String, nullable=False),
+    Column("department", String, nullable=False),  # Department class belongs to
     Column("year", String, nullable=False),
+    Column("section", String, nullable=True),  # Class section (A, B, C, etc.)
+    Column("assigned_rooms", String, nullable=True),  # JSON list of assigned classroom IDs
+    Column("is_active", Integer, default=1),  # 0=inactive, 1=active
+    Column("last_login", DateTime, nullable=True),
     Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
 )
 
 # Rooms table - stores all room names with floor and threshold information
@@ -143,7 +157,25 @@ rooms_table = Table(
     Column("room_id", String, unique=True, nullable=False),
     Column("room_name", String, nullable=False),
     Column("floor_number", Integer, nullable=False),  # 0 = Ground floor, 1 = First floor, etc.
+    Column("department", String, nullable=True),  # Department this room belongs to
     Column("threshold", Float, nullable=False, default=3.0),  # Default threshold in kW
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
+)
+
+# Department Customization table - stores UI and feature customization per department
+department_customization_table = Table(
+    "department_customization",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("department", String, unique=True, nullable=False),
+    Column("display_name", String, nullable=False),
+    Column("color_hex", String, nullable=False),  # Hex color for department theme
+    Column("icon_name", String, nullable=False),  # Material Design icon name
+    Column("enabled_features", String, nullable=True),  # JSON array of enabled features
+    Column("dashboard_layout", String, nullable=True),  # JSON dashboard configuration
+    Column("metrics_to_display", String, nullable=True),  # JSON array of metrics to show
+    Column("custom_rooms", String, nullable=True),  # JSON array of department-specific rooms
     Column("created_at", DateTime, server_default=func.now()),
     Column("updated_at", DateTime, server_default=func.now()),
 )
@@ -255,6 +287,21 @@ if "email" not in coordinator_columns:
 if "coordinator_id" not in coordinator_columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE coordinators ADD COLUMN coordinator_id VARCHAR UNIQUE"))
+if "assigned_rooms" not in coordinator_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE coordinators ADD COLUMN assigned_rooms VARCHAR"))
+if "is_active" not in coordinator_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE coordinators ADD COLUMN is_active INTEGER DEFAULT 1"))
+if "last_login" not in coordinator_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE coordinators ADD COLUMN last_login TIMESTAMP"))
+if "created_at" not in coordinator_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE coordinators ADD COLUMN created_at TIMESTAMP DEFAULT NOW()"))
+if "updated_at" not in coordinator_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE coordinators ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()"))
 
 # Seed convenience accounts into the new separated tables (idempotent)
 admin_seeds = [

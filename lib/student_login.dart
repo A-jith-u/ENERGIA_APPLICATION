@@ -28,8 +28,20 @@ class _StudentLoginPageState extends State<StudentLoginPage> {
   final List<String> _departments = ['CSE', 'ECE', 'EEE', 'IT', 'RA', 'ME'];
 
   void _login() {
-    if (_formKey.currentState?.validate() != true) return;
+    if (_formKey.currentState?.validate() != true) {
+      setState(() {
+        _errorMessage = 'Please fill all the credentials correctly';
+      });
+      return;
+    }
     _performLogin();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 
 
@@ -241,6 +253,7 @@ Future<void> _performLogin() async {
                                         label: 'Password (OTP)',
                                         icon: Icons.lock_outline,
                                         obscure: true,
+                                        onSubmit: _login,
                                         validator: (v) {
                                          if (v == null || v.isEmpty) return 'Enter password';
                                          return null;
@@ -316,11 +329,20 @@ Future<void> _performLogin() async {
     required IconData icon,
     bool obscure = false,
     String? Function(String?)? validator,
+    VoidCallback? onSubmit,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: obscure && !_isPasswordVisible,
       validator: validator,
+      enableInteractiveSelection: true,
+      maxLines: 1,
+      onChanged: (_) {
+        setState(() {
+          _errorMessage = null; // Clear error message when user types
+        });
+      },
+      onFieldSubmitted: onSubmit != null ? (_) => onSubmit() : null,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),

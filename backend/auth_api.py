@@ -846,6 +846,99 @@ def login(req: LoginRequest, request: Request):
         # For database or system errors, return generic error
         raise HTTPException(status_code=500, detail="Something went wrong")
 
+@app.post("/coordinator/login")
+def coordinator_login(req: LoginRequest, request: Request):
+    """Dedicated coordinator login endpoint with department validation."""
+    try:
+        client_ip = request.client.host if request.client else "0.0.0.0"
+        
+        with engine.begin() as conn:
+            # Look up coordinator by coordinator_id
+            coordinator_row = conn.execute(
+                text("""
+                    SELECT id, password_hash, name, department, email, coordinator_id, created_at 
+                    FROM coordinators 
+                    WHERE UPPER(coordinator_id)=UPPER(:u)
+                """),
+                {"u": req.username.strip()},
+            ).fetchone()
+            
+            if not coordinator_row:
+                activity_logger.log_activity(
+                    user_id=req.username,
+                    action_type="login",
+                    action_description="Failed coordinator login - user not found",
+                    status="failure",
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            u_id, pw_hash, name, dept, email, coordinator_id, created_at = coordinator_row
+            
+            # Verify password
+            if not PWD_CTX.verify(req.password, pw_hash):
+                activity_logger.log_activity(
+                    user_id=coordinator_id,
+                    user_name=name,
+                    user_role="coordinator",
+                    action_type="login",
+                    action_description="Failed coordinator login - invalid password",
+                    status="failure",
+                    department=dept,
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            # Update last_login timestamp
+            conn.execute(
+                text("UPDATE coordinators SET last_login = NOW() WHERE id = :id"),
+                {"id": u_id}
+            )
+            
+            # Log successful login
+            activity_logger.log_activity(
+                user_id=str(u_id),
+                user_name=name,
+                user_role="coordinator",
+                action_type="login",
+                action_description="Coordinator successfully logged in",
+                status="success",
+                department=dept,
+                ip_address=client_ip,
+            )
+            
+            # Create JWT token
+            payload = {
+                "sub": str(u_id),
+                "username": coordinator_id,
+                "email": email,
+                "name": name,
+                "role": "coordinator",
+                "department": dept,
+                "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+            }
+            
+            token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+            
+            # Return coordinator data with token
+            return {
+                "id": u_id,
+                "coordinator_id": coordinator_id,
+                "name": name,
+                "email": email,
+                "department": dept,
+                "created_at": created_at.isoformat() if created_at else None,
+                "token": token,
+                "token_type": "bearer"
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Coordinator login error: {e}")
+        raise HTTPException(status_code=500, detail="Something went wrong")
+
+
 @app.get("/users/coordinators")
 def get_coordinators():
     """Fetch all coordinators from the database."""
