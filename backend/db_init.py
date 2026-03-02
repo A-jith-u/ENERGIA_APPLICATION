@@ -86,21 +86,35 @@ coordinators_table = Table(
     Column("updated_at", DateTime, server_default=func.now()),
 )
 
+# Updated sensor_data table - matches current production schema
 sensor_table = Table(
     "sensor_data",
     metadata,
     Column("id", BigInteger, primary_key=True),
     Column("ds", DateTime, nullable=False),
     Column("device_id", String),
-    Column("value", Float),
-    Column("voltage", Float, nullable=True),
-    Column("current", Float, nullable=True),
     Column("power", Float, nullable=True),
+    Column("current", Float, nullable=True),
+    Column("power_factor", Float, nullable=True),
+    Column("occupancy", Integer, nullable=True),
+    Column("voltage", Float, nullable=True),
     Column("energy", Float, nullable=True),
     Column("frequency", Float, nullable=True),
-    Column("power_factor", Float, nullable=True),
 )
 
+# New anomaly_logs table for AI detection results
+anomaly_logs_table = Table(
+    "anomaly_logs",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("ds", DateTime(timezone=True), nullable=False),
+    Column("device_id", Text),
+    Column("power", Float),
+    Column("occupancy", Integer),
+    Column("is_anomaly", Integer),
+    Column("anomaly_score", Float),
+    Column("energy_accumulated", Float),
+)
 # ESP32 Raw Data table - stores raw JSON payloads from ESP32 devices
 esp32_raw_data_table = Table(
     "esp32_raw_data",
@@ -327,12 +341,29 @@ student_seeds = [
     # (username, password, ktu_id, dept, year, email)
     ("Ajith", "ajith04", "TVE21CS999", "CSE", "3", "ajith@example.com"),
 ]
-
 with engine.begin() as conn:
     for username, email, name, pwd in admin_seeds:
-        res = conn.execute(select(admins_table.c.id).where(admins_table.c.username == username)).fetchone()
+        # Look up by username OR email so seed is idempotent across identifier changes
+        res = conn.execute(
+            select(admins_table.c.id, admins_table.c.password_hash).where(
+                (admins_table.c.username == username) | (admins_table.c.email == email)
+            )
+        ).fetchone()
         if not res:
             conn.execute(admins_table.insert().values(username=username, email=email, name=name, password_hash=pwd_context.hash(pwd)))
+        else:
+            # If an account exists, verify the current hash matches the seeded password; if not, update it.
+            existing_id, existing_hash = res
+            try:
+                matches = pwd_context.verify(pwd, existing_hash)
+            except Exception:
+                matches = False
+            if not matches:
+                # Overwrite with seeded password hash to ensure predictable dev credentials
+                conn.execute(
+                    text("UPDATE admins SET password_hash = :p WHERE id = :i"),
+                    {"p": pwd_context.hash(pwd), "i": existing_id},
+                )
 
     for email, name, dept, pwd in coordinator_seeds:
         res = conn.execute(select(coordinators_table.c.id).where(coordinators_table.c.email == email)).fetchone()

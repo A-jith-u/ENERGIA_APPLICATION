@@ -38,51 +38,17 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   late DepartmentCustomizationService _customizationService;
   List<String> _accessibleRooms = [];
 
+// 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
   void initState() {
     super.initState();
-    _customizationService = DepartmentCustomizationService();
-    _loadUserAndInitialize();
-  }
-
-  Future<void> _loadUserAndInitialize() async {
-    // Load user from widget or shared preferences
-    if (widget.user != null) {
-      _currentUser = widget.user;
-      _filterRoomsByDepartment();
-      _initializeSecondDropdown();
-      _loadSensorData();
-    } else {
-      // Try to load from shared preferences
-      final prefs = await SharedPreferences.getInstance();
-      final userJson = prefs.getString('current_user');
-      if (userJson != null) {
-        try {
-          final userData = jsonDecode(userJson);
-          _currentUser = EnhancedUser.fromJson(userData);
-          _filterRoomsByDepartment();
-          _initializeSecondDropdown();
-          _loadSensorData();
-        } catch (e) {
-          print('Error loading user: $e');
-        }
-      }
-    }
     
-    // Start refresh timer
-    _dataRefreshTimer = Timer.periodic(
-      const Duration(minutes: 1),
-      (_) => _loadSensorData(),
-    );
-  }
-
-  void _filterRoomsByDepartment() {
-    if (_currentUser == null) return;
+    // Load initial data
+    _loadLiveData(); 
+    _fetchAnomalyAlerts(); 
     
-    // Get rooms accessible to this department
-    _accessibleRooms = _customizationService.getAccessibleRoomsByDepartment(
-      _currentUser!.department,
-    );
+    // Setup the periodic timer for live updates
+    _liveTimer = Timer.periodic(const Duration(minutes: 1), (_) => _loadLiveData());
   }
 
   @override
@@ -91,90 +57,29 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
     super.dispose();
   }
 
-  void _initializeSecondDropdown() {
-    // Get options based on filter type
-    _secondDropdownOptions = RoomDataSimulator.getSecondDropdownOptions(
-      _firstDropdownValue,
-    );
-    
-    // Filter by accessible rooms if user is available
-    if (_currentUser != null && _accessibleRooms.isNotEmpty) {
-      if (_firstDropdownValue == 'all') {
-        // Filter to only show accessible rooms
-        _secondDropdownOptions = _secondDropdownOptions.where((room) {
-          final roomId = room['id'] as String;
-          return _accessibleRooms.contains(roomId);
-        }).toList();
-      } else if (_firstDropdownValue == 'department') {
-        // Show only this user's department
-        final deptName = departmentNames[_currentUser!.department] ?? '';
-        _secondDropdownOptions = _secondDropdownOptions.where((room) {
-          final roomLabel = room['label'] as String? ?? '';
-          return roomLabel.toLowerCase().contains(deptName.toLowerCase()) ||
-                 _accessibleRooms.contains(room['id'] as String);
-        }).toList();
-      }
-    }
-    
-    if (_secondDropdownOptions.isNotEmpty) {
-      _secondDropdownValue = _secondDropdownOptions.first['id'] as String;
-      // If floorwise, also initialize third dropdown
-      if (_firstDropdownValue == 'floorwise') {
-        _initializeThirdDropdown();
-      }
-    }
-  }
+  // Dynamic active rooms tracking
+  final List<Map<String, dynamic>> _allRooms = [
+    {'room': 'CS-404', 'status': 'Normal', 'usage': '5.2 kW', 'isActive': true},
+    {'room': 'CS-Lab 1', 'status': 'High Usage', 'usage': '8.6 kW', 'isActive': true},
+    {'room': 'CS-Lab 2', 'status': 'Moderate', 'usage': '3.4 kW', 'isActive': true},
+    {'room': 'Server Room', 'status': 'Critical System', 'usage': '4.5 kW', 'isActive': true},
+    {'room': 'CS-Faculty Room', 'status': 'Low Usage', 'usage': '5.2 kW', 'isActive': true},
+    {'room': 'CS-Seminar Hall', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-405', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Lab 3', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Study Area', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Conference', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-406', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {'room': 'CS-Library', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+  ];
 
-  void _initializeThirdDropdown() {
-    if (_firstDropdownValue == 'floorwise') {
-      _thirdDropdownOptions = RoomDataSimulator.getClassesByFloor(
-        _secondDropdownValue,
-      );
-      if (_thirdDropdownOptions.isNotEmpty) {
-        _thirdDropdownValue = _thirdDropdownOptions.first['id'] as String;
-      } else {
-        _thirdDropdownValue = '';
-      }
-    }
-  }
-
-  void _onFirstDropdownChanged(String? newValue) {
-    if (newValue == null) return;
-    setState(() {
-      _firstDropdownValue = newValue;
-      _initializeSecondDropdown();
-      if (_firstDropdownValue != 'floorwise') {
-        _thirdDropdownValue = '';
-        _thirdDropdownOptions = [];
-      }
-      _loadSensorData();
-    });
-  }
-
-  void _onSecondDropdownChanged(String? newValue) {
-    if (newValue == null) return;
-    setState(() {
-      _secondDropdownValue = newValue;
-      if (_firstDropdownValue == 'floorwise') {
-        _initializeThirdDropdown();
-      }
-      _loadSensorData();
-    });
-  }
-
-  void _onThirdDropdownChanged(String? newValue) {
-    if (newValue == null) return;
-    setState(() {
-      _thirdDropdownValue = newValue;
-      _loadSensorData();
-    });
-  }
-
-  Future<void> _loadSensorData() async {
-    setState(() {
-      _loadingData = true;
-    });
-
+Widget _buildAnomalyTab() {
+  return _DepartmentAlertsSection(
+    anomalies: _anomalies, 
+    onRefresh: _fetchAnomalyAlerts,
+  );
+}
+  Future<void> _loadLiveData() async {
     try {
       // Determine which room to load data for
       String roomIdToLoad =
@@ -189,25 +94,22 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       } else {
         // For simulated rooms, try database first, then fall back to simulation
         try {
-          await _fetchFromDatabase();
-        } catch (_) {
-          _generateSimulatedData(roomIdToLoad);
-        }
-      }
-    } catch (_) {
-      final roomId =
-          _firstDropdownValue == 'floorwise'
-              ? _thirdDropdownValue
-              : _secondDropdownValue;
-      _generateSimulatedData(roomId);
-    }
+          final resp = await http
+              .get(Uri.parse('$baseUrl/auth/api/sensor-data?limit=60'), headers: {'Content-Type': 'application/json'})
+              .timeout(const Duration(seconds: 6));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            final readings = data['data'] as List? ?? [];
+            if (readings.isEmpty) continue;
 
-    if (mounted) {
-      setState(() {
-        _loadingData = false;
-      });
-    }
-  }
+            double peak = 0;
+            final List<FlSpot> spots = [];
+            for (int i = 0; i < readings.length; i++) {
+              final r = readings[i];
+              final p = (r['power'] as num?)?.toDouble() ?? (r['value'] as num?)?.toDouble() ?? 0;
+              peak = max(peak, p);
+              spots.add(FlSpot(i.toDouble(), p));
+            }
 
   Future<void> _fetchFromDatabase({String? deviceId}) async {
     const apiCandidates = [
@@ -290,10 +192,18 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
         child: _buildPage(_currentIndex, colorScheme),
       ),
       currentIndex: _currentIndex,
-      onBottomNavTapped: (index) {
-        setState(() {
-          _currentIndex = index;
-        });
+     onBottomNavTapped: (index) {
+        if (index == 4) {
+           _performLogout();
+        } else {
+           setState(() {
+             _currentIndex = index;
+           });
+           // --- NEW: Auto-refresh data when the user enters the Alerts tab ---
+           if (index == 3) {
+             _fetchAnomalyAlerts();
+           }
+        }
       },
       bottomNavItems: const [
         BottomNavigationBarItem(
@@ -320,84 +230,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
     );
   }
 
-  Widget _buildDepartmentDashboard(ColorScheme colorScheme) {
-    final departmentName = departmentNames[_currentUser!.department] ?? 'Department';
-    final departmentColor = departmentColors[_currentUser!.department] ?? Colors.blue;
-    
-    return DashboardScaffold(
-      title: '🏢 $departmentName ENERGIA',
-      actions: [
-        // Department indicator
-        Container(
-          margin: const EdgeInsets.only(right: 8),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: departmentColor.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: departmentColor, width: 1),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                departmentIcons[_currentUser!.department],
-                size: 16,
-                color: departmentColor,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                departmentName,
-                style: TextStyle(
-                  color: departmentColor,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.logout),
-          tooltip: 'Logout',
-          onPressed: _performLogout,
-        ),
-      ],
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 300),
-        child: _buildPage(_currentIndex, colorScheme),
-      ),
-      currentIndex: _currentIndex,
-      onBottomNavTapped: (index) {
-        setState(() {
-          _currentIndex = index;
-        });
-      },
-      bottomNavItems: const [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.dashboard_outlined),
-          activeIcon: Icon(Icons.dashboard),
-          label: 'Overview',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.room_outlined),
-          activeIcon: Icon(Icons.room),
-          label: 'Rooms',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.analytics_outlined),
-          activeIcon: Icon(Icons.analytics),
-          label: 'Analytics',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.notifications_outlined),
-          activeIcon: Icon(Icons.notifications),
-          label: 'Alerts',
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPage(int index, ColorScheme scheme) {
+Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
         return _CoordinatorOverviewPage(
@@ -419,7 +252,11 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       case 2:
         return const _DepartmentAnalyticsSection();
       case 3:
-        return const _DepartmentAlertsSection();
+        // --- UPDATED: Pass the AI anomalies and refresh logic here ---
+        return _DepartmentAlertsSection(
+          anomalies: _anomalies, 
+          onRefresh: _fetchAnomalyAlerts,
+        );
       default:
         return const SizedBox.shrink();
     }
@@ -459,7 +296,7 @@ class _CoordinatorOverviewPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
+   
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -845,11 +682,76 @@ class _CoordinatorOverviewPage extends StatelessWidget {
           Center(
             child: Column(
               children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text(
-                  'Loading sensor data...',
-                  style: theme.textTheme.bodyLarge,
+                SizedBox(
+                  width: cardWidth,
+                  child: LiveEnergyMeter(
+                    currentPower: latestPower,
+                    maxCapacity: 10.0,
+                    label: 'CS-Lab 1',
+                    status: liveLoading ? 'Loading...' : (latestPower > 0 ? 'Active Usage' : 'Idle'),
+                    showTrend: true,
+                    trendPercentage: latestPower > 5 ? 5 : -2,
+                  ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: LiveEnergyMeter(
+                    currentPower: latestPower,
+                    maxCapacity: 8.0,
+                    label: 'Server Room',
+                    status: liveLoading ? 'Loading...' : (latestPower > 0 ? 'Active Usage' : 'Idle'),
+                    showTrend: true,
+                    trendPercentage: latestPower > 5 ? 5 : -2,
+                  ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: EnergyDistributionDonut(
+                    labels: const ['AC Systems', 'Lighting', 'Lab Equipment', 'Server', 'Other'],
+                    values: const [32.5, 18.3, 28.7, 15.2, 5.3],
+                    title: 'Department Energy Distribution',
+                  ),
+                ),
+                SizedBox(
+                  width: cardWidth,
+                  child: ComparativeBarChart(
+                    labels: const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+                    values: const [156.2, 162.4, 158.9, 171.3, 165.8, 98.4, 102.6],
+                    title: 'Weekly Department Usage (kWh)',
+                    unit: 'kWh',
+                    maxY: 180.0,
+                  ),
+                ),
+                SizedBox(
+                  width: constraints.maxWidth,
+                  
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Department Energy Flow (Last 24 Hours)',
+                        style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 12),
+                      ResponsiveLineChart(
+                        spots: liveSeries.isNotEmpty
+                            ? liveSeries
+                            : [
+                                const FlSpot(0, 8.5), const FlSpot(1, 9.2), const FlSpot(2, 8.8), const FlSpot(3, 12.5),
+                                const FlSpot(4, 15.2), const FlSpot(5, 18.4), const FlSpot(6, 19.5), const FlSpot(7, 17.8),
+                                const FlSpot(8, 16.2), const FlSpot(9, 14.5), const FlSpot(10, 13.2), const FlSpot(11, 12.8),
+                                const FlSpot(12, 14.5), const FlSpot(13, 15.8), const FlSpot(14, 16.2), const FlSpot(15, 17.1),
+                                const FlSpot(16, 18.4), const FlSpot(17, 16.9), const FlSpot(18, 15.3), const FlSpot(19, 13.5),
+                                const FlSpot(20, 12.2), const FlSpot(21, 10.8), const FlSpot(22, 9.5), const FlSpot(23, 8.8),
+                              ],
+                        title: liveSeries.isNotEmpty ? 'Department Load Profile (live)' : 'Department Load Profile',
+                        unit: 'kW',
+                        maxY: (livePeak * 1.2).clamp(10.0, 25.0),
+                        isMonthly: false,
+                        lineColor: EnergyColorScheme.infoTeal,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -933,53 +835,91 @@ class _CoordinatorOverviewPage extends StatelessWidget {
     );
   }
 
-  Widget _buildMetricCard(
-    BuildContext context,
-    String label,
-    String value,
-    String unit,
-    IconData icon,
-    Color color,
-  ) {
-    final theme = Theme.of(context);
-    return SizedBox(
-      width: 160,
-      child: Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: color, size: 24),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '$value $unit'.trim(),
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.outline,
-                ),
-              ),
+Widget _buildStatCard(
+  BuildContext context,
+  String label,
+  String value,
+  String unit,
+  IconData icon,
+  Color color,
+) {
+  final theme = Theme.of(context);
+  
+  // Calculate width to fit 2 cards per row in a Wrap, minus spacing
+  //final cardWidth = (MediaQuery.of(context).size.width / 2) - 24;
+ final cardWidth = MediaQuery.of(context).size.width - 70;
+  // REMOVED: Expanded widget (Fixes the crash)
+  return SizedBox(
+    width: cardWidth,
+    child: Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              color.withOpacity(0.08),
+              color.withOpacity(0.02),
             ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
         ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+              maxLines: 1, // Reduced to 1 to keep cards aligned
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
+                  value,
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Flexible( // Added Flexible to prevent overflow of units
+                  child: Text(
+                    unit,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: Colors.grey.shade600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-    );
-  }
+    ),
+  );
+}
+}
 
   Widget _buildTimeSeriesGraphs(BuildContext context, ThemeData theme) {
     if (timeSeriesData == null || timeSeriesData!.isEmpty) {
@@ -1206,13 +1146,66 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
 }
 
 class _DepartmentAlertsSection extends StatelessWidget {
-  const _DepartmentAlertsSection();
+  final List<dynamic> anomalies;
+  final VoidCallback onRefresh;
+
+  const _DepartmentAlertsSection({
+    super.key, 
+    required this.anomalies, 
+    required this.onRefresh
+  });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Center(
-      child: Text('Alerts Section', style: theme.textTheme.headlineSmall),
+
+    return RefreshIndicator(
+      onRefresh: () async => onRefresh(),
+      child: anomalies.isEmpty
+          ? const Center(child: Text("No anomaly alerts detected."))
+          : ListView.builder(
+              padding: const EdgeInsets.all(8),
+              itemCount: anomalies.length,
+              itemBuilder: (context, index) {
+                final alert = anomalies[index];
+                return Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: Colors.red.withOpacity(0.1),
+                      child: const Icon(Icons.warning_amber_rounded, color: Colors.red),
+                    ),
+                    title: Text(
+                      "Anomaly in ${alert['device_id']}",
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      "Power: ${alert['power']}W | Occupancy: ${alert['occupancy']}\nScore: ${alert['score']}",
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      // Logic to show alert details or navigate
+                      _showAlertDialog(context, alert);
+                    },
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
+  void _showAlertDialog(BuildContext context, dynamic alert) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text("Alert Detail: ${alert['device_id']}"),
+        content: Text("An unusual power consumption of ${alert['power']}W was detected when occupancy was ${alert['occupancy']}.\n\nTimestamp: ${alert['timestamp']}"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Dismiss")),
+        ],
+      ),
     );
   }
 }

@@ -10,7 +10,9 @@ import json
 from decimal import Decimal
 
 from .config import get_db_url
+from fastapi import FastAPI
 
+app = FastAPI() # Make sure this line exists!
 router = APIRouter()
 engine = create_engine(get_db_url())
 
