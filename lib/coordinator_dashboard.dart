@@ -5,9 +5,11 @@ import 'package:energia/models/room_data_simulator.dart';
 import 'package:energia/models/user_role_model.dart';
 import 'package:energia/services/department_customization_service.dart';
 import 'package:energia/widgets/department_dashboard_widget.dart';
+import 'package:energia/widgets/energy_visualization_widgets.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'role_selection_page.dart';
@@ -34,9 +36,11 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   List<Map<String, dynamic>> _thirdDropdownOptions =
       []; // For floorwise third dropdown
   Timer? _dataRefreshTimer;
+  Timer? _liveTimer;
   EnhancedUser? _currentUser;
   late DepartmentCustomizationService _customizationService;
   List<String> _accessibleRooms = [];
+  List<Map<String, dynamic>> _anomalies = [];
 
 // 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
@@ -54,6 +58,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   @override
   void dispose() {
     _dataRefreshTimer?.cancel();
+    _liveTimer?.cancel();
     super.dispose();
   }
 
@@ -92,24 +97,24 @@ Widget _buildAnomalyTab() {
         final deviceId = RoomDataSimulator.getDeviceId(roomIdToLoad);
         await _fetchFromDatabase(deviceId: deviceId);
       } else {
-        // For simulated rooms, try database first, then fall back to simulation
-        try {
-          final resp = await http
-              .get(Uri.parse('$baseUrl/auth/api/sensor-data?limit=60'), headers: {'Content-Type': 'application/json'})
-              .timeout(const Duration(seconds: 6));
-          if (resp.statusCode == 200) {
-            final data = jsonDecode(resp.body);
-            final readings = data['data'] as List? ?? [];
-            if (readings.isEmpty) continue;
-
-            double peak = 0;
-            final List<FlSpot> spots = [];
-            for (int i = 0; i < readings.length; i++) {
-              final r = readings[i];
-              final p = (r['power'] as num?)?.toDouble() ?? (r['value'] as num?)?.toDouble() ?? 0;
-              peak = max(peak, p);
-              spots.add(FlSpot(i.toDouble(), p));
-            }
+        // For simulated rooms, use fallback to simulation
+        _generateSimulatedData(roomIdToLoad);
+      }
+    } catch (e) {
+      // If any error occurs, fall back to simulated data
+      String roomIdToLoad =
+          _firstDropdownValue == 'floorwise'
+              ? _thirdDropdownValue
+              : _secondDropdownValue;
+      _generateSimulatedData(roomIdToLoad);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingData = false;
+        });
+      }
+    }
+  }
 
   Future<void> _fetchFromDatabase({String? deviceId}) async {
     const apiCandidates = [
@@ -156,6 +161,128 @@ Widget _buildAnomalyTab() {
   void _generateSimulatedData(String roomId) {
     _sensorData = RoomDataSimulator.generateSensorData(roomId);
     _timeSeriesData = RoomDataSimulator.generateTimeSeriesData(roomId, 24);
+  }
+
+  Future<void> _fetchAnomalyAlerts() async {
+    // Fetch anomaly alerts from backend
+    try {
+      const apiCandidates = [
+        'http://10.0.2.2:5000',
+        'http://192.168.160.1:5000',
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+      ];
+
+      for (final baseUrl in apiCandidates) {
+        try {
+          final resp = await http
+              .get(
+                Uri.parse('$baseUrl/api/anomalies'),
+                headers: {'Content-Type': 'application/json'},
+              )
+              .timeout(const Duration(seconds: 6));
+
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            final anomalies = data['anomalies'] as List? ?? [];
+            if (mounted) {
+              setState(() {
+                _anomalies = List<Map<String, dynamic>>.from(
+                  anomalies.whereType<Map<String, dynamic>>(),
+                );
+              });
+            }
+            return;
+          }
+        } catch (_) {
+          continue;
+        }
+      }
+    } catch (e) {
+      // Ignore errors silently
+    }
+  }
+
+  void _onFirstDropdownChanged(String? value) {
+    if (value != null && mounted) {
+      setState(() {
+        _firstDropdownValue = value;
+        _loadingData = true;
+      });
+      _loadLiveData();
+    }
+  }
+
+  void _onSecondDropdownChanged(String? value) {
+    if (value != null && mounted) {
+      setState(() {
+        _secondDropdownValue = value;
+        _loadingData = true;
+      });
+      _loadLiveData();
+    }
+  }
+
+  void _onThirdDropdownChanged(String? value) {
+    if (value != null && mounted) {
+      setState(() {
+        _thirdDropdownValue = value;
+        _loadingData = true;
+      });
+      _loadLiveData();
+    }
+  }
+
+  Widget _buildDepartmentDashboard(ColorScheme scheme) {
+    return DashboardScaffold(
+      title: '🏢 ${_currentUser?.department ?? "Coordinator"} Dashboard',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.logout),
+          tooltip: 'Logout',
+          onPressed: _performLogout,
+        ),
+      ],
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        child: _buildPage(_currentIndex, scheme),
+      ),
+      currentIndex: _currentIndex,
+      onBottomNavTapped: (index) {
+        if (index == 4) {
+          _performLogout();
+        } else {
+          setState(() {
+            _currentIndex = index;
+          });
+          if (index == 3) {
+            _fetchAnomalyAlerts();
+          }
+        }
+      },
+      bottomNavItems: const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.dashboard_outlined),
+          activeIcon: Icon(Icons.dashboard),
+          label: 'Overview',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.room_outlined),
+          activeIcon: Icon(Icons.room),
+          label: 'Rooms',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.analytics_outlined),
+          activeIcon: Icon(Icons.analytics),
+          label: 'Analytics',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.notifications_outlined),
+          activeIcon: Icon(Icons.notifications),
+          label: 'Alerts',
+        ),
+      ],
+    );
   }
 
   void _performLogout() {
@@ -296,6 +423,9 @@ class _CoordinatorOverviewPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    const cardWidth = 500.0;
+    final latestPower = sensorData?['power']?.toDouble() ?? 0.0;
+    final liveLoading = loadingData;
    
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -723,34 +853,36 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                   ),
                 ),
                 SizedBox(
-                  width: constraints.maxWidth,
-                  
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Department Energy Flow (Last 24 Hours)',
-                        style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                  width: cardWidth,
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Department Energy Flow (Last 24 Hours)',
+                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 12),
+                          ResponsiveLineChart(
+                            spots: const [
+                                  FlSpot(0, 8.5), FlSpot(1, 9.2), FlSpot(2, 8.8), FlSpot(3, 12.5),
+                                  FlSpot(4, 15.2), FlSpot(5, 18.4), FlSpot(6, 19.5), FlSpot(7, 17.8),
+                                  FlSpot(8, 16.2), FlSpot(9, 14.5), FlSpot(10, 13.2), FlSpot(11, 12.8),
+                                  FlSpot(12, 14.5), FlSpot(13, 15.8), FlSpot(14, 16.2), FlSpot(15, 17.1),
+                                  FlSpot(16, 18.4), FlSpot(17, 16.9), FlSpot(18, 15.3), FlSpot(19, 13.5),
+                                  FlSpot(20, 12.2), FlSpot(21, 10.8), FlSpot(22, 9.5), FlSpot(23, 8.8),
+                                ],
+                            title: 'Department Load Profile',
+                            unit: 'kW',
+                            maxY: 25.0,
+                            isMonthly: false,
+                            lineColor: EnergyColorScheme.infoTeal,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 12),
-                      ResponsiveLineChart(
-                        spots: liveSeries.isNotEmpty
-                            ? liveSeries
-                            : [
-                                const FlSpot(0, 8.5), const FlSpot(1, 9.2), const FlSpot(2, 8.8), const FlSpot(3, 12.5),
-                                const FlSpot(4, 15.2), const FlSpot(5, 18.4), const FlSpot(6, 19.5), const FlSpot(7, 17.8),
-                                const FlSpot(8, 16.2), const FlSpot(9, 14.5), const FlSpot(10, 13.2), const FlSpot(11, 12.8),
-                                const FlSpot(12, 14.5), const FlSpot(13, 15.8), const FlSpot(14, 16.2), const FlSpot(15, 17.1),
-                                const FlSpot(16, 18.4), const FlSpot(17, 16.9), const FlSpot(18, 15.3), const FlSpot(19, 13.5),
-                                const FlSpot(20, 12.2), const FlSpot(21, 10.8), const FlSpot(22, 9.5), const FlSpot(23, 8.8),
-                              ],
-                        title: liveSeries.isNotEmpty ? 'Department Load Profile (live)' : 'Department Load Profile',
-                        unit: 'kW',
-                        maxY: (livePeak * 1.2).clamp(10.0, 25.0),
-                        isMonthly: false,
-                        lineColor: EnergyColorScheme.infoTeal,
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ],
@@ -835,96 +967,94 @@ class _CoordinatorOverviewPage extends StatelessWidget {
     );
   }
 
-Widget _buildStatCard(
-  BuildContext context,
-  String label,
-  String value,
-  String unit,
-  IconData icon,
-  Color color,
-) {
-  final theme = Theme.of(context);
-  
-  // Calculate width to fit 2 cards per row in a Wrap, minus spacing
-  //final cardWidth = (MediaQuery.of(context).size.width / 2) - 24;
- final cardWidth = MediaQuery.of(context).size.width - 70;
-  // REMOVED: Expanded widget (Fixes the crash)
-  return SizedBox(
-    width: cardWidth,
-    child: Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            colors: [
-              color.withOpacity(0.08),
-              color.withOpacity(0.02),
+  Widget _buildMetricCard(
+    BuildContext context,
+    String label,
+    String value,
+    String unit,
+    IconData icon,
+    Color color,
+  ) {
+    final theme = Theme.of(context);
+    final cardWidth = (MediaQuery.of(context).size.width / 2) - 28;
+    
+    return SizedBox(
+      width: cardWidth,
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                color.withOpacity(0.08),
+                color.withOpacity(0.02),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 24),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    value,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      unit,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
             ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
           ),
         ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: Colors.grey.shade600,
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 1, // Reduced to 1 to keep cards aligned
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(
-                  value,
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Flexible( // Added Flexible to prevent overflow of units
-                  child: Text(
-                    unit,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: Colors.grey.shade600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
       ),
-    ),
-  );
-}
-}
+    );
+  }
 
   Widget _buildTimeSeriesGraphs(BuildContext context, ThemeData theme) {
     if (timeSeriesData == null || timeSeriesData!.isEmpty) {
       return const SizedBox.shrink();
     }
+
+
 
     final List<FlSpot> powerSpots = [];
     final List<FlSpot> currentSpots = [];
@@ -1115,7 +1245,7 @@ Widget _buildStatCard(
       context: context,
       barrierDismissible: true,
       builder: (BuildContext dialogContext) {
-        return ThresholdSettingsDialog(theme: theme, scheme: scheme);
+        return ThresholdSettingsDialog(theme: theme, scheme: this.scheme);
       },
     );
   }
