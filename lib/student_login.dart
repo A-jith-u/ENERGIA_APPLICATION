@@ -1,5 +1,5 @@
 // Student login UI page. Performs simple username/password login against
-// the backend `/auth/login` endpoint and stores the JWT token locally.
+// the backend `/login` endpoint and stores the JWT token locally.
 // Uses `lib/services/api.dart` for HTTP requests and `SharedPreferences` for persistence.
 import 'dart:ui';
 

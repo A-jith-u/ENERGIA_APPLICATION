@@ -38,7 +38,9 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   Timer? _dataRefreshTimer;
   Timer? _liveTimer;
   EnhancedUser? _currentUser;
-  late DepartmentCustomizationService _customizationService;
+  String? _userDepartment; // Store department for filtering
+  final DepartmentCustomizationService _customizationService =
+      DepartmentCustomizationService();
   List<String> _accessibleRooms = [];
   List<Map<String, dynamic>> _anomalies = [];
 
@@ -47,12 +49,87 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   void initState() {
     super.initState();
     
-    // Load initial data
+    // Extract department from the passed user or from saved preferences
+    _currentUser = widget.user;
+    if (_currentUser?.department != null) {
+      _userDepartment = _currentUser!.department!.name;
+    } else {
+      // Fallback to shared preferences if available
+      _loadUserDepartmentFromPrefs();
+    }
+    
+    // Load initial data for both room view and analytics
     _loadLiveData(); 
+    _loadDepartmentAnalyticsData();
     _fetchAnomalyAlerts(); 
     
-    // Setup the periodic timer for live updates
-    _liveTimer = Timer.periodic(const Duration(minutes: 1), (_) => _loadLiveData());
+    // Setup the periodic timer for live updates (every 15 seconds for analytics)
+    _liveTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _loadDepartmentAnalyticsData(); // Update analytics data regularly
+      _fetchAnomalyAlerts();
+    });
+  }
+  
+  Future<void> _loadUserDepartmentFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final deptJson = prefs.getString('user_department');
+      if (deptJson != null) {
+        final deptMap = jsonDecode(deptJson) as Map<String, dynamic>;
+        setState(() {
+          _userDepartment = deptMap['name'] ?? deptMap['id'];
+        });
+      }
+    } catch (e) {
+      // Silent fail - will use null department which means show all
+    }
+  }
+
+  Future<void> _loadDepartmentAnalyticsData() async {
+    /// Fetch aggregate analytics data for the entire department
+    try {
+      const apiCandidates = [
+        'http://10.0.2.2:5000',
+        'http://192.168.160.1:5000',
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+      ];
+
+      for (final baseUrl in apiCandidates) {
+        try {
+          String queryString = '/sensor-data?limit=100';
+          if (_userDepartment != null && _userDepartment!.isNotEmpty) {
+            queryString += '&department=${Uri.encodeComponent(_userDepartment!)}';
+          }
+
+          final resp = await http
+              .get(
+                Uri.parse('$baseUrl$queryString'),
+                headers: {'Content-Type': 'application/json'},
+              )
+              .timeout(const Duration(seconds: 6));
+
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            final readings = data['data'] as List? ?? [];
+            
+            if (readings.isNotEmpty && mounted) {
+              setState(() {
+                _sensorData = readings.first as Map<String, dynamic>;
+                _timeSeriesData = List<Map<String, dynamic>>.from(
+                  readings.whereType<Map<String, dynamic>>(),
+                );
+              });
+            }
+            return;
+          }
+        } catch (_) {
+          continue;
+        }
+      }
+    } catch (e) {
+      // Silent fail
+    }
   }
 
   @override
@@ -126,11 +203,16 @@ Widget _buildAnomalyTab() {
 
     for (final baseUrl in apiCandidates) {
       try {
-        // Build query with device_id if provided
-        final queryString =
-            deviceId != null
-                ? '/api/sensor-data?device_id=$deviceId&limit=24'
-                : '/api/sensor-data?limit=24';
+        // Build query with device_id and department if provided
+        String queryString = '/sensor-data?limit=24';
+        
+        if (deviceId != null) {
+          queryString += '&device_id=$deviceId';
+        }
+        
+        if (_userDepartment != null && _userDepartment!.isNotEmpty) {
+          queryString += '&department=${Uri.encodeComponent(_userDepartment!)}';
+        }
 
         final resp = await http
             .get(
@@ -164,7 +246,7 @@ Widget _buildAnomalyTab() {
   }
 
   Future<void> _fetchAnomalyAlerts() async {
-    // Fetch anomaly alerts from backend
+    // Fetch anomaly alerts from backend, filtered by department
     try {
       const apiCandidates = [
         'http://10.0.2.2:5000',
@@ -175,16 +257,22 @@ Widget _buildAnomalyTab() {
 
       for (final baseUrl in apiCandidates) {
         try {
+          // Build query with department if available
+          String queryString = '/anomalies';
+          if (_userDepartment != null && _userDepartment!.isNotEmpty) {
+            queryString += '?department=${Uri.encodeComponent(_userDepartment!)}';
+          }
+          
           final resp = await http
               .get(
-                Uri.parse('$baseUrl/api/anomalies'),
+                Uri.parse('$baseUrl$queryString'),
                 headers: {'Content-Type': 'application/json'},
               )
               .timeout(const Duration(seconds: 6));
 
           if (resp.statusCode == 200) {
             final data = jsonDecode(resp.body);
-            final anomalies = data['anomalies'] as List? ?? [];
+            final anomalies = data is List ? data : (data['anomalies'] as List? ?? []);
             if (mounted) {
               setState(() {
                 _anomalies = List<Map<String, dynamic>>.from(
@@ -375,14 +463,25 @@ Widget _buildPage(int index, ColorScheme scheme) {
           loadingData: _loadingData,
         );
       case 1:
-        return const _DepartmentRoomsSection();
+        return _DepartmentRoomsSection(
+          sensorData: _sensorData,
+          timeSeriesData: _timeSeriesData,
+          department: _userDepartment,
+        );
       case 2:
-        return const _DepartmentAnalyticsSection();
+        return _DepartmentAnalyticsSection(
+          sensorData: _sensorData,
+          timeSeriesData: _timeSeriesData,
+          anomalies: _anomalies,
+          loadingData: _loadingData,
+          department: _userDepartment,
+        );
       case 3:
         // --- UPDATED: Pass the AI anomalies and refresh logic here ---
         return _DepartmentAlertsSection(
           anomalies: _anomalies, 
           onRefresh: _fetchAnomalyAlerts,
+          department: _userDepartment,
         );
       default:
         return const SizedBox.shrink();
@@ -1251,26 +1350,956 @@ class _CoordinatorOverviewPage extends StatelessWidget {
   }
 }
 
-class _DepartmentRoomsSection extends StatelessWidget {
-  const _DepartmentRoomsSection();
+class _DepartmentRoomsSection extends StatefulWidget {
+  final Map<String, dynamic>? sensorData;
+  final List<Map<String, dynamic>>? timeSeriesData;
+  final String? department; // Department to filter rooms
+
+  const _DepartmentRoomsSection({
+    required this.sensorData,
+    required this.timeSeriesData,
+    this.department,
+  });
+
+  @override
+  State<_DepartmentRoomsSection> createState() => _DepartmentRoomsSectionState();
+}
+
+class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
+  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _thresholdController = TextEditingController();
+
+  List<Map<String, dynamic>> _rooms = [];
+  List<Map<String, dynamic>> _filteredRooms = [];
+  List<int> _floors = [];
+  String _selectedFloor = 'all';
+  bool _loading = true;
+  
+  // Live data tracking for each room
+  Map<String, Map<String, dynamic>> _roomLiveData = {};
+  Timer? _liveDataTimer;
+
+  static const List<String> _apiCandidates = [
+    'http://10.0.2.2:5000',
+    'http://192.168.160.1:5000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5000',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRooms();
+    _searchController.addListener(_applyFilters);
+    
+    // Setup live data refresh timer
+    _liveDataTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _fetchLiveDataForDepartment();
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _thresholdController.dispose();
+    _liveDataTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadRooms() async {
+    setState(() => _loading = true);
+    for (final baseUrl in _apiCandidates) {
+      try {
+        String queryString = '/rooms';
+        if (widget.department != null && widget.department!.isNotEmpty) {
+          queryString += '?department=${Uri.encodeComponent(widget.department!)}';
+        }
+        
+        final resp = await http
+            .get(
+              Uri.parse('$baseUrl$queryString'),
+              headers: {'Content-Type': 'application/json'},
+            )
+            .timeout(const Duration(seconds: 6));
+
+        if (resp.statusCode == 200) {
+          final payload = jsonDecode(resp.body) as Map<String, dynamic>;
+          final list = (payload['data'] as List? ?? const [])
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+
+          final floors = list
+              .map((r) => r['floor_number'])
+              .whereType<num>()
+              .map((v) => v.toInt())
+              .toSet()
+              .toList()
+            ..sort();
+
+          if (!mounted) return;
+          setState(() {
+            _rooms = list;
+            _floors = floors;
+            _applyFilters();
+            _loading = false;
+          });
+          
+          // Fetch live data for all rooms
+          await _fetchLiveDataForDepartment();
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _rooms = [];
+      _filteredRooms = [];
+      _floors = [];
+      _loading = false;
+    });
+  }
+
+  Future<void> _fetchLiveDataForDepartment() async {
+    if (widget.department == null || widget.department!.isEmpty) return;
+    
+    for (final baseUrl in _apiCandidates) {
+      try {
+        final queryString = '/sensor-data?limit=100&department=${Uri.encodeComponent(widget.department!)}';
+        
+        final resp = await http
+            .get(
+              Uri.parse('$baseUrl$queryString'),
+              headers: {'Content-Type': 'application/json'},
+            )
+            .timeout(const Duration(seconds: 6));
+
+        if (resp.statusCode == 200) {
+          final payload = jsonDecode(resp.body) as Map<String, dynamic>;
+          final readings = (payload['data'] as List? ?? const [])
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+
+          // Group readings by device_id (room)
+          Map<String, Map<String, dynamic>> groupedData = {};
+          for (final reading in readings) {
+            final deviceId = reading['device_id']?.toString() ?? 'unknown';
+            // Keep the most recent reading for each device
+            if (!groupedData.containsKey(deviceId)) {
+              groupedData[deviceId] = reading;
+            }
+          }
+
+          if (mounted) {
+            setState(() {
+              _roomLiveData = groupedData;
+            });
+          }
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
+  void _applyFilters() {
+    final query = _searchController.text.trim().toLowerCase();
+    final floorFilter = _selectedFloor;
+
+    _filteredRooms = _rooms.where((room) {
+      final roomName = (room['room_name'] ?? '').toString().toLowerCase();
+      final roomId = (room['room_id'] ?? '').toString().toLowerCase();
+      final floorNum = (room['floor_number'] ?? '').toString();
+
+      final matchesFloor = floorFilter == 'all' || floorNum == floorFilter;
+      final matchesQuery =
+          query.isEmpty || roomName.contains(query) || roomId.contains(query);
+
+      return matchesFloor && matchesQuery;
+    }).toList();
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
+
+  String _statusForRoom(Map<String, dynamic> room) {
+    final roomId = (room['room_id'] ?? '').toString();
+    final threshold = _toDouble(room['threshold']);
+    final liveData = _roomLiveData[roomId];
+    final currentPower = liveData != null 
+        ? _toDouble(liveData['power'] ?? liveData['value'])
+        : 0.0;
+
+    if (currentPower <= 0) return 'Idle';
+    if (threshold > 0 && currentPower > threshold) return 'High Usage';
+    return 'Normal';
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'High Usage':
+        return Colors.red;
+      case 'Idle':
+        return Colors.grey;
+      default:
+        return Colors.green;
+    }
+  }
+
+  Future<void> _editThreshold(Map<String, dynamic> room) async {
+    final roomId = (room['room_id'] ?? '').toString();
+    final roomName = (room['room_name'] ?? roomId).toString();
+    _thresholdController.text = (room['threshold'] ?? '').toString();
+
+    final newVal = await showDialog<double>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Update Threshold • $roomName'),
+          content: TextField(
+            controller: _thresholdController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Threshold',
+              suffixText: 'kW',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final parsed = double.tryParse(_thresholdController.text.trim());
+                Navigator.pop(context, parsed);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (newVal == null || newVal <= 0) return;
+
+    for (final baseUrl in _apiCandidates) {
+      try {
+        final resp = await http
+            .put(
+              Uri.parse('$baseUrl/rooms/$roomId/threshold?threshold=$newVal'),
+              headers: {'Content-Type': 'application/json'},
+            )
+            .timeout(const Duration(seconds: 6));
+
+        if (resp.statusCode == 200) {
+          await _loadRooms();
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('✓ Threshold updated successfully')),
+          );
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Failed to update threshold')),
+    );
+  }
+
+  Widget _buildRoomLiveMetrics(Map<String, dynamic> room) {
+    final roomId = (room['room_id'] ?? '').toString();
+    final liveData = _roomLiveData[roomId];
+    
+    if (liveData == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Text(
+          'Waiting for live data...',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontStyle: FontStyle.italic,
+            color: Colors.grey,
+          ),
+        ),
+      );
+    }
+
+    final power = _toDouble(liveData['power'] ?? liveData['value']);
+    final voltage = _toDouble(liveData['voltage']);
+    final current = _toDouble(liveData['current']);
+    final energy = _toDouble(liveData['energy']);
+    final threshold = _toDouble(room['threshold']);
+    final utilization = threshold > 0 ? (power / threshold * 100).clamp(0, 999) : 0.0;
+
+    return Wrap(
+      spacing: 16,
+      runSpacing: 8,
+      children: [
+        _buildMetricChip('⚡ Power', '${power.toStringAsFixed(2)} kW', Colors.red),
+        _buildMetricChip('🔋 Energy', '${energy.toStringAsFixed(2)} kWh', Colors.green),
+        _buildMetricChip('⚙️ Current', '${current.toStringAsFixed(2)} A', Colors.orange),
+        _buildMetricChip('📊 Voltage', '${voltage.toStringAsFixed(1)} V', Colors.blue),
+        _buildMetricChip('📈 Usage', '${utilization.toStringAsFixed(1)}%', 
+          utilization > 100 ? Colors.red : utilization > 75 ? Colors.orange : Colors.green),
+      ],
+    );
+  }
+
+  Widget _buildMetricChip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        border: Border.all(color: color.withOpacity(0.3)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11)),
+          const SizedBox(height: 2),
+          Text(value, style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: color,
+          )),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Center(
-      child: Text('Rooms Section', style: theme.textTheme.headlineSmall),
+    final scheme = theme.colorScheme;
+
+    final totalRooms = _rooms.length;
+    final visibleRooms = _filteredRooms.length;
+    final highUsageCount = _filteredRooms
+        .where((room) => _statusForRoom(room) == 'High Usage')
+        .length;
+    final floorsCount = _floors.length;
+
+    return RefreshIndicator(
+      onRefresh: _loadRooms,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            'Rooms Management',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            widget.department != null 
+              ? 'Monitor ${widget.department} department rooms with live energy metrics'
+              : 'Monitor rooms with live energy metrics',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // KPI Cards
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _roomKpiCard(context, 'Total Rooms', totalRooms.toString(), Icons.meeting_room_outlined, Colors.blue),
+              _roomKpiCard(context, 'Visible', visibleRooms.toString(), Icons.filter_list, Colors.indigo),
+              _roomKpiCard(context, 'Floors', floorsCount.toString(), Icons.apartment, Colors.teal),
+              _roomKpiCard(context, 'High Usage', highUsageCount.toString(), Icons.warning_amber_rounded, 
+                highUsageCount > 0 ? Colors.red : Colors.green),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+          
+          // Filter and Controls
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 300,
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        labelText: 'Search room name or ID',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 180,
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedFloor,
+                      decoration: const InputDecoration(
+                        labelText: 'Floor',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        const DropdownMenuItem(value: 'all', child: Text('All Floors')),
+                        ..._floors.map(
+                          (floor) => DropdownMenuItem(
+                            value: floor.toString(),
+                            child: Text('Floor $floor'),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        _selectedFloor = value ?? 'all';
+                        _applyFilters();
+                      },
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      _loadRooms();
+                      _fetchLiveDataForDepartment();
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Refresh'),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () => showDialog(
+                      context: context,
+                      builder: (_) => ThresholdSettingsDialog(theme: theme, scheme: scheme),
+                    ),
+                    icon: const Icon(Icons.tune),
+                    label: const Text('Bulk Threshold Settings'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_filteredRooms.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Center(
+                child: Text(
+                  'No rooms found for selected filters',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+            )
+          else
+            ..._filteredRooms.map((room) {
+              final status = _statusForRoom(room);
+              final color = _statusColor(status);
+              final roomId = (room['room_id'] ?? '').toString();
+              final roomName = (room['room_name'] ?? roomId).toString();
+              final floor = (room['floor_number'] ?? '-').toString();
+
+              return Card(
+                elevation: 2,
+                margin: const EdgeInsets.only(bottom: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Room Header
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  roomName,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'ID: $roomId • Floor: $floor',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: color.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              status,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: color,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      
+                      // Live Metrics
+                      _buildRoomLiveMetrics(room),
+                      
+                      const SizedBox(height: 12),
+                      
+                      // Action Buttons
+                      Row(
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => _editThreshold(room),
+                            icon: const Icon(Icons.edit, size: 18),
+                            label: const Text('Edit Threshold'),
+                          ),
+                          const SizedBox(width: 10),
+                          TextButton.icon(
+                            onPressed: () {
+                              final liveData = _roomLiveData[roomId];
+                              if (liveData != null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Last update: ${liveData['timestamp'] ?? 'Just now'}')),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.info_outline, size: 18),
+                            label: const Text('Details'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _roomKpiCard(
+    BuildContext context,
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: 220,
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
 class _DepartmentAnalyticsSection extends StatelessWidget {
-  const _DepartmentAnalyticsSection();
+  final Map<String, dynamic>? sensorData;
+  final List<Map<String, dynamic>>? timeSeriesData;
+  final List<Map<String, dynamic>> anomalies;
+  final bool loadingData;
+  final String? department;
+
+  const _DepartmentAnalyticsSection({
+    required this.sensorData,
+    required this.timeSeriesData,
+    required this.anomalies,
+    required this.loadingData,
+    this.department,
+  });
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Center(
-      child: Text('Analytics Section', style: theme.textTheme.headlineSmall),
+    final scheme = theme.colorScheme;
+
+    final points = (timeSeriesData ?? const <Map<String, dynamic>>[])
+        .take(24)
+        .toList()
+        .reversed
+        .toList();
+
+    final powerValues = points
+        .map((item) => _toDouble(item['power'] ?? item['value']))
+        .toList();
+
+    final currentPower = _toDouble(sensorData?['power'] ?? sensorData?['value']);
+    final avgPower = powerValues.isEmpty
+        ? currentPower
+        : powerValues.reduce((a, b) => a + b) / powerValues.length;
+    final peakPower = powerValues.isEmpty
+        ? currentPower
+        : powerValues.reduce(max);
+    final basePower = powerValues.isEmpty
+        ? currentPower
+        : powerValues.reduce(min);
+    final anomalyCount = anomalies.length;
+
+    final trend = powerValues.length >= 2
+        ? powerValues.last - powerValues.first
+        : 0.0;
+
+    final lineSpots = powerValues
+        .asMap()
+        .entries
+        .map((entry) => FlSpot(entry.key.toDouble(), entry.value))
+        .toList();
+
+    final maxY = powerValues.isEmpty
+        ? (currentPower <= 0 ? 10.0 : currentPower * 1.4)
+        : (powerValues.reduce(max) * 1.2).clamp(5.0, 1000.0);
+
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          department != null ? '$department Analytics' : 'Department Analytics',
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Live performance indicators and trend insights from recent readings across all department rooms',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        if (loadingData)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: CircularProgressIndicator(),
+            ),
+          )
+        else ...[
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _analyticsMetricCard(
+                context,
+                label: 'Current Power',
+                value: '${currentPower.toStringAsFixed(2)} kW',
+                icon: Icons.bolt,
+                color: Colors.amber,
+              ),
+              _analyticsMetricCard(
+                context,
+                label: 'Average (24 pts)',
+                value: '${avgPower.toStringAsFixed(2)} kW',
+                icon: Icons.show_chart,
+                color: Colors.blue,
+              ),
+              _analyticsMetricCard(
+                context,
+                label: 'Peak Usage',
+                value: '${peakPower.toStringAsFixed(2)} kW',
+                icon: Icons.trending_up,
+                color: Colors.redAccent,
+              ),
+              _analyticsMetricCard(
+                context,
+                label: 'Anomalies',
+                value: anomalyCount.toString(),
+                icon: Icons.warning_amber_rounded,
+                color: anomalyCount > 0 ? Colors.orange : Colors.green,
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Power Trend (Recent Samples)',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    lineSpots.isEmpty
+                        ? 'No recent readings available'
+                        : 'Trend: ${trend >= 0 ? '+' : ''}${trend.toStringAsFixed(2)} kW',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 240,
+                    child: lineSpots.isEmpty
+                        ? Center(
+                            child: Text(
+                              'No data to plot yet',
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          )
+                        : LineChart(
+                            LineChartData(
+                              minX: 0,
+                              maxX: (lineSpots.length - 1).toDouble(),
+                              minY: 0,
+                              maxY: maxY,
+                              gridData: FlGridData(
+                                show: true,
+                                drawVerticalLine: false,
+                                horizontalInterval: maxY / 5,
+                              ),
+                              titlesData: FlTitlesData(
+                                leftTitles: AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    reservedSize: 42,
+                                    interval: maxY / 5,
+                                  ),
+                                ),
+                                bottomTitles: const AxisTitles(
+                                  sideTitles: SideTitles(
+                                    showTitles: true,
+                                    reservedSize: 24,
+                                    interval: 4,
+                                  ),
+                                ),
+                                topTitles: const AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false),
+                                ),
+                                rightTitles: const AxisTitles(
+                                  sideTitles: SideTitles(showTitles: false),
+                                ),
+                              ),
+                              borderData: FlBorderData(show: false),
+                              lineBarsData: [
+                                LineChartBarData(
+                                  spots: lineSpots,
+                                  isCurved: true,
+                                  barWidth: 3,
+                                  color: scheme.primary,
+                                  dotData: const FlDotData(show: false),
+                                  belowBarData: BarAreaData(
+                                    show: true,
+                                    color: scheme.primary.withOpacity(0.15),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 16),
+          Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Operational Insights',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _insightRow(
+                    context,
+                    'Base Load',
+                    '${basePower.toStringAsFixed(2)} kW',
+                    Icons.low_priority,
+                  ),
+                  _insightRow(
+                    context,
+                    'Peak to Base Ratio',
+                    '${basePower > 0 ? (peakPower / basePower).toStringAsFixed(2) : 'N/A'}x',
+                    Icons.compare_arrows,
+                  ),
+                  _insightRow(
+                    context,
+                    'Risk Level',
+                    anomalyCount >= 5
+                        ? 'High'
+                        : anomalyCount > 0
+                            ? 'Moderate'
+                            : 'Low',
+                    Icons.shield_outlined,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _analyticsMetricCard(
+    BuildContext context, {
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: 260,
+      child: Card(
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      value,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _insightRow(
+    BuildContext context,
+    String label,
+    String value,
+    IconData icon,
+  ) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(label, style: theme.textTheme.bodyMedium),
+          ),
+          Text(
+            value,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1278,11 +2307,13 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
 class _DepartmentAlertsSection extends StatelessWidget {
   final List<dynamic> anomalies;
   final VoidCallback onRefresh;
+  final String? department;
 
   const _DepartmentAlertsSection({
     super.key, 
     required this.anomalies, 
-    required this.onRefresh
+    required this.onRefresh,
+    this.department,
   });
 
   @override
@@ -1291,10 +2322,44 @@ class _DepartmentAlertsSection extends StatelessWidget {
 
     return RefreshIndicator(
       onRefresh: () async => onRefresh(),
-      child: anomalies.isEmpty
-          ? const Center(child: Text("No anomaly alerts detected."))
-          : ListView.builder(
-              padding: const EdgeInsets.all(8),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            department != null ? '$department Anomaly Alerts' : 'Anomaly Alerts',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Live anomaly detections from department sensors',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (anomalies.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.check_circle, size: 48, color: Colors.green.withOpacity(0.5)),
+                    const SizedBox(height: 12),
+                    Text("No anomaly alerts detected", style: theme.textTheme.titleMedium),
+                    const SizedBox(height: 6),
+                    Text("All sensors are operating normally", style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            )
+          else
+            ListView.builder(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
               itemCount: anomalies.length,
               itemBuilder: (context, index) {
                 final alert = anomalies[index];
@@ -1323,6 +2388,8 @@ class _DepartmentAlertsSection extends StatelessWidget {
                 );
               },
             ),
+        ],
+      ),
     );
   }
 
@@ -1398,7 +2465,7 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
         try {
           final resp = await http
               .get(
-                Uri.parse('$baseUrl/api/rooms'),
+                Uri.parse('$baseUrl/rooms'),
                 headers: {'Content-Type': 'application/json'},
               )
               .timeout(const Duration(seconds: 6));
@@ -1529,7 +2596,7 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
           final resp = await http
               .put(
                 Uri.parse(
-                  '$baseUrl/api/rooms/$encodedRoomId/threshold?threshold=$newThreshold',
+                  '$baseUrl/rooms/$encodedRoomId/threshold?threshold=$newThreshold',
                 ),
                 headers: {'Content-Type': 'application/json'},
               )

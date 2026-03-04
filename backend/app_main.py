@@ -7,10 +7,23 @@ import numpy as np
 from fastapi import FastAPI, Request, HTTPException
 from datetime import datetime, timezone
 from sqlalchemy import text, create_engine
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(override=False)
 
 # --- DATABASE SETUP ---
-# Update with your actual credentials
-DATABASE_URL = "postgresql://postgres:aswathy2004@localhost:5432/energia"
+def _load_cfg():
+    """Load config module handling both package and script execution."""
+    if __package__:
+        from . import config
+        return config
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        return importlib.import_module("config")
+
+cfg = _load_cfg()
+DATABASE_URL = cfg.get_db_url()
 engine = create_engine(DATABASE_URL)
 
 # --- 1. AI MODEL LOADING ---
@@ -41,11 +54,20 @@ app = FastAPI(title="ENERGIA Backend")
 
 
 # --- 4. MOUNT REMAINING APPS ---
-# Import your auth_api module here as you did before
-def _load(name: str):
-    sys.path.append(os.path.dirname(__file__))
-    return importlib.import_module(name)
+# Import auth_api module handling both package and script execution
+def _load_auth_api():
+    if __package__:
+        from . import auth_api
+        return auth_api
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("auth_api")
 
-auth_api = _load("auth_api")
-app.mount("/auth", auth_api.app)
-# REMOVED: app.mount("/api", auth_api.app) - app_main now handles /api
+auth_api_module = _load_auth_api()
+# Include routes directly without /api prefix
+app.include_router(auth_api_module.app.router)
+
+# --- START SERVER ---
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000)
