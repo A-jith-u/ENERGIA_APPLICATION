@@ -64,8 +64,10 @@ def _load_auth_api():
         return importlib.import_module("auth_api")
 
 auth_api_module = _load_auth_api()
-# Include routes directly without /api prefix
+# Include routes without prefix (for Flutter app - /dashboard/overview, /login, etc.)
 app.include_router(auth_api_module.app.router)
+# Also include sensor-data routes with /api prefix (for ESP32 - /api/sensor-data)
+app.include_router(auth_api_module.app.router, prefix="/api", tags=["ESP32 API"])
 
 # --- START SERVER ---
 if __name__ == "__main__":
