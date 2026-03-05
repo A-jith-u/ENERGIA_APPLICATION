@@ -1266,9 +1266,13 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Coordinators'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        backgroundColor: theme.appBarTheme.backgroundColor ?? scheme.surface,
+        foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
+        elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -1277,18 +1281,9 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
           ),
         ],
       ),
-      body: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [scheme.surfaceContainerLowest, scheme.surfaceContainerHigh],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 900),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: _isLoading
@@ -1311,167 +1306,171 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
                           ),
                         )
                       : SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Header
-                    Card(
-                      elevation: 0,
-                      color: scheme.primaryContainer,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
-                          Icon(Icons.supervisor_account, color: scheme.onPrimaryContainer),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('Department Coordinators', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer)),
-                                Text('Manage and review coordinator roster', style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onPrimaryContainer.withOpacity(0.85))),
-                              ],
-                            ),
-                          ),
-                          // Quick actions
-                          FilledButton.icon(
-                            onPressed: _exportData,
-                            icon: const Icon(Icons.file_download),
-                            label: const Text('Export'),
-                          ),
-                          const SizedBox(width: 8),
-                          OutlinedButton.icon(
-                            onPressed: () {
-                              showDialog(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('Filter Options'),
-                                  content: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      DropdownButtonFormField<String>(
-                                        value: _selectedDepartment,
-                                        decoration: const InputDecoration(
-                                          labelText: 'Department',
-                                          border: OutlineInputBorder(),
-                                        ),
-                                        items: const [
-                                          DropdownMenuItem(value: 'All Departments', child: Text('All Departments')),
-                                          DropdownMenuItem(value: 'CSE', child: Text('CSE')),
-                                          DropdownMenuItem(value: 'ECE', child: Text('ECE')),
-                                          DropdownMenuItem(value: 'ME', child: Text('ME')),
-                                          DropdownMenuItem(value: 'CE', child: Text('CE')),
-                                          DropdownMenuItem(value: 'AD', child: Text('AD')),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Header
+                            Card(
+                              elevation: 0,
+                              color: scheme.primaryContainer,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.supervisor_account, color: scheme.onPrimaryContainer),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text('Department Coordinators', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer)),
+                                          Text('Manage and review coordinator roster', style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onPrimaryContainer.withOpacity(0.85))),
                                         ],
-                                        onChanged: (value) {
-                                          if (value != null) {
-                                            setState(() {
-                                              _selectedDepartment = value;
-                                            });
-                                          }
-                                        },
                                       ),
-                                    ],
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () {
-                                        setState(() {
-                                          _selectedDepartment = 'All Departments';
-                                        });
-                                        _filterData();
-                                        Navigator.pop(context);
-                                      },
-                                      child: const Text('Clear'),
                                     ),
-                                    FilledButton(
-                                      onPressed: () {
-                                        _filterData();
-                                        Navigator.pop(context);
-                                      },
-                                      child: const Text('Apply'),
+                                    // Quick actions
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 16),
+                                      child: Row(
+                                        children: [
+                                          FilledButton.icon(
+                                            onPressed: _exportData,
+                                            icon: const Icon(Icons.file_download),
+                                            label: const Text('Export'),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          OutlinedButton.icon(
+                                            onPressed: () {
+                                              showDialog(
+                                                context: context,
+                                                builder: (context) => AlertDialog(
+                                                  title: const Text('Filter Options'),
+                                                  content: Column(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      DropdownButtonFormField<String>(
+                                                        value: _selectedDepartment,
+                                                        decoration: const InputDecoration(
+                                                          labelText: 'Department',
+                                                          border: OutlineInputBorder(),
+                                                        ),
+                                                        items: const [
+                                                          DropdownMenuItem(value: 'All Departments', child: Text('All Departments')),
+                                                          DropdownMenuItem(value: 'CSE', child: Text('CSE')),
+                                                          DropdownMenuItem(value: 'ECE', child: Text('ECE')),
+                                                          DropdownMenuItem(value: 'ME', child: Text('ME')),
+                                                          DropdownMenuItem(value: 'CE', child: Text('CE')),
+                                                          DropdownMenuItem(value: 'AD', child: Text('AD')),
+                                                        ],
+                                                        onChanged: (value) {
+                                                          if (value != null) {
+                                                            setState(() {
+                                                              _selectedDepartment = value;
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  actions: [
+                                                    TextButton(
+                                                      onPressed: () {
+                                                        setState(() {
+                                                          _selectedDepartment = 'All Departments';
+                                                        });
+                                                        _filterData();
+                                                        Navigator.pop(context);
+                                                      },
+                                                      child: const Text('Clear'),
+                                                    ),
+                                                    FilledButton(
+                                                      onPressed: () {
+                                                        _filterData();
+                                                        Navigator.pop(context);
+                                                      },
+                                                      child: const Text('Apply'),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            },
+                                            icon: const Icon(Icons.filter_alt),
+                                            label: Text(_selectedDepartment == 'All Departments' ? 'Filter' : 'Filtered'),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ],
                                 ),
-                              );
-                            },
-                            icon: const Icon(Icons.filter_alt),
-                            label: Text(_selectedDepartment == 'All Departments' ? 'Filter' : 'Filtered'),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Content Card with centered table
-                  Card(
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: [
-                          // Search bar
-                          TextField(
-                            controller: _searchController,
-                            onChanged: (_) => _filterData(),
-                            decoration: const InputDecoration(
-                              hintText: 'Search by name or username',
-                              prefixIcon: Icon(Icons.search),
-                              border: OutlineInputBorder(),
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          // Table
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: DataTable(
-                              columns: [
-                                DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
-                                DataColumn(label: Text('Username', style: theme.textTheme.titleMedium)),
-                                DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
-                                DataColumn(label: Text('Actions', style: theme.textTheme.titleMedium)),
-                              ],
-                              rows: _filteredCoordinators.map((c) {
-                                return DataRow(cells: [
-                                  DataCell(Text(c['name']?.toString() ?? 'N/A')),
-                                  DataCell(Text(c['username']?.toString() ?? 'N/A')),
-                                  DataCell(Text(c['department']?.toString() ?? 'N/A')),
-                                  DataCell(
-                                    IconButton(
-                                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                      tooltip: 'Delete user',
-                                      onPressed: () => _confirmDeleteUser(c['username']?.toString() ?? '', c['name']?.toString() ?? 'User'),
+                            const SizedBox(height: 16),
+                            // Content Card with centered table
+                            Card(
+                              elevation: 2,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  children: [
+                                    // Search bar
+                                    TextField(
+                                      controller: _searchController,
+                                      onChanged: (_) => _filterData(),
+                                      decoration: const InputDecoration(
+                                        hintText: 'Search by name or username',
+                                        prefixIcon: Icon(Icons.search),
+                                        border: OutlineInputBorder(),
+                                      ),
                                     ),
-                                  ),
-                                ]);
-                              }).toList(),
+                                    const SizedBox(height: 12),
+                                    // Table
+                                    SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: DataTable(
+                                        columns: [
+                                          DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
+                                          DataColumn(label: Text('Username', style: theme.textTheme.titleMedium)),
+                                          DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
+                                          DataColumn(label: Text('Actions', style: theme.textTheme.titleMedium)),
+                                        ],
+                                        rows: _filteredCoordinators.map((c) {
+                                          return DataRow(cells: [
+                                            DataCell(Text(c['name']?.toString() ?? 'N/A')),
+                                            DataCell(Text(c['username']?.toString() ?? 'N/A')),
+                                            DataCell(Text(c['department']?.toString() ?? 'N/A')),
+                                            DataCell(
+                                              IconButton(
+                                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                                tooltip: 'Delete user',
+                                                onPressed: () => _confirmDeleteUser(c['username']?.toString() ?? '', c['name']?.toString() ?? 'User'),
+                                              ),
+                                            ),
+                                          ]);
+                                        }).toList(),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 16),
+                            // Footer stats
+                            Row(
+                              children: [
+                                Expanded(child: _UserStatsCard(title: 'Total Coordinators', value: '${_filteredCoordinators.length}', icon: Icons.people, color: Colors.blue.shade600)),
+                                const SizedBox(width: 12),
+                                Expanded(child: _UserStatsCard(title: 'Showing', value: '${_filteredCoordinators.length}/${_allCoordinators.length}', icon: Icons.filter_list, color: Colors.green.shade600)),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-
-                  const SizedBox(height: 16),
-                  // Footer stats
-                  Row(
-                    children: [
-                      Expanded(child: _UserStatsCard(title: 'Total Coordinators', value: '${_filteredCoordinators.length}', icon: Icons.people, color: Colors.blue.shade600)),
-                      const SizedBox(width: 12),
-                      Expanded(child: _UserStatsCard(title: 'Showing', value: '${_filteredCoordinators.length}/${_allCoordinators.length}', icon: Icons.filter_list, color: Colors.green.shade600)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    ),
-    );
+                ),
+              );
   }
 }
 
@@ -1679,9 +1678,13 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Class Representatives'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        backgroundColor: theme.appBarTheme.backgroundColor ?? scheme.surface,
+        foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
+        elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -1690,69 +1693,60 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
           ),
         ],
       ),
-      body: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [scheme.surfaceContainerLowest, scheme.surfaceContainerHigh],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1000),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _errorMessage != null
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
-                              const SizedBox(height: 16),
-                              Text(_errorMessage!, style: theme.textTheme.titleMedium),
-                              const SizedBox(height: 16),
-                              ElevatedButton.icon(
-                                onPressed: _loadClassRepresentatives,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('Retry'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Header
-                    Card(
-                      elevation: 0,
-                      color: scheme.secondaryContainer,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1000),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _errorMessage != null
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                          Icon(Icons.school, color: scheme.onSecondaryContainer),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('Class Representatives Directory', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: scheme.onSecondaryContainer)),
-                                Text('Browse class reps by department and year', style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSecondaryContainer.withOpacity(0.85))),
-                              ],
+                            Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
+                            const SizedBox(height: 16),
+                            Text(_errorMessage!, style: theme.textTheme.titleMedium),
+                            const SizedBox(height: 16),
+                            ElevatedButton.icon(
+                              onPressed: _loadClassRepresentatives,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Retry'),
                             ),
-                          ),
-                          FilledButton.icon(
-                            onPressed: _exportData,
-                            icon: const Icon(Icons.file_download),
-                            label: const Text('Export'),
-                          ),
-                          const SizedBox(width: 8),
+                          ],
+                        ),
+                      )
+                    : SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Header
+                          Card(
+                            elevation: 0,
+                            color: scheme.secondaryContainer,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.school, color: scheme.onSecondaryContainer),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Class Representatives Directory', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: scheme.onSecondaryContainer)),
+                                        Text('Browse class reps by department and year', style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSecondaryContainer.withOpacity(0.85))),
+                                      ],
+                                    ),
+                                  ),
+                                  FilledButton.icon(
+                                    onPressed: _exportData,
+                                    icon: const Icon(Icons.file_download),
+                                    label: const Text('Export'),
+                                  ),
+                                  const SizedBox(width: 8),
                           OutlinedButton.icon(
                             onPressed: () {
                               showDialog(
@@ -1930,7 +1924,6 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
           ),
         ),
       ),
-    ),
     );
   }
 }
@@ -2042,14 +2035,19 @@ final response = await http.post(
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Add New User'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        backgroundColor: theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface,
+        foregroundColor: theme.appBarTheme.foregroundColor ?? theme.colorScheme.onSurface,
+        elevation: theme.appBarTheme.elevation ?? 0,
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Card(
           elevation: 2,
+          color: theme.cardTheme.color ?? theme.colorScheme.surface,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Form(
