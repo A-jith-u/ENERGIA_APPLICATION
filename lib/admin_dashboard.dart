@@ -1999,7 +1999,7 @@ void _submit() async {
   try {
     // Call your new invite API
    /*final response = await http.post(
-  Uri.parse('http://localhost:5000/auth/admin/invite-user'),
+  Uri.parse('http://localhost:5000/admin/invite-user'),
   headers: {'Content-Type': 'application/json'},
   body: jsonEncode({
     'username': _emailCtl.text.trim(), // Backend expects 'username'
@@ -2012,7 +2012,7 @@ void _submit() async {
 );*/
 // Inside _submit() in admin_dashboard.dart
 final response = await http.post(
-  Uri.parse('http://localhost:5000/auth/admin/invite-user'),
+  Uri.parse('http://localhost:5000/admin/invite-user'),
   headers: {'Content-Type': 'application/json'},
   body: jsonEncode({
     'username': _emailCtl.text.trim(),

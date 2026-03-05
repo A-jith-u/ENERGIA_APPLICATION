@@ -97,6 +97,32 @@ def _init_password_reset_table():
 
 _init_password_reset_table()
 
+
+def _ensure_rooms_department_column():
+    """Ensure legacy databases have rooms.department column required by department filters."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS department TEXT"))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure rooms.department column: {exc}")
+
+
+def _ensure_sensor_data_occupancy_column():
+    """Ensure sensor_data table has occupancy column for AI processing."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS occupancy INTEGER"))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure sensor_data.occupancy column: {exc}")
+
+
+_ensure_rooms_department_column()
+_ensure_sensor_data_occupancy_column()
+
+
+def _is_admin_department(department: str | None) -> bool:
+    return bool(department and department.strip().lower() == "admin")
+
 # Pydantic models
 
 class RegisterRequest(BaseModel):
@@ -690,21 +716,37 @@ async def invite_user(req: InviteUserRequest):
         "message": f"Invitation {'sent' if email_status == 'sent' else 'created but email sending failed'}"
     }
 @app.get("/anomalies")
-def get_anomalies(limit: int = 10):
-    """Fetch recent anomalies from the NEW anomaly_logs table."""
+def get_anomalies(limit: int = 10, department: str = None):
+    """Fetch recent anomalies from the anomaly_logs table.
+    Optional: filter by department if provided."""
     try:
         with engine.connect() as conn:
-            # Querying the new table instead of sensor_data
-            result = conn.execute(
-                text("""
-                    SELECT id, ds, device_id, power, occupancy, anomaly_score, energy_accumulated
-                    FROM anomaly_logs 
-                    WHERE is_anomaly = -1
-                    ORDER BY ds DESC 
-                    LIMIT :limit
-                """),
-                {"limit": limit}
-            )
+            if department and not _is_admin_department(department):
+                # Filter by department - join with rooms table
+                result = conn.execute(
+                    text("""
+                        SELECT al.id, al.ds, al.device_id, al.power, al.occupancy, al.anomaly_score, al.energy_accumulated
+                        FROM anomaly_logs al
+                        LEFT JOIN rooms r ON al.device_id = r.room_id
+                        WHERE al.is_anomaly = -1 
+                        AND r.department = :department
+                        ORDER BY al.ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"department": department, "limit": limit}
+                )
+            else:
+                # No department filter
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, power, occupancy, anomaly_score, energy_accumulated
+                        FROM anomaly_logs 
+                        WHERE is_anomaly = -1
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"limit": limit}
+                )
             
             rows = result.fetchall()
             return [
@@ -715,7 +757,7 @@ def get_anomalies(limit: int = 10):
                     "power": row[3],
                     "occupancy": row[4],
                     "score": round(row[5], 4) if row[5] else 0,
-                    "energy": row[6]  # Now providing energy in the alert
+                    "energy": row[6]
                 }
                 for row in rows
             ]
@@ -906,6 +948,17 @@ def login(req: LoginRequest, request: Request):
         # For database or system errors, return generic error
         raise HTTPException(status_code=500, detail="Something went wrong")
 
+# Alias endpoints for client compatibility
+@app.post("/student/login")
+def student_login(req: LoginRequest, request: Request):
+    """Alias for student login - delegates to unified login endpoint."""
+    return login(req, request)
+
+@app.post("/admin/login")
+def admin_login(req: LoginRequest, request: Request):
+    """Alias for admin login - delegates to unified login endpoint."""
+    return login(req, request)
+
 @app.post("/coordinator/login")
 def coordinator_login(req: LoginRequest, request: Request):
     """Dedicated coordinator login endpoint with department validation."""
@@ -999,6 +1052,46 @@ def coordinator_login(req: LoginRequest, request: Request):
         raise HTTPException(status_code=500, detail="Something went wrong")
 
 
+@app.get("/user/profile")
+def get_user_profile(request: Request):
+    """Get current user profile from JWT token."""
+    try:
+        # Extract token from Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+        
+        token = auth_header.split(" ")[1]
+        
+        # Decode JWT token
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Return user data from token payload
+        user_data = {
+            "id": payload.get("sub"),
+            "username": payload.get("username"),
+            "name": payload.get("name"),
+            "email": payload.get("username"),  # username is email in most cases
+            "role": payload.get("role"),
+            "department": payload.get("department"),
+            "ktu_id": payload.get("ktu_id"),
+            "year": payload.get("year"),
+        }
+        
+        return user_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Get profile error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve profile")
+
+
 @app.get("/users/coordinators")
 def get_coordinators():
     """Fetch all coordinators from the database."""
@@ -1075,20 +1168,21 @@ _overview_cache_ttl = 30  # seconds
 def get_dashboard_overview(active_window_minutes: int = 5, usage_window_hours: int = 1):
     """Return campus-wide live metrics for the admin dashboard (cached for 30s).
 
-    - total_usage_kwh: Sum of power over time in the last hour (kWh estimate)
-    - active_rooms / total_rooms: Distinct device_ids sending data within `active_window_minutes`
-    - inactive_rooms: List of device_ids that have NOT reported within the active window
-    - efficiency_percent: Simple availability metric = active_rooms / total_rooms * 100
+    Formulas:
+    - total_usage_kwh: time-weighted integration of incoming power samples over window
+      E(Wh) = Σ(P(W) * Δt(hours)) per device, then converted to kWh
+    - active_rooms / total_rooms: live reporting rooms vs room inventory
+    - inactive_rooms: rooms in inventory with no report in active window
+    - efficiency_percent: percentage of active rooms whose latest reading is <= room threshold
+      (threshold is stored in kW; power is compared in watts)
     """
-    
-    # Check cache first
+
     now = datetime.now(timezone.utc)
     if _overview_cache["data"] and _overview_cache["timestamp"]:
         age = (now - _overview_cache["timestamp"]).total_seconds()
         if age < _overview_cache_ttl:
             return _overview_cache["data"]
 
-    # Sanitize windows - use shorter defaults for speed
     active_window_minutes = max(1, min(active_window_minutes, 60))
     usage_window_hours = max(1, min(usage_window_hours, 24))
 
@@ -1096,87 +1190,149 @@ def get_dashboard_overview(active_window_minutes: int = 5, usage_window_hours: i
     usage_interval = f"{usage_window_hours} hours"
 
     with engine.begin() as conn:
-        # Optimized: Sum power (watts) over time and convert to kWh
-        # If power readings are per minute, divide by 60 to get kWh
         total_usage_wh = conn.execute(
             text(
                 """
-                SELECT COALESCE(SUM(COALESCE(power, value, 0)), 0) / 60.0
-                FROM (
-                    SELECT power, value FROM sensor_data
-                    WHERE ds >= NOW() - CAST(:usage_interval AS INTERVAL)
-                    ORDER BY ds DESC
-                    LIMIT 10000
-                ) subq
+                WITH ordered AS (
+                    SELECT
+                        sd.device_id,
+                        sd.ds,
+                        COALESCE(sd.power, sd.value, 0)::double precision AS power_w,
+                        LEAD(sd.ds) OVER (PARTITION BY sd.device_id ORDER BY sd.ds) AS next_ds
+                    FROM sensor_data sd
+                    WHERE sd.ds >= NOW() - CAST(:usage_interval AS INTERVAL)
+                      AND sd.ds <= NOW()
+                ),
+                segments AS (
+                    SELECT
+                        power_w,
+                        LEAST(
+                            GREATEST(EXTRACT(EPOCH FROM (COALESCE(next_ds, NOW()) - ds)) / 3600.0, 0),
+                            0.25
+                        ) AS dt_hours
+                    FROM ordered
+                )
+                SELECT COALESCE(SUM(power_w * dt_hours), 0)
+                FROM segments
                 """
             ),
             {"usage_interval": usage_interval},
         ).scalar() or 0
 
-        # Fast total rooms count from recent data only
         total_rooms = conn.execute(
-            text(
-                """
-                SELECT COUNT(DISTINCT device_id) 
-                FROM sensor_data 
-                WHERE ds >= NOW() - INTERVAL '7 days'
-                """
-            )
+            text("SELECT COUNT(*) FROM rooms")
         ).scalar() or 0
 
-        # Active rooms in last N minutes
         active_rooms = conn.execute(
             text(
                 """
-                SELECT COUNT(DISTINCT device_id)
-                FROM sensor_data
-                WHERE ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                SELECT COUNT(DISTINCT sd.device_id)
+                FROM sensor_data sd
+                WHERE sd.ds >= NOW() - CAST(:active_interval AS INTERVAL)
                 """
             ),
             {"active_interval": active_interval},
         ).scalar() or 0
 
-        # Inactive rooms - simplified query
-        inactive_rows = conn.execute(
+        if total_rooms == 0:
+            total_rooms = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT sd.device_id)
+                    FROM sensor_data sd
+                    WHERE sd.ds >= NOW() - INTERVAL '7 days'
+                    """
+                )
+            ).scalar() or 0
+
+        if total_rooms > 0:
+            inactive_rows = conn.execute(
+                text(
+                    """
+                    SELECT r.room_id
+                    FROM rooms r
+                    WHERE r.room_id NOT IN (
+                        SELECT DISTINCT sd.device_id
+                        FROM sensor_data sd
+                        WHERE sd.ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                    )
+                    ORDER BY r.room_id
+                    LIMIT 100
+                    """
+                ),
+                {"active_interval": active_interval},
+            ).fetchall()
+        else:
+            inactive_rows = conn.execute(
+                text(
+                    """
+                    SELECT DISTINCT d1.device_id
+                    FROM (
+                        SELECT DISTINCT sd.device_id
+                        FROM sensor_data sd
+                        WHERE sd.ds >= NOW() - INTERVAL '7 days'
+                    ) d1
+                    WHERE d1.device_id NOT IN (
+                        SELECT DISTINCT sd2.device_id
+                        FROM sensor_data sd2
+                        WHERE sd2.ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                    )
+                    ORDER BY d1.device_id
+                    LIMIT 100
+                    """
+                ),
+                {"active_interval": active_interval},
+            ).fetchall()
+
+        efficiency_percent = conn.execute(
             text(
                 """
-                SELECT DISTINCT d1.device_id
-                FROM (
-                    SELECT DISTINCT device_id FROM sensor_data
-                    WHERE ds >= NOW() - INTERVAL '7 days'
-                    LIMIT 100
-                ) d1
-                WHERE d1.device_id NOT IN (
-                    SELECT DISTINCT device_id
-                    FROM sensor_data
-                    WHERE ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                WITH latest_active AS (
+                    SELECT x.device_id, x.power_w
+                    FROM (
+                        SELECT
+                            sd.device_id,
+                            COALESCE(sd.power, sd.value, 0)::double precision AS power_w,
+                            ROW_NUMBER() OVER (PARTITION BY sd.device_id ORDER BY sd.ds DESC) AS rn
+                        FROM sensor_data sd
+                        WHERE sd.ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                    ) x
+                    WHERE x.rn = 1
                 )
-                ORDER BY d1.device_id
-                LIMIT 100
+                SELECT
+                    CASE
+                        WHEN COUNT(*) = 0 THEN NULL
+                        ELSE 100.0 * SUM(
+                            CASE
+                                WHEN la.power_w <= COALESCE(r.threshold, 3.0) * 1000.0 THEN 1
+                                ELSE 0
+                            END
+                        )::double precision / COUNT(*)
+                    END AS efficiency_pct
+                FROM latest_active la
+                LEFT JOIN rooms r ON r.room_id = la.device_id
                 """
             ),
             {"active_interval": active_interval},
-        ).fetchall()
+        ).scalar()
 
     total_usage_kwh = float(total_usage_wh) / 1000.0
-    efficiency_percent = 0.0
-    if total_rooms > 0:
-        efficiency_percent = (active_rooms / total_rooms) * 100.0
+    if efficiency_percent is None:
+        efficiency_percent = (active_rooms / total_rooms) * 100.0 if total_rooms > 0 else 0.0
 
     result = {
         "total_usage_kwh": round(total_usage_kwh, 3),
         "active_rooms": active_rooms,
         "total_rooms": total_rooms,
         "inactive_rooms": [row[0] for row in inactive_rows],
-        "efficiency_percent": round(efficiency_percent, 1),
+        "efficiency_percent": round(float(efficiency_percent), 1),
         "active_window_minutes": active_window_minutes,
         "usage_window_hours": usage_window_hours,
     }
-    
-    # Cache the result
+
     _overview_cache["data"] = result
     _overview_cache["timestamp"] = now
-    
+
     return result
 
 
@@ -1206,7 +1362,7 @@ def delete_user(username: str):
         
         return {"status": "success", "message": f"User '{username}' deleted successfully", "deleted_count": deleted_count}
 
-@app.post("/api/sensor-data")
+@app.post("/sensor-data")
 async def receive_sensor_data(request: Request):
     global model, model_features
     try:
@@ -1279,6 +1435,7 @@ async def receive_sensor_data(request: Request):
                             VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
                     {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
                 )
+                print(f"[DEBUG] INSERT sensor_data: device_id={device_id}, power={p}, ts={timestamp}")
 
             # 5. Fetch history for rolling AI features
             hist_res = conn.execute(
@@ -1319,6 +1476,10 @@ async def receive_sensor_data(request: Request):
                  "ia": int(prediction), "as": float(score), "e": e}
             )
 
+        # Invalidate overview cache so admin widgets update immediately on new sensor data
+        _overview_cache["data"] = None
+        _overview_cache["timestamp"] = None
+
         return {"status": "success", "is_anomaly": int(prediction), "score": round(score, 4)}
 
     except Exception as err:
@@ -1327,14 +1488,40 @@ async def receive_sensor_data(request: Request):
 # B. PROVIDE DATA (GET) - For Flutter Charts
 
 # Modified GET endpoint in auth_api.py
-@app.get("/api/sensor-data")
-def get_sensor_data(limit: int = 60, device_id: str = None):
+@app.get("/sensor-data")
+def get_sensor_data(limit: int = 60, device_id: str = None, department: str = None):
+    """Get sensor data. Can filter by device_id, department, or both."""
     try:
         with engine.connect() as conn:
-            # Filters out camera-only rows that lack power data
-            base_sql = "SELECT ds, power, voltage, current, occupancy FROM sensor_data WHERE power IS NOT NULL"
-            
-            if device_id:
+            if device_id and department and not _is_admin_department(department):
+                # Filter by both device_id and department
+                result = conn.execute(
+                    text("""
+                        SELECT sd.id, sd.ds, sd.device_id, sd.value, sd.voltage, sd.current, sd.power, sd.energy, sd.frequency, sd.power_factor
+                        FROM sensor_data sd
+                        LEFT JOIN rooms r ON sd.device_id = r.room_id
+                        WHERE sd.device_id = :device_id 
+                        AND r.department = :department
+                        ORDER BY sd.ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"device_id": device_id, "department": department, "limit": limit}
+                )
+            elif department and not _is_admin_department(department):
+                # Filter by department only
+                result = conn.execute(
+                    text("""
+                        SELECT sd.id, sd.ds, sd.device_id, sd.value, sd.voltage, sd.current, sd.power, sd.energy, sd.frequency, sd.power_factor
+                        FROM sensor_data sd
+                        LEFT JOIN rooms r ON sd.device_id = r.room_id
+                        WHERE r.department = :department
+                        ORDER BY sd.ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"department": department, "limit": limit}
+                )
+            elif device_id:
+                # Filter by device_id only
                 result = conn.execute(
                     text("""
                         SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
@@ -1346,6 +1533,7 @@ def get_sensor_data(limit: int = 60, device_id: str = None):
                     {"device_id": device_id, "limit": limit}
                 )
             else:
+                # No filters
                 result = conn.execute(
                     text("""
                         SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
@@ -1356,6 +1544,7 @@ def get_sensor_data(limit: int = 60, device_id: str = None):
                     {"limit": limit}
                 )
             
+            rows = result.fetchall()
             data = [
                 {
                     "id": row[0],
@@ -1378,17 +1567,29 @@ def get_sensor_data(limit: int = 60, device_id: str = None):
 
 
 @app.get("/rooms")
-def get_all_rooms():
-    """Get all rooms with their floor and threshold information."""
+def get_all_rooms(department: str = None):
+    """Get all rooms with their floor and threshold information.
+    Optional: filter by department if provided."""
     try:
         with engine.begin() as conn:
-            rows = conn.execute(
-                text("""
-                    SELECT room_id, room_name, floor_number, threshold 
-                    FROM rooms 
-                    ORDER BY floor_number, room_name
-                """)
-            ).fetchall()
+            if department and not _is_admin_department(department):
+                rows = conn.execute(
+                    text("""
+                        SELECT room_id, room_name, floor_number, threshold 
+                        FROM rooms 
+                        WHERE department = :department
+                        ORDER BY floor_number, room_name
+                    """),
+                    {"department": department}
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    text("""
+                        SELECT room_id, room_name, floor_number, threshold 
+                        FROM rooms 
+                        ORDER BY floor_number, room_name
+                    """)
+                ).fetchall()
             
             data = [
                 {

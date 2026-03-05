@@ -170,7 +170,7 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
 
     for (final base in _baseCandidates()) {
       try {
-        final uri = Uri.parse('$base/api/sensor-data?limit=120&room=${Uri.encodeComponent(widget.roomName)}');
+        final uri = Uri.parse('$base/sensor-data?limit=120&room=${Uri.encodeComponent(widget.roomName)}');
         final resp = await http.get(uri, headers: {'Content-Type': 'application/json'}).timeout(const Duration(seconds: 6));
         if (resp.statusCode != 200) continue;
 

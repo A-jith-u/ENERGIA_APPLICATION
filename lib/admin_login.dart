@@ -1,5 +1,5 @@
 // Admin login page UI and backend integration.
-// Connects to the backend `/auth/login` endpoint to authenticate an admin user
+// Connects to the backend `/login` endpoint to authenticate an admin user
 // and stores the returned JWT token in `SharedPreferences`.
 // Keep UI separate from networking; networking helpers live in `lib/services/api.dart`.
 import 'dart:ui';

@@ -379,7 +379,7 @@ Future<void> _saveProfile() async {
     
     // Call the update-profile API
     final response = await http.post(
-      Uri.parse('http://localhost:5000/auth/update-profile'),
+      Uri.parse('http://localhost:5000/update-profile'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -413,7 +413,7 @@ Future<void> _saveProfile() async {
 Future<void> _updatePassword(String currentP, String newP) async {
   try {
     final response = await http.post(
-      Uri.parse('http://localhost:5000/auth/change-password'),
+      Uri.parse('http://localhost:5000/change-password'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'username': _ktuIdController.text,
@@ -492,7 +492,7 @@ Future<void> _handleChangePassword() async {
   }
 
   try {
-    // Logic to call /auth/change-password
+    // Logic to call /change-password
     // Pass _ktuIdController.text as 'username' to the backend
     AppNotifier.showSuccess(context, "Password updated!");
     Navigator.pop(context); // Close dialog
@@ -689,9 +689,9 @@ void _showPasswordDialog() {
                             setState(() => isLoading = true);
                             
                             try {
-                              // Perform API Call to /auth/change-password
+                              // Perform API Call to /change-password
                               final response = await http.post(
-                                Uri.parse('http://localhost:5000/auth/change-password'),
+                                Uri.parse('http://localhost:5000/change-password'),
                                 headers: {'Content-Type': 'application/json'},
                                 body: jsonEncode({
                                   'username': _ktuIdController.text, // Using KTU ID as identifier
@@ -841,7 +841,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
           // Fetch latest 60 readings directly from sensor_data table
           final response = await http
               .get(
-                Uri.parse('$baseUrl/api/sensor-data?limit=60'),
+                Uri.parse('$baseUrl/sensor-data?limit=60'),
                 headers: {'Content-Type': 'application/json'},
               )
               .timeout(const Duration(seconds: 5));

@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sklearn.ensemble import IsolationForest
 
 # 1. SETTINGS
-DB_URL = 'postgresql://postgres:aswathy2004@localhost:5432/energia'
+DB_URL = 'postgresql+psycopg2://postgres:ajith%40@localhost:5432/energia'
 country_holidays = holidays.India()
 
 def detect_anomalies(user_threshold=None):

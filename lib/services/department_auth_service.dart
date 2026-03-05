@@ -54,7 +54,7 @@ class DepartmentAuthService {
     for (final baseUrl in _baseUrls) {
       try {
         final response = await http.post(
-          Uri.parse('$baseUrl/api/coordinator/login'),
+          Uri.parse('$baseUrl/coordinator/login'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'username': coordinatorId,
@@ -105,7 +105,7 @@ class DepartmentAuthService {
     for (final baseUrl in _baseUrls) {
       try {
         final response = await http.post(
-          Uri.parse('$baseUrl/api/student/login'),
+          Uri.parse('$baseUrl/student/login'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'username': username,
@@ -156,7 +156,7 @@ class DepartmentAuthService {
     for (final baseUrl in _baseUrls) {
       try {
         final response = await http.post(
-          Uri.parse('$baseUrl/api/admin/login'),
+          Uri.parse('$baseUrl/admin/login'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'username': username,
@@ -232,7 +232,7 @@ class DepartmentAuthService {
     for (final baseUrl in _baseUrls) {
       try {
         final response = await http.get(
-          Uri.parse('$baseUrl/api/user/profile'),
+          Uri.parse('$baseUrl/user/profile'),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',

@@ -55,7 +55,7 @@ class _PredictionPageState extends State<PredictionPage> {
           // STEP 1: Fetch latest sensor data from database
           print('🔍 Fetching latest sensor data from $baseUrl');
           final sensorResponse = await http.get(
-            Uri.parse('$baseUrl/api/sensor-data?limit=1'),
+            Uri.parse('$baseUrl/sensor-data?limit=1'),
             headers: {'Content-Type': 'application/json'},
           ).timeout(const Duration(seconds: 5));
 
@@ -121,7 +121,7 @@ class _PredictionPageState extends State<PredictionPage> {
   Future<void> _fetchLatestSensorData(String baseUrl) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/api/sensor-data?limit=1'),
+        Uri.parse('$baseUrl/sensor-data?limit=1'),
         headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 5));
 

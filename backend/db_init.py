@@ -260,6 +260,24 @@ if "email" not in class_rep_columns:
 if "name" not in class_rep_columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE class_representatives ADD COLUMN name VARCHAR"))
+if "section" not in class_rep_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN section VARCHAR"))
+if "assigned_rooms" not in class_rep_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN assigned_rooms VARCHAR"))
+if "is_active" not in class_rep_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN is_active INTEGER DEFAULT 1"))
+if "last_login" not in class_rep_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN last_login TIMESTAMP"))
+if "created_at" not in class_rep_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN created_at TIMESTAMP DEFAULT NOW()"))
+if "updated_at" not in class_rep_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()"))
 
 admin_columns = [col["name"] for col in insp.get_columns("admins")]
 if "name" not in admin_columns:
