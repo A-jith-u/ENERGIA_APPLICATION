@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'package:intl/intl.dart';
+import 'dart:math';
 
 class PredictionPage extends StatefulWidget {
   const PredictionPage({super.key});
@@ -18,7 +19,7 @@ class _PredictionPageState extends State<PredictionPage> {
   bool _isLoading = false;
   String? _errorMessage;
   Timer? _refreshTimer;
-  int _intervalMinutes = 15;
+  int _intervalMinutes = 5; // fixed to 5 minutes horizon
   DateTime? _lastUpdated;
 
   @override
@@ -42,47 +43,71 @@ class _PredictionPageState extends State<PredictionPage> {
     });
 
     try {
-      // Try different backend URLs for flexibility
       final List<String> apiCandidates = [
-        'http://10.0.2.2:5000',     // Android emulator
-        'http://192.168.160.1:5000', // Common local IP
         'http://localhost:5000',
         'http://127.0.0.1:5000',
+        'http://192.168.160.1:5000',
+        'http://10.0.2.2:5000',
       ];
-      
-      Exception? lastError;
       
       for (final baseUrl in apiCandidates) {
         try {
-          final response = await http.post(
+          // STEP 1: Fetch latest sensor data from database
+          print('🔍 Fetching latest sensor data from $baseUrl');
+          final sensorResponse = await http.get(
+            Uri.parse('$baseUrl/sensor-data?limit=1'),
+            headers: {'Content-Type': 'application/json'},
+          ).timeout(const Duration(seconds: 5));
+
+          if (sensorResponse.statusCode != 200) continue;
+
+          final sensorData = jsonDecode(sensorResponse.body);
+          final sensorReadings = (sensorData['data'] as List?) ?? [];
+
+          if (sensorReadings.isEmpty) {
+            print('⚠️ No sensor data available');
+            continue;
+          }
+
+          final latestSensor = sensorReadings.first as Map<String, dynamic>;
+          print('✅ Latest sensor data: ${latestSensor['value']}W at ${latestSensor['timestamp']}');
+
+          // STEP 2: Get prediction using the timestamp from sensor data
+          print('🔮 Getting prediction for timestamp: ${latestSensor['timestamp']}');
+          final predResponse = await http.post(
             Uri.parse('$baseUrl/model/predict_15min'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'horizon_minutes': _intervalMinutes,
             }),
-            ).timeout(const Duration(seconds: 8));
+          ).timeout(const Duration(seconds: 5));
 
-          if (response.statusCode == 200) {
-            final data = jsonDecode(response.body);
-            
-            // Try to fetch latest sensor data as well
-            await _fetchLatestSensorData(baseUrl);
-            
-            setState(() {
-              _prediction = data;
-              _isLoading = false;
-              _lastUpdated = DateTime.now();
-            });
-            return;
-          }
+          if (predResponse.statusCode != 200) continue;
+
+          final prediction = jsonDecode(predResponse.body);
+          print('✅ Got prediction: ${prediction['yhat']}W');
+
+          // Merge sensor data into prediction
+          prediction['latest_sensor_reading'] = latestSensor;
+          prediction['latest_sensor_timestamp'] = latestSensor['timestamp'];
+          prediction['has_live_sensor_data'] = true;
+
+          if (!mounted) return;
+          setState(() {
+            _prediction = prediction;
+            _isLoading = false;
+            _lastUpdated = DateTime.now();
+          });
+          return;
         } catch (e) {
-          lastError = e as Exception;
+          print('❌ Error with $baseUrl: $e');
           continue;
         }
       }
-      
+
+      // No data from any backend
       setState(() {
-        _errorMessage = 'Failed to fetch prediction. ${lastError?.toString() ?? 'No backends available'}';
+        _errorMessage = 'No sensor data available - sensor appears to be disconnected';
         _isLoading = false;
       });
     } catch (e) {
@@ -96,7 +121,7 @@ class _PredictionPageState extends State<PredictionPage> {
   Future<void> _fetchLatestSensorData(String baseUrl) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/api/sensor-data?limit=1'),
+        Uri.parse('$baseUrl/sensor-data?limit=1'),
         headers: {'Content-Type': 'application/json'},
       ).timeout(const Duration(seconds: 5));
 
@@ -258,21 +283,30 @@ class _PredictionPageState extends State<PredictionPage> {
   }
 
   Widget _buildIntervalControls(ThemeData theme, ColorScheme scheme) {
-    final intervals = [5, 15, 30, 60];
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      crossAxisAlignment: WrapCrossAlignment.center,
+    // Horizon selection disabled; fixed to 5 minutes for clarity
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text('Forecast horizon:', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-        ...intervals.map((minutes) => ChoiceChip(
-              label: Text('$minutes min'),
-              selected: _intervalMinutes == minutes,
-              onSelected: (_) {
-                setState(() => _intervalMinutes = minutes);
-                _fetchPrediction();
-              },
-            )),
+        Text(
+          'Forecast horizon:',
+          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: Colors.white),
+        ),
+        const SizedBox(width: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: const Text(
+            '5 min (fixed)',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -290,7 +324,7 @@ class _PredictionPageState extends State<PredictionPage> {
       runSpacing: 8,
       children: [
         _infoChip(Icons.schedule, 'Last update', lastUpdateText),
-        _infoChip(Icons.timelapse, 'Horizon', '$_intervalMinutes min ahead'),
+        _infoChip(Icons.timelapse, 'Horizon', '5 min ahead'),
         _infoChip(Icons.power, 'Live power', livePowerText),
       ],
     );
@@ -312,9 +346,14 @@ class _PredictionPageState extends State<PredictionPage> {
   }
 
   Widget _buildPredictionCardNew(ThemeData theme, ColorScheme scheme) {
-    final predictedEnergy = _prediction!['predicted_energy'] as double? ?? 3.5;
-    final lowerBound = _prediction!['lower_bound'] as double? ?? predictedEnergy * 0.8;
-    final upperBound = _prediction!['upper_bound'] as double? ?? predictedEnergy * 1.2;
+    // Handle both old field names and new API field names
+    final yhat = _prediction!['yhat'] as num? ?? _prediction!['predicted_energy'] as num? ?? 3.5;
+    final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num?;
+    final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num?;
+    
+    final predictedEnergy = (yhat as num).toDouble();
+    final lowerBound = (yhatLower as num? ?? predictedEnergy * 0.8).toDouble();
+    final upperBound = (yhatUpper as num? ?? predictedEnergy * 1.2).toDouble();
     
     // Extract live sensor data if available
     dynamic latestSensor = _prediction!['latest_sensor_reading'];
@@ -345,22 +384,567 @@ class _PredictionPageState extends State<PredictionPage> {
       }
     }
 
-    return PredictionCard(
-      predictedUsage: predictedEnergy,
-      currentUsage: currentEnergy > 0 ? currentEnergy : 3.2,
-      timeframe: '15 minutes',
-      confidence: ((upperBound - lowerBound) / predictedEnergy) * 100,
-      liveDataAvailable: currentEnergy > 0,
-      sensorStatus: sensorStatus,
+    return _buildSimplePredictionCard(
+      theme, 
+      scheme, 
+      currentEnergy > 0 ? currentEnergy : 3.2, 
+      predictedEnergy,
+      currentEnergy > 0,
+      sensorStatus,
+    );
+  }
+
+  Widget _buildSimplePredictionCard(
+    ThemeData theme,
+    ColorScheme scheme,
+    double currentUsage,
+    double predictedUsage,
+    bool hasLiveData,
+    String sensorStatus,
+  ) {
+    // Calculate the difference
+    final difference = predictedUsage - currentUsage;
+    final percentChange = (difference / currentUsage * 100).abs();
+    
+    // Determine status and message
+    String statusTitle;
+    String statusMessage;
+    Color statusColor;
+    IconData statusIcon;
+    
+    if (difference > currentUsage * 0.2) {
+      // Predicted is >20% higher - HIGH ALERT
+      statusTitle = '⚠️ Look Out!';
+      statusMessage = 'Energy usage will increase significantly in the next 5 minutes';
+      statusColor = Colors.red;
+      statusIcon = Icons.warning_amber_rounded;
+    } else if (difference > 0) {
+      // Predicted is higher but moderate - CAUTION
+      statusTitle = '📊 Going Well';
+      statusMessage = 'Usage is expected to rise slightly. Everything is normal';
+      statusColor = Colors.orange;
+      statusIcon = Icons.trending_up;
+    } else if (difference < 0) {
+      // Predicted is lower - GOOD TREND
+      statusTitle = '✅ Keep the Good Trend!';
+      statusMessage = 'Great! Energy usage is decreasing. Keep it up!';
+      statusColor = Colors.green;
+      statusIcon = Icons.trending_down;
+    } else {
+      // About the same - STABLE
+      statusTitle = '📊 Stable Usage';
+      statusMessage = 'Energy consumption is steady';
+      statusColor = Colors.blue;
+      statusIcon = Icons.remove;
+    }
+
+    return Card(
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              statusColor.withOpacity(0.12),
+              const Color(0xFFF8FBFF),
+            ],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Status Header
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: statusColor, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: statusColor.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Icon(statusIcon, color: statusColor, size: 32),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          statusTitle,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: const Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          statusMessage,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF1F2937),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 24),
+            
+            // Current vs Predicted
+            Row(
+              children: [
+                Expanded(
+                  child: _buildValueBox(
+                    theme,
+                    'Current Usage',
+                    '${currentUsage.toStringAsFixed(0)} W',
+                    Colors.blue,
+                    Icons.flash_on,
+                    hasLiveData ? '📡 Live' : '⚠️ No Data',
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildValueBox(
+                    theme,
+                    'Next 5 Min',
+                    '${predictedUsage.toStringAsFixed(0)} W',
+                    statusColor,
+                    Icons.show_chart,
+                    difference > 0 ? '+${percentChange.toStringAsFixed(0)}%' : '${percentChange.toStringAsFixed(0)}%',
+                  ),
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 20),
+            
+            // Change Indicator
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    difference > 0 ? Icons.arrow_upward : Icons.arrow_downward,
+                    color: statusColor,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    difference > 0
+                        ? 'Usage will increase by ${difference.toStringAsFixed(0)} W'
+                        : 'Usage will decrease by ${difference.abs().toStringAsFixed(0)} W',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: statusColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            if (hasLiveData) ...[
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Based on live sensor data',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF111827),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildValueBox(
+    ThemeData theme,
+    String label,
+    String value,
+    Color color,
+    IconData icon,
+    String badge,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.25), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 32),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: const Color(0xFF0F172A),
+              fontWeight: FontWeight.w700,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              badge,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: color,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildConfidenceChart(ThemeData theme, ColorScheme scheme) {
     if (_prediction == null) return const SizedBox.shrink();
 
-    final predictedEnergy = _prediction!['predicted_energy'] as double;
-    final lowerBound = _prediction!['lower_bound'] as double;
-    final upperBound = _prediction!['upper_bound'] as double;
+    // Check if we have actual live sensor data
+    final hasLiveData = _prediction!['has_live_sensor_data'] == true;
+    
+    if (!hasLiveData) {
+      return Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Icon(Icons.signal_wifi_off, size: 64, color: Colors.grey.shade400),
+              const SizedBox(height: 16),
+              Text(
+                'Historical Trend Chart',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'No live sensor data available',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Chart will display when sensor is connected',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Get sensor reading if available
+    final sensorReading = _prediction!['latest_sensor_reading'];
+    if (sensorReading == null) {
+      return const SizedBox.shrink();
+    }
+
+    final yhat = _prediction!['yhat'] as num? ?? 0;
+    final yhatLower = _prediction!['yhat_lower'] as num? ?? 0;
+    final yhatUpper = _prediction!['yhat_upper'] as num? ?? 0;
+
+    // Clamp negatives to zero to avoid showing negative power
+    final predictedPower = max(0.0, yhat.toDouble());
+    final lowerBound = max(0.0, yhatLower.toDouble());
+    final upperBound = max(0.0, yhatUpper.toDouble());
+    
+    // Create data points: lower, predicted, upper
+    final spots = [
+      FlSpot(0, lowerBound),
+      FlSpot(1, predictedPower),
+      FlSpot(2, upperBound),
+    ];
+
+    final maxValue = [predictedPower, upperBound, lowerBound].reduce((a, b) => a > b ? a : b);
+    final safeMax = maxValue <= 0 ? 10.0 : maxValue;
+    final maxY = safeMax * 1.2;
+    final minY = 0.0;
+    final yInterval = max(10.0, (maxY / 4));
+
+    return Card(
+      color: const Color(0xFF0F172A),
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'Prediction Confidence Range',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDCFCE7),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.circle, size: 8, color: Color(0xFF16A34A)),
+                      SizedBox(width: 6),
+                      Text(
+                        'Live Data',
+                        style: TextStyle(
+                          color: Color(0xFF166534),
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 250,
+              child: LineChart(
+                LineChartData(
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: yInterval,
+                    getDrawingHorizontalLine: (value) => FlLine(
+                      color: const Color(0xFF2A3142),
+                      strokeWidth: 1,
+                      dashArray: [5, 5],
+                    ),
+                  ),
+                  titlesData: FlTitlesData(
+                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 50,
+                        interval: yInterval,
+                        getTitlesWidget: (value, meta) => Text(
+                          '${value.toStringAsFixed(0)}W',
+                          style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 30,
+                        getTitlesWidget: (value, meta) {
+                          if (value == 0) return const Text('Lower', style: TextStyle(color: Color(0xFF9CA3AF), fontWeight: FontWeight.w600));
+                          if (value == 1) return const Text('Predicted', style: TextStyle(color: Color(0xFF9CA3AF), fontWeight: FontWeight.w600));
+                          if (value == 2) return const Text('Upper', style: TextStyle(color: Color(0xFF9CA3AF), fontWeight: FontWeight.w600));
+                          return const SizedBox.shrink();
+                        },
+                      ),
+                    ),
+                  ),
+                  borderData: FlBorderData(
+                    show: false,
+                  ),
+                  lineBarsData: [
+                    LineChartBarData(
+                      spots: spots,
+                      isCurved: false,
+                      color: Colors.transparent,
+                      barWidth: 0,
+                      dotData: FlDotData(
+                        show: true,
+                        getDotPainter: (spot, percent, bar, index) {
+                          const colors = [
+                            Color(0xFFF59E0B), // amber lower
+                            Color(0xFF0EA5E9), // blue predicted
+                            Color(0xFFEF4444), // red upper
+                          ];
+                          final c = colors[index.clamp(0, 2)];
+                          return FlDotCirclePainter(
+                            radius: 9,
+                            color: c,
+                            strokeWidth: 2.5,
+                            strokeColor: const Color(0xFF0B1220),
+                          );
+                        },
+                      ),
+                      belowBarData: BarAreaData(show: false),
+                    ),
+                  ],
+                  minX: -0.4,
+                  maxX: 2.4,
+                  minY: minY,
+                  maxY: maxY,
+                  lineTouchData: LineTouchData(
+                    enabled: true,
+                    touchTooltipData: LineTouchTooltipData(
+                      getTooltipItems: (touchedSpots) {
+                        return touchedSpots.map((spot) {
+                          String label = 'Value';
+                          if (spot.x == 0) label = 'Lower bound';
+                          if (spot.x == 1) label = 'Predicted';
+                          if (spot.x == 2) label = 'Upper bound';
+                          return LineTooltipItem(
+                            '$label\n${spot.y.toStringAsFixed(1)} W',
+                            const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          );
+                        }).toList();
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111827),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: const [
+                  Icon(Icons.info_outline, size: 16, color: Color(0xFF38BDF8)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Shows lower, predicted, and upper bounds for the next 5 minutes',
+                      style: TextStyle(
+                        color: Color(0xFFCBD5E1),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineChart(ThemeData theme, ColorScheme scheme) {
+    if (_prediction == null) return const SizedBox.shrink();
+    
+    // Check if we have actual live sensor data
+    final hasLiveData = _prediction!['has_live_sensor_data'] == true;
+    
+    if (!hasLiveData) {
+      return Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Icon(Icons.signal_wifi_off, size: 64, color: Colors.grey.shade400),
+              const SizedBox(height: 16),
+              Text(
+                'Confidence Interval',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'No live sensor data available',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Chart will display when sensor is connected',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade500,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final yhat = _prediction!['yhat'] as num? ?? 0;
+    final yhatLower = _prediction!['yhat_lower'] as num? ?? 0;
+    final yhatUpper = _prediction!['yhat_upper'] as num? ?? 0;
+    
+    final predicted = yhat.toDouble();
+    final lower = yhatLower.toDouble();
+    final upper = yhatUpper.toDouble();
+    
+    // Calculate confidence percentage
+    final range = upper - lower;
+    final confidence = range > 0 ? ((predicted - lower) / range * 100).clamp(0, 100) : 50.0;
 
     return Card(
       elevation: 3,
@@ -370,44 +954,104 @@ class _PredictionPageState extends State<PredictionPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Prediction Confidence Interval',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
+            Row(
+              children: [
+                Text(
+                  'Prediction Confidence Range',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.green.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.circle, size: 8, color: Colors.green.shade600),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Live Data',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: Colors.green.shade700,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             SizedBox(
-              height: 200,
+              height: 220,
               child: BarChart(
                 BarChartData(
-                  alignment: BarChartAlignment.center,
-                  maxY: upperBound * 1.3,
-                  barTouchData: BarTouchData(enabled: true),
+                  alignment: BarChartAlignment.spaceEvenly,
+                  maxY: upper * 1.15,
+                  minY: 0,
+                  barTouchData: BarTouchData(
+                    enabled: true,
+                    touchTooltipData: BarTouchTooltipData(
+                      getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                        String label;
+                        switch (groupIndex) {
+                          case 0:
+                            label = 'Lower Bound';
+                            break;
+                          case 1:
+                            label = 'Predicted';
+                            break;
+                          case 2:
+                            label = 'Upper Bound';
+                            break;
+                          default:
+                            label = '';
+                        }
+                        return BarTooltipItem(
+                          '$label\n${rod.toY.toStringAsFixed(1)}W',
+                          const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                   titlesData: FlTitlesData(
                     show: true,
                     bottomTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
                         getTitlesWidget: (value, meta) {
-                          const titles = ['Lower\nBound', 'Predicted', 'Upper\nBound'];
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 8.0),
-                            child: Text(
-                              titles[value.toInt()],
-                              style: theme.textTheme.bodySmall,
-                              textAlign: TextAlign.center,
-                            ),
-                          );
+                          const titles = ['Lower\nBound', 'Predicted\nValue', 'Upper\nBound'];
+                          if (value.toInt() < titles.length) {
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 8.0),
+                              child: Text(
+                                titles[value.toInt()],
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            );
+                          }
+                          return const SizedBox.shrink();
                         },
                       ),
                     ),
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
-                        reservedSize: 40,
+                        reservedSize: 50,
+                        interval: upper / 4,
                         getTitlesWidget: (value, meta) => Text(
-                          value.toStringAsFixed(1),
+                          '${value.toStringAsFixed(0)}W',
                           style: theme.textTheme.bodySmall,
                         ),
                       ),
@@ -415,14 +1059,30 @@ class _PredictionPageState extends State<PredictionPage> {
                     topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                     rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   ),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: upper / 4,
+                    getDrawingHorizontalLine: (value) => FlLine(
+                      color: Colors.grey.shade300,
+                      strokeWidth: 1,
+                    ),
+                  ),
+                  borderData: FlBorderData(
+                    show: true,
+                    border: Border(
+                      bottom: BorderSide(color: Colors.grey.shade400, width: 1),
+                      left: BorderSide(color: Colors.grey.shade400, width: 1),
+                    ),
+                  ),
                   barGroups: [
                     BarChartGroupData(
                       x: 0,
                       barRods: [
                         BarChartRodData(
-                          toY: lowerBound,
-                          color: Colors.blue.shade400,
-                          width: 30,
+                          toY: lower,
+                          color: Colors.orange.shade400,
+                          width: 40,
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                         ),
                       ],
@@ -431,9 +1091,9 @@ class _PredictionPageState extends State<PredictionPage> {
                       x: 1,
                       barRods: [
                         BarChartRodData(
-                          toY: predictedEnergy,
+                          toY: predicted,
                           color: EnergyColorScheme.primaryBlue,
-                          width: 30,
+                          width: 40,
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                         ),
                       ],
@@ -442,9 +1102,9 @@ class _PredictionPageState extends State<PredictionPage> {
                       x: 2,
                       barRods: [
                         BarChartRodData(
-                          toY: upperBound,
+                          toY: upper,
                           color: Colors.red.shade400,
-                          width: 30,
+                          width: 40,
                           borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                         ),
                       ],
@@ -457,124 +1117,23 @@ class _PredictionPageState extends State<PredictionPage> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.blue.shade50,
+                color: EnergyColorScheme.infoTeal.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text(
-                'The prediction confidence interval shows the range where actual consumption is expected to fall.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.blue.shade700,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTimelineChart(ThemeData theme, ColorScheme scheme) {
-    // Simulated 15-minute forecast breakdown
-    final forecastData = [
-      const FlSpot(0, 3.0),
-      const FlSpot(1, 3.2),
-      const FlSpot(2, 3.4),
-      const FlSpot(3, 3.5),
-      const FlSpot(4, 3.6),
-      const FlSpot(5, 3.7),
-    ];
-
-    return Card(
-      elevation: 3,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '15-Minute Forecast Breakdown',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              height: 250,
-              child: LineChart(
-                LineChartData(
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    getDrawingHorizontalLine: (value) =>
-                        const FlLine(color: Colors.grey, strokeWidth: 0.5),
-                  ),
-                  titlesData: FlTitlesData(
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 40,
-                        getTitlesWidget: (value, meta) => Text(
-                          value.toStringAsFixed(1),
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 30,
-                        getTitlesWidget: (value, meta) => Text(
-                          '${(value * 2.5).toStringAsFixed(0)}m',
-                          style: theme.textTheme.bodySmall,
-                        ),
+              child: Row(
+                children: [
+                  Icon(Icons.insights, size: 20, color: EnergyColorScheme.infoTeal),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The prediction will likely fall within this range with ${confidence.toStringAsFixed(0)}% confidence',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: EnergyColorScheme.infoTeal,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
-                  borderData: FlBorderData(
-                    show: true,
-                    border: Border(
-                      bottom: BorderSide(color: Colors.grey.shade300),
-                      left: BorderSide(color: Colors.grey.shade300),
-                    ),
-                  ),
-                  lineBarsData: [
-                    LineChartBarData(
-                      spots: forecastData,
-                      isCurved: true,
-                      color: EnergyColorScheme.infoTeal,
-                      barWidth: 3,
-                      isStrokeCapRound: true,
-                      dotData: FlDotData(
-                        show: true,
-                        getDotPainter: (spot, percent, bar, index) =>
-                            FlDotCirclePainter(
-                          radius: 5,
-                          color: EnergyColorScheme.infoTeal,
-                          strokeWidth: 2,
-                          strokeColor: Colors.white,
-                        ),
-                      ),
-                      belowBarData: BarAreaData(
-                        show: true,
-                        gradient: LinearGradient(
-                          colors: [
-                            EnergyColorScheme.infoTeal.withOpacity(0.3),
-                            EnergyColorScheme.infoTeal.withOpacity(0.0),
-                          ],
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                        ),
-                      ),
-                    ),
-                  ],
-                  minX: 0,
-                  maxX: 5,
-                  minY: 2.5,
-                  maxY: 4.0,
-                ),
+                ],
               ),
             ),
           ],
@@ -585,9 +1144,13 @@ class _PredictionPageState extends State<PredictionPage> {
 
 
   Widget _buildPredictionCard(ThemeData theme, ColorScheme scheme) {
-    final predictedEnergy = _prediction!['predicted_energy'] as double;
-    final lowerBound = _prediction!['lower_bound'] as double;
-    final upperBound = _prediction!['upper_bound'] as double;
+    final yhat = _prediction!['yhat'] as num? ?? _prediction!['predicted_energy'] as num? ?? 0;
+    final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num? ?? 0;
+    final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num? ?? 0;
+    
+    final predictedEnergy = (yhat as num).toDouble();
+    final lowerBound = (yhatLower as num).toDouble();
+    final upperBound = (yhatUpper as num).toDouble();
     final timestamp = _prediction!['timestamp'] as String;
 
     // Determine status color based on predicted value
@@ -758,9 +1321,13 @@ class _PredictionPageState extends State<PredictionPage> {
   Widget _buildVisualizationChart(ThemeData theme, ColorScheme scheme) {
     if (_prediction == null) return const SizedBox.shrink();
 
-    final predictedEnergy = _prediction!['predicted_energy'] as double;
-    final lowerBound = _prediction!['lower_bound'] as double;
-    final upperBound = _prediction!['upper_bound'] as double;
+    final yhat = _prediction!['yhat'] as num? ?? _prediction!['predicted_energy'] as num? ?? 0;
+    final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num? ?? 0;
+    final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num? ?? 0;
+    
+    final predictedEnergy = (yhat as num).toDouble();
+    final lowerBound = (yhatLower as num).toDouble();
+    final upperBound = (yhatUpper as num).toDouble();
 
     return Card(
       elevation: 2,

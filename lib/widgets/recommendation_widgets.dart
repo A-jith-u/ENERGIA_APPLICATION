@@ -141,7 +141,7 @@ class RecommendationService {
           final response = await http.get(
             Uri.parse('$baseUrl/recommendations/recommendations'),
             headers: headers,
-          );
+          ).timeout(const Duration(seconds: 5));
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
@@ -149,8 +149,9 @@ class RecommendationService {
             return recList.map((json) => Recommendation.fromJson(json)).toList();
           }
           if (response.statusCode == 401) {
-            // token invalid/expired
-            return [];
+            // token invalid/expired - return generic recommendations
+            print('Token expired or missing, returning generic recommendations');
+            return _getGenericRecommendations();
           }
           lastErr = Exception('Status ${response.statusCode}');
         } catch (e) {
@@ -158,11 +159,47 @@ class RecommendationService {
           continue;
         }
       }
-      throw lastErr ?? Exception('No backend reachable');
+      print('No backend reachable for recommendations, using generic');
+      return _getGenericRecommendations();
     } catch (e) {
       print('Error fetching recommendations: $e');
-      return [];
+      return _getGenericRecommendations();
     }
+  }
+
+  static List<Recommendation> _getGenericRecommendations() {
+    return [
+      Recommendation(
+        id: 'generic_1',
+        title: 'Energy Monitoring Active',
+        message: 'Your classroom energy is being monitored in real-time.',
+        priority: 'info',
+        type: 'informational',
+        icon: 'info',
+        data: {},
+        timestamp: DateTime.now().toIso8601String(),
+      ),
+      Recommendation(
+        id: 'generic_2',
+        title: 'Optimize Usage',
+        message: 'Consider turning off devices when not in use to save energy.',
+        priority: 'medium',
+        type: 'optimization',
+        icon: 'lightbulb',
+        data: {},
+        timestamp: DateTime.now().toIso8601String(),
+      ),
+      Recommendation(
+        id: 'generic_3',
+        title: 'Peak Hours Alert',
+        message: 'Peak energy usage typically occurs between 10-16:00 hours.',
+        priority: 'low',
+        type: 'informational',
+        icon: 'trending_up',
+        data: {},
+        timestamp: DateTime.now().toIso8601String(),
+      ),
+    ];
   }
 
   static Future<Map<String, int>> fetchRecommendationCount(String? token) async {
@@ -180,7 +217,7 @@ class RecommendationService {
           final response = await http.get(
             Uri.parse('$baseUrl/recommendations/recommendations/count'),
             headers: headers,
-          );
+          ).timeout(const Duration(seconds: 5));
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
@@ -193,7 +230,8 @@ class RecommendationService {
             };
           }
           if (response.statusCode == 401) {
-            return {'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0};
+            // Return generic count for unauth users
+            return {'total': 3, 'critical': 0, 'high': 0, 'medium': 1, 'low': 2};
           }
         } catch (e) {
           continue;
@@ -202,7 +240,7 @@ class RecommendationService {
     } catch (e) {
       print('Error fetching recommendation count: $e');
     }
-    return {'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0};
+    return {'total': 3, 'critical': 0, 'high': 0, 'medium': 1, 'low': 2};
   }
 }
 

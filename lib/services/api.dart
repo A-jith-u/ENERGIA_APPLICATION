@@ -37,7 +37,7 @@ Future<String> login(String username, String password, {String? department}) asy
   print('[API] Trying candidates: $_candidates');
   
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/login');
+    final uri = Uri.parse('$base/login');
     print('[API] Trying: $uri');
     try {
       final requestBody = {'username': username, 'password': password};
@@ -97,7 +97,7 @@ Future<String> login(String username, String password, {String? department}) asy
 Future<void> register(String username, String password, {String role = 'student', String? ktuId, String? name, String? department, String? year, String? email}) async {
   Exception? lastError;
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/register');
+    final uri = Uri.parse('$base/register');
     try {
       final body = <String, dynamic>{
         'username': username,
@@ -163,7 +163,7 @@ Future<void> sendNotification({
 Future<void> requestPasswordReset(String username) async {
   Exception? lastError;
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/request-password-reset');
+    final uri = Uri.parse('$base/request-password-reset');
     try {
       final resp = await http
           .post(uri,
@@ -183,7 +183,7 @@ Future<void> requestPasswordReset(String username) async {
 Future<void> confirmPasswordReset(String username, String otp, String newPassword) async {
   Exception? lastError;
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/confirm-password-reset');
+    final uri = Uri.parse('$base/confirm-password-reset');
     try {
       final resp = await http
           .post(uri,
@@ -210,7 +210,7 @@ Future<List<Map<String, dynamic>>> getCoordinators() async {
   print('[API] Fetching coordinators');
   
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/users/coordinators');
+    final uri = Uri.parse('$base/users/coordinators');
     print('[API] Trying: $uri');
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
@@ -240,7 +240,7 @@ Future<List<Map<String, dynamic>>> getClassRepresentatives() async {
   print('[API] Fetching class representatives');
   
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/users/class-representatives');
+    final uri = Uri.parse('$base/users/class-representatives');
     print('[API] Trying: $uri');
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
@@ -270,7 +270,7 @@ Future<Map<String, int>> getUserCounts() async {
   print('[API] Fetching user counts');
   
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/users/counts');
+    final uri = Uri.parse('$base/users/counts');
     print('[API] Trying: $uri');
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
@@ -299,13 +299,41 @@ Future<Map<String, int>> getUserCounts() async {
   throw ApiError('Get user counts failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
 }
 
+/// Fetch campus overview metrics: total usage, active/total rooms, efficiency, inactive rooms
+Future<Map<String, dynamic>> getCampusOverview({int activeWindowMinutes = 5, int usageWindowHours = 24}) async {
+  Exception? lastError;
+  print('[API] Fetching campus overview');
+
+  for (final base in _candidates) {
+    final uri = Uri.parse('$base/dashboard/overview?active_window_minutes=$activeWindowMinutes&usage_window_hours=$usageWindowHours');
+    print('[API] Trying: $uri');
+    try {
+      final resp = await http.get(uri).timeout(const Duration(seconds: 5));
+      print('[API] Response from $base: ${resp.statusCode}');
+
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        print('[API] Overview: $data');
+        return data;
+      }
+      throw ApiError('Get campus overview failed (${base}): ${resp.statusCode} ${resp.body}');
+    } catch (e) {
+      print('[API] Error with $base: $e');
+      lastError = e as Exception;
+      continue;
+    }
+  }
+  print('[API] All candidates failed. Last error: $lastError');
+  throw ApiError('Get campus overview failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+}
+
 /// Delete a user (coordinator or class representative) by username
 Future<void> deleteUser(String username) async {
   Exception? lastError;
   print('[API] Deleting user: $username');
   
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/auth/users/$username');
+    final uri = Uri.parse('$base/users/$username');
     print('[API] Trying DELETE: $uri');
     try {
       final resp = await http.delete(uri).timeout(const Duration(seconds: 5));

@@ -3,12 +3,24 @@ Activity logging utility to be used across all API modules.
 """
 import asyncio
 import json
+import os
+import sys
+import importlib
 from typing import Optional
 from datetime import datetime
 from sqlalchemy import text, create_engine
-import config
 
-DB_URL = config.get_db_url()
+def _load_cfg():
+    """Load config module handling both package and script execution."""
+    if __package__:
+        from . import config
+        return config
+    else:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        return importlib.import_module("config")
+
+cfg = _load_cfg()
+DB_URL = cfg.get_db_url()
 engine = create_engine(DB_URL)
 
 

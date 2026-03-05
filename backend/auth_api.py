@@ -16,9 +16,33 @@ from passlib.context import CryptContext
 import jwt
 from datetime import datetime, timedelta, timezone
 import secrets
+import string
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from sqlalchemy.exc import SQLAlchemyError
+from fastapi import APIRouter, Request, HTTPException
+from datetime import datetime, timezone
+import pandas as pd
+import numpy as np
+from sqlalchemy import text
+import joblib
 
+
+# --- AI MODEL LOADING ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) 
+MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "isolation_forest_model.pkl")
+FEATURES_PATH = os.path.join(BASE_DIR, "..", "models", "model_features.pkl")
+
+# Initialize these variables so the functions can see them
+model = None
+model_features = None
+
+try:
+    if os.path.exists(MODEL_PATH):
+        model = joblib.load(MODEL_PATH)
+        model_features = joblib.load(FEATURES_PATH)
+        print("✅ Anomaly Detection Model Loaded Successfully")
+except Exception as e:
+    print(f"❌ Error loading AI model: {e}")
 def _load_cfg():
     """Load config module handling both package and script execution."""
     if __package__:
@@ -73,6 +97,32 @@ def _init_password_reset_table():
 
 _init_password_reset_table()
 
+
+def _ensure_rooms_department_column():
+    """Ensure legacy databases have rooms.department column required by department filters."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS department TEXT"))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure rooms.department column: {exc}")
+
+
+def _ensure_sensor_data_occupancy_column():
+    """Ensure sensor_data table has occupancy column for AI processing."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS occupancy INTEGER"))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure sensor_data.occupancy column: {exc}")
+
+
+_ensure_rooms_department_column()
+_ensure_sensor_data_occupancy_column()
+
+
+def _is_admin_department(department: str | None) -> bool:
+    return bool(department and department.strip().lower() == "admin")
+
 # Pydantic models
 
 class RegisterRequest(BaseModel):
@@ -121,6 +171,10 @@ class PasswordResetConfirmRequest(BaseModel):
     username: str
     otp: str
     new_password: str
+
+
+
+
 
 # Use this version of the change-password endpoint
 @app.post("/change-password")
@@ -492,8 +546,8 @@ async def invite_user(req: InviteUserRequest):
     Saves credentials to appropriate DB table and sends personalized welcome email
     with login credentials and role-specific instructions.
     """
-    # Generate a secure temporary password
-    otp = secrets.token_urlsafe(12)  # 12-char base64-encoded string
+    # Generate a secure temporary password (6 chars, letters+digits+symbol)
+    otp = _generate_short_password(6)
     pw_hash = PWD_CTX.hash(otp)
     role_lower = req.role.lower()
     target_table = "class_representatives" if ("student" in role_lower or "representative" in role_lower) else ("coordinators" if "coordinator" in role_lower else "admins")
@@ -525,6 +579,13 @@ async def invite_user(req: InviteUserRequest):
                     "i": existing[0],
                 }
             elif target_table == "coordinators":
+                # Fetch existing coordinator_id so email never shows None
+                coordinator_id_row = conn.execute(
+                    text("SELECT coordinator_id FROM coordinators WHERE id = :i"),
+                    {"i": existing[0]}
+                ).fetchone()
+                coordinator_id = coordinator_id_row[0] if coordinator_id_row else None
+
                 query = text("UPDATE coordinators SET password_hash=:p, name=:n, department=:d, email=:e WHERE id=:i")
                 params = {"p": pw_hash, "n": req.name, "d": req.department, "e": target_email, "i": existing[0]}
             else:  # admins
@@ -554,14 +615,13 @@ async def invite_user(req: InviteUserRequest):
                 # Get all existing coordinator IDs for this department
                 existing_ids = conn.execute(
                     text("SELECT coordinator_id FROM coordinators WHERE coordinator_id LIKE :prefix ORDER BY coordinator_id"),
-                    {"prefix": f"{dept_prefix}%"}
+                    {"prefix": f"{dept_prefix}%"},
                 ).fetchall()
                 
                 # Extract numbers from existing IDs and find the next available number
                 existing_numbers = []
                 for (cid,) in existing_ids:
                     try:
-                        # Extract the numeric part after the department prefix
                         num = int(cid[len(dept_prefix):])
                         existing_numbers.append(num)
                     except (ValueError, IndexError):
@@ -655,6 +715,55 @@ async def invite_user(req: InviteUserRequest):
         "email_status": email_status,
         "message": f"Invitation {'sent' if email_status == 'sent' else 'created but email sending failed'}"
     }
+@app.get("/anomalies")
+def get_anomalies(limit: int = 10, department: str = None):
+    """Fetch recent anomalies from the anomaly_logs table.
+    Optional: filter by department if provided."""
+    try:
+        with engine.connect() as conn:
+            if department and not _is_admin_department(department):
+                # Filter by department - join with rooms table
+                result = conn.execute(
+                    text("""
+                        SELECT al.id, al.ds, al.device_id, al.power, al.occupancy, al.anomaly_score, al.energy_accumulated
+                        FROM anomaly_logs al
+                        LEFT JOIN rooms r ON al.device_id = r.room_id
+                        WHERE al.is_anomaly = -1 
+                        AND r.department = :department
+                        ORDER BY al.ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"department": department, "limit": limit}
+                )
+            else:
+                # No department filter
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, power, occupancy, anomaly_score, energy_accumulated
+                        FROM anomaly_logs 
+                        WHERE is_anomaly = -1
+                        ORDER BY ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"limit": limit}
+                )
+            
+            rows = result.fetchall()
+            return [
+                {
+                    "id": row[0],
+                    "timestamp": row[1].isoformat() if row[1] else None,
+                    "device_id": row[2],
+                    "power": row[3],
+                    "occupancy": row[4],
+                    "score": round(row[5], 4) if row[5] else 0,
+                    "energy": row[6]
+                }
+                for row in rows
+            ]
+    except Exception as e:
+        print(f"Error fetching anomalies: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error fetching alerts")
 @app.post("/register")
 def register(req: RegisterRequest):
     # For student registration, verify KTU ID, Department, and Year against authorized list
@@ -727,9 +836,9 @@ def login(req: LoginRequest, request: Request):
         client_ip = request.client.host if request.client else "0.0.0.0"
         
         with engine.begin() as conn:
-            # Try admin by username first
+            # Try admin by username or email (accept either identifier)
             admin_row = conn.execute(
-                text("SELECT id, password_hash, name, email, username FROM admins WHERE UPPER(username)=UPPER(:u)"),
+                text("SELECT id, password_hash, name, email, username FROM admins WHERE UPPER(username)=UPPER(:u) OR UPPER(email)=UPPER(:u)"),
                 {"u": req.username.strip()},
             ).fetchone()
 
@@ -839,6 +948,150 @@ def login(req: LoginRequest, request: Request):
         # For database or system errors, return generic error
         raise HTTPException(status_code=500, detail="Something went wrong")
 
+# Alias endpoints for client compatibility
+@app.post("/student/login")
+def student_login(req: LoginRequest, request: Request):
+    """Alias for student login - delegates to unified login endpoint."""
+    return login(req, request)
+
+@app.post("/admin/login")
+def admin_login(req: LoginRequest, request: Request):
+    """Alias for admin login - delegates to unified login endpoint."""
+    return login(req, request)
+
+@app.post("/coordinator/login")
+def coordinator_login(req: LoginRequest, request: Request):
+    """Dedicated coordinator login endpoint with department validation."""
+    try:
+        client_ip = request.client.host if request.client else "0.0.0.0"
+        
+        with engine.begin() as conn:
+            # Look up coordinator by coordinator_id
+            coordinator_row = conn.execute(
+                text("""
+                    SELECT id, password_hash, name, department, email, coordinator_id, created_at 
+                    FROM coordinators 
+                    WHERE UPPER(coordinator_id)=UPPER(:u)
+                """),
+                {"u": req.username.strip()},
+            ).fetchone()
+            
+            if not coordinator_row:
+                activity_logger.log_activity(
+                    user_id=req.username,
+                    action_type="login",
+                    action_description="Failed coordinator login - user not found",
+                    status="failure",
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            u_id, pw_hash, name, dept, email, coordinator_id, created_at = coordinator_row
+            
+            # Verify password
+            if not PWD_CTX.verify(req.password, pw_hash):
+                activity_logger.log_activity(
+                    user_id=coordinator_id,
+                    user_name=name,
+                    user_role="coordinator",
+                    action_type="login",
+                    action_description="Failed coordinator login - invalid password",
+                    status="failure",
+                    department=dept,
+                    ip_address=client_ip,
+                )
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            
+            # Update last_login timestamp
+            conn.execute(
+                text("UPDATE coordinators SET last_login = NOW() WHERE id = :id"),
+                {"id": u_id}
+            )
+            
+            # Log successful login
+            activity_logger.log_activity(
+                user_id=str(u_id),
+                user_name=name,
+                user_role="coordinator",
+                action_type="login",
+                action_description="Coordinator successfully logged in",
+                status="success",
+                department=dept,
+                ip_address=client_ip,
+            )
+            
+            # Create JWT token
+            payload = {
+                "sub": str(u_id),
+                "username": coordinator_id,
+                "email": email,
+                "name": name,
+                "role": "coordinator",
+                "department": dept,
+                "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+            }
+            
+            token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+            
+            # Return coordinator data with token
+            return {
+                "id": u_id,
+                "coordinator_id": coordinator_id,
+                "name": name,
+                "email": email,
+                "department": dept,
+                "created_at": created_at.isoformat() if created_at else None,
+                "token": token,
+                "token_type": "bearer"
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Coordinator login error: {e}")
+        raise HTTPException(status_code=500, detail="Something went wrong")
+
+
+@app.get("/user/profile")
+def get_user_profile(request: Request):
+    """Get current user profile from JWT token."""
+    try:
+        # Extract token from Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+        
+        token = auth_header.split(" ")[1]
+        
+        # Decode JWT token
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Return user data from token payload
+        user_data = {
+            "id": payload.get("sub"),
+            "username": payload.get("username"),
+            "name": payload.get("name"),
+            "email": payload.get("username"),  # username is email in most cases
+            "role": payload.get("role"),
+            "department": payload.get("department"),
+            "ktu_id": payload.get("ktu_id"),
+            "year": payload.get("year"),
+        }
+        
+        return user_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Get profile error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve profile")
+
+
 @app.get("/users/coordinators")
 def get_coordinators():
     """Fetch all coordinators from the database."""
@@ -907,6 +1160,182 @@ def get_user_counts():
         }
 
 
+# Cache for dashboard overview to reduce DB load
+_overview_cache = {"data": None, "timestamp": None}
+_overview_cache_ttl = 30  # seconds
+
+@app.get("/dashboard/overview")
+def get_dashboard_overview(active_window_minutes: int = 5, usage_window_hours: int = 1):
+    """Return campus-wide live metrics for the admin dashboard (cached for 30s).
+
+    Formulas:
+    - total_usage_kwh: time-weighted integration of incoming power samples over window
+      E(Wh) = Σ(P(W) * Δt(hours)) per device, then converted to kWh
+    - active_rooms / total_rooms: live reporting rooms vs room inventory
+    - inactive_rooms: rooms in inventory with no report in active window
+    - efficiency_percent: percentage of active rooms whose latest reading is <= room threshold
+      (threshold is stored in kW; power is compared in watts)
+    """
+
+    now = datetime.now(timezone.utc)
+    if _overview_cache["data"] and _overview_cache["timestamp"]:
+        age = (now - _overview_cache["timestamp"]).total_seconds()
+        if age < _overview_cache_ttl:
+            return _overview_cache["data"]
+
+    active_window_minutes = max(1, min(active_window_minutes, 60))
+    usage_window_hours = max(1, min(usage_window_hours, 24))
+
+    active_interval = f"{active_window_minutes} minutes"
+    usage_interval = f"{usage_window_hours} hours"
+
+    with engine.begin() as conn:
+        total_usage_wh = conn.execute(
+            text(
+                """
+                WITH ordered AS (
+                    SELECT
+                        sd.device_id,
+                        sd.ds,
+                        COALESCE(sd.power, sd.value, 0)::double precision AS power_w,
+                        LEAD(sd.ds) OVER (PARTITION BY sd.device_id ORDER BY sd.ds) AS next_ds
+                    FROM sensor_data sd
+                    WHERE sd.ds >= NOW() - CAST(:usage_interval AS INTERVAL)
+                      AND sd.ds <= NOW()
+                ),
+                segments AS (
+                    SELECT
+                        power_w,
+                        LEAST(
+                            GREATEST(EXTRACT(EPOCH FROM (COALESCE(next_ds, NOW()) - ds)) / 3600.0, 0),
+                            0.25
+                        ) AS dt_hours
+                    FROM ordered
+                )
+                SELECT COALESCE(SUM(power_w * dt_hours), 0)
+                FROM segments
+                """
+            ),
+            {"usage_interval": usage_interval},
+        ).scalar() or 0
+
+        total_rooms = conn.execute(
+            text("SELECT COUNT(*) FROM rooms")
+        ).scalar() or 0
+
+        active_rooms = conn.execute(
+            text(
+                """
+                SELECT COUNT(DISTINCT sd.device_id)
+                FROM sensor_data sd
+                WHERE sd.ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                """
+            ),
+            {"active_interval": active_interval},
+        ).scalar() or 0
+
+        if total_rooms == 0:
+            total_rooms = conn.execute(
+                text(
+                    """
+                    SELECT COUNT(DISTINCT sd.device_id)
+                    FROM sensor_data sd
+                    WHERE sd.ds >= NOW() - INTERVAL '7 days'
+                    """
+                )
+            ).scalar() or 0
+
+        if total_rooms > 0:
+            inactive_rows = conn.execute(
+                text(
+                    """
+                    SELECT r.room_id
+                    FROM rooms r
+                    WHERE r.room_id NOT IN (
+                        SELECT DISTINCT sd.device_id
+                        FROM sensor_data sd
+                        WHERE sd.ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                    )
+                    ORDER BY r.room_id
+                    LIMIT 100
+                    """
+                ),
+                {"active_interval": active_interval},
+            ).fetchall()
+        else:
+            inactive_rows = conn.execute(
+                text(
+                    """
+                    SELECT DISTINCT d1.device_id
+                    FROM (
+                        SELECT DISTINCT sd.device_id
+                        FROM sensor_data sd
+                        WHERE sd.ds >= NOW() - INTERVAL '7 days'
+                    ) d1
+                    WHERE d1.device_id NOT IN (
+                        SELECT DISTINCT sd2.device_id
+                        FROM sensor_data sd2
+                        WHERE sd2.ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                    )
+                    ORDER BY d1.device_id
+                    LIMIT 100
+                    """
+                ),
+                {"active_interval": active_interval},
+            ).fetchall()
+
+        efficiency_percent = conn.execute(
+            text(
+                """
+                WITH latest_active AS (
+                    SELECT x.device_id, x.power_w
+                    FROM (
+                        SELECT
+                            sd.device_id,
+                            COALESCE(sd.power, sd.value, 0)::double precision AS power_w,
+                            ROW_NUMBER() OVER (PARTITION BY sd.device_id ORDER BY sd.ds DESC) AS rn
+                        FROM sensor_data sd
+                        WHERE sd.ds >= NOW() - CAST(:active_interval AS INTERVAL)
+                    ) x
+                    WHERE x.rn = 1
+                )
+                SELECT
+                    CASE
+                        WHEN COUNT(*) = 0 THEN NULL
+                        ELSE 100.0 * SUM(
+                            CASE
+                                WHEN la.power_w <= COALESCE(r.threshold, 3.0) * 1000.0 THEN 1
+                                ELSE 0
+                            END
+                        )::double precision / COUNT(*)
+                    END AS efficiency_pct
+                FROM latest_active la
+                LEFT JOIN rooms r ON r.room_id = la.device_id
+                """
+            ),
+            {"active_interval": active_interval},
+        ).scalar()
+
+    total_usage_kwh = float(total_usage_wh) / 1000.0
+    if efficiency_percent is None:
+        efficiency_percent = (active_rooms / total_rooms) * 100.0 if total_rooms > 0 else 0.0
+
+    result = {
+        "total_usage_kwh": round(total_usage_kwh, 3),
+        "active_rooms": active_rooms,
+        "total_rooms": total_rooms,
+        "inactive_rooms": [row[0] for row in inactive_rows],
+        "efficiency_percent": round(float(efficiency_percent), 1),
+        "active_window_minutes": active_window_minutes,
+        "usage_window_hours": usage_window_hours,
+    }
+
+    _overview_cache["data"] = result
+    _overview_cache["timestamp"] = now
+
+    return result
+
+
 @app.delete("/users/{username}")
 def delete_user(username: str):
     """Delete a user (coordinator or class representative) by username."""
@@ -933,138 +1362,169 @@ def delete_user(username: str):
         
         return {"status": "success", "message": f"User '{username}' deleted successfully", "deleted_count": deleted_count}
 
-
 @app.post("/sensor-data")
 async def receive_sensor_data(request: Request):
-    """
-    Receive sensor data from ESP32 and store it in the database.
-    
-    Expected JSON payload:
-    {
-        "device_id": "ESP32-LAB-001",
-        "voltage": 230.5,
-        "current": 2.3,
-        "power": 529.15,
-        "energy": 1.5,
-        "frequency": 50.0,
-        "power_factor": 0.95
-    }
-    """
+    global model, model_features
     try:
         payload = await request.json()
-        
-        # Store raw JSON payload for debugging and data recovery
-        import json
-        raw_json = json.dumps(payload)
-
         device_id = payload.get("device_id", "unknown")
-
-        # Extract metrics, cast to float where present
-        def _to_float(key, default=None):
-            v = payload.get(key, default)
-            if v is None:
-                return None
-            try:
-                return float(v)
-            except Exception:
-                raise HTTPException(status_code=400, detail=f"Invalid numeric value for '{key}': {v}")
-
-        voltage = _to_float("voltage")
-        current = _to_float("current")
-        power = _to_float("power")
-        energy = _to_float("energy")
-        frequency = _to_float("frequency")
-        power_factor = _to_float("power_factor")
-
-        # Maintain legacy 'value' field (use power if provided)
-        value = power if power is not None else _to_float("value", 0)
-
         timestamp = datetime.now(timezone.utc)
 
+        # 1. Identify what data we just received
+        has_power = "power" in payload and payload.get("power") is not None
+        has_occ = "human_present" in payload and payload.get("human_present") is not None
+
         with engine.begin() as conn:
-            # Store in sensor_data table (processed)
-            conn.execute(
-                text(
-                    "INSERT INTO sensor_data(ds, device_id, value, voltage, current, power, energy, frequency, power_factor) "
-                    "VALUES (:ds, :device_id, :value, :voltage, :current, :power, :energy, :frequency, :power_factor)"
-                ),
-                {
-                    "ds": timestamp,
-                    "device_id": device_id,
-                    "value": float(value) if value is not None else None,
-                    "voltage": voltage,
-                    "current": current,
-                    "power": power,
-                    "energy": energy,
-                    "frequency": frequency,
-                    "power_factor": power_factor,
-                },
-            )
-            
-            # Store in esp32_raw_data table (raw payload)
-            conn.execute(
-                text(
-                    "INSERT INTO esp32_raw_data(device_id, raw_payload, voltage, current, power, energy, frequency, power_factor, timestamp, processed) "
-                    "VALUES (:device_id, :raw_payload, :voltage, :current, :power, :energy, :frequency, :power_factor, :timestamp, :processed)"
-                ),
-                {
-                    "device_id": device_id,
-                    "raw_payload": raw_json,
-                    "voltage": voltage,
-                    "current": current,
-                    "power": power,
-                    "energy": energy,
-                    "frequency": frequency,
-                    "power_factor": power_factor,
-                    "timestamp": timestamp,
-                    "processed": 1,  # Mark as processed since we're storing it
-                },
-            )
+            # 2. LOOKUP: Check for a row from this device created in the last 60 seconds
+            # This window bridges the asynchronous nature of your two ESP32s
+            existing = conn.execute(
+                text("""SELECT id, occupancy, power, current, voltage, energy, power_factor 
+                        FROM sensor_data 
+                        WHERE device_id = :id 
+                        AND ds > :window 
+                        ORDER BY ds DESC LIMIT 1"""),
+                {"id": device_id, "window": timestamp - timedelta(seconds=60)}
+            ).fetchone()
 
-            # Log this activity
-            activity_logger.log_activity(
-                user_id=device_id,
-                action_type="data_submission",
-                resource_type="sensor",
-                resource_id=device_id,
-                action_description=f"Sensor reading inserted: power={power}W",
-            )
+            if existing:
+                row_id = existing[0]
+                # 3. UPDATE: Fill the gaps in the existing 1-minute row
+                if has_occ:
+                    occupancy = payload.get("human_present")
+                    conn.execute(
+                        text("UPDATE sensor_data SET occupancy = :occ WHERE id = :rid"),
+                        {"occ": occupancy, "rid": row_id}
+                    )
+                    # Use existing electrical data for AI processing
+                    p, c, pf, v, e = existing[2], existing[3], existing[5], existing[4], existing[6]
+                
+                if has_power:
+                    p = float(payload.get("power", 0))
+                    c = float(payload.get("current", 0))
+                    pf = float(payload.get("power_factor", 0))
+                    v = float(payload.get("voltage", 0))
+                    e = float(payload.get("energy", 0))
+                    
+                    conn.execute(
+                        text("""UPDATE sensor_data SET 
+                                power=:p, current=:c, voltage=:v, energy=:e, power_factor=:pf 
+                                WHERE id = :rid"""),
+                        {"p": p, "c": c, "v": v, "e": e, "pf": pf, "rid": row_id}
+                    )
+                    # Use existing occupancy context for AI processing
+                    occupancy = existing[1] if existing[1] is not None else 0
+            else:
+                # 4. INSERT: Create a fresh row if no recent entry exists
+                p = float(payload.get("power", 0)) if has_power else 0.0
+                c = float(payload.get("current", 0)) if has_power else 0.0
+                pf = float(payload.get("power_factor", 0)) if has_power else 0.0
+                v = float(payload.get("voltage", 0)) if has_power else 0.0
+                e = float(payload.get("energy", 0)) if has_power else 0.0
+                occupancy = payload.get("human_present") if has_occ else 0
+                
+                # If this is power data without occupancy, perform a quick history lookup
+                if has_power and not has_occ:
+                    occ_q = conn.execute(
+                        text("SELECT occupancy FROM sensor_data WHERE device_id = :id AND occupancy IS NOT NULL ORDER BY ds DESC LIMIT 1"),
+                        {"id": device_id}
+                    ).fetchone()
+                    occupancy = occ_q[0] if occ_q else 0
 
-        return {
-            "status": "success",
-            "message": f"Sensor data from {device_id} received and stored",
-            "device_id": device_id,
-            "value": value,
-            "voltage": voltage,
-            "current": current,
-            "power": power,
-            "energy": energy,
-            "frequency": frequency,
-            "power_factor": power_factor,
-            "timestamp": timestamp.isoformat(),
+                conn.execute(
+                    text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, power_factor, occupancy) 
+                            VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
+                    {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
+                )
+                print(f"[DEBUG] INSERT sensor_data: device_id={device_id}, power={p}, ts={timestamp}")
+
+            # 5. Fetch history for rolling AI features
+            hist_res = conn.execute(
+                text("SELECT power FROM sensor_data WHERE device_id = :id AND power IS NOT NULL ORDER BY ds DESC LIMIT 5"),
+                {"id": device_id}
+            ).fetchall()
+            history = [r[0] for r in hist_res] if hist_res else [p]
+
+        # --- AI Processing Section (Remains the same using merged values) ---
+        rolling_avg = sum(history) / len(history)
+        rolling_std = np.std(history) if len(history) > 1 else 0
+        p_change = p - history[0] if len(history) > 0 else 0
+        is_holiday = 1 if timestamp.weekday() >= 5 else 0
+
+        input_data = {
+            'power': p, 'current': c, 'power_factor': pf, 'occupancy': occupancy,
+            'power_change_rate': p_change, 'rolling_avg_power': rolling_avg,
+            'rolling_std_power': rolling_std, 'is_holiday': is_holiday
         }
+        
+        # Isolation Forest Prediction
+        if p < 10.0:
+            prediction, score = 1, 0.5
+        else:
+            if model is not None and model_features is not None:
+                input_df = pd.DataFrame([input_data])[model_features]
+                prediction = model.predict(input_df)[0]
+                score = model.decision_function(input_df)[0]
+            else:
+                prediction, score = 1, 0.0
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error processing sensor data: {str(e)}")
-
-
-@app.get("/sensor-data")
-def get_sensor_data(device_id: str = None, limit: int = 100):
-    """
-    Retrieve sensor data from the database.
-    
-    Query parameters:
-    - device_id: Filter by specific device (optional)
-    - limit: Maximum number of records to return (default: 100)
-    """
-    try:
+        # Log to Anomaly Table for Flutter
         with engine.begin() as conn:
-            if device_id:
+            conn.execute(
+                text("""INSERT INTO anomaly_logs (ds, device_id, power, occupancy, is_anomaly, anomaly_score, energy_accumulated)
+                        VALUES (:ds, :id, :p, :o, :ia, :as, :e)"""),
+                {"ds": timestamp, "id": device_id, "p": p, "o": occupancy, 
+                 "ia": int(prediction), "as": float(score), "e": e}
+            )
+
+        # Invalidate overview cache so admin widgets update immediately on new sensor data
+        _overview_cache["data"] = None
+        _overview_cache["timestamp"] = None
+
+        return {"status": "success", "is_anomaly": int(prediction), "score": round(score, 4)}
+
+    except Exception as err:
+        return {"status": "error", "message": str(err)}
+# B. PROVIDE DATA (GET) - For Flutter Charts
+# B. PROVIDE DATA (GET) - For Flutter Charts
+
+# Modified GET endpoint in auth_api.py
+@app.get("/sensor-data")
+def get_sensor_data(limit: int = 60, device_id: str = None, department: str = None):
+    """Get sensor data. Can filter by device_id, department, or both."""
+    try:
+        with engine.connect() as conn:
+            if device_id and department and not _is_admin_department(department):
+                # Filter by both device_id and department
                 result = conn.execute(
                     text("""
-                        SELECT id, ds, device_id, value 
+                        SELECT sd.id, sd.ds, sd.device_id, sd.value, sd.voltage, sd.current, sd.power, sd.energy, sd.frequency, sd.power_factor
+                        FROM sensor_data sd
+                        LEFT JOIN rooms r ON sd.device_id = r.room_id
+                        WHERE sd.device_id = :device_id 
+                        AND r.department = :department
+                        ORDER BY sd.ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"device_id": device_id, "department": department, "limit": limit}
+                )
+            elif department and not _is_admin_department(department):
+                # Filter by department only
+                result = conn.execute(
+                    text("""
+                        SELECT sd.id, sd.ds, sd.device_id, sd.value, sd.voltage, sd.current, sd.power, sd.energy, sd.frequency, sd.power_factor
+                        FROM sensor_data sd
+                        LEFT JOIN rooms r ON sd.device_id = r.room_id
+                        WHERE r.department = :department
+                        ORDER BY sd.ds DESC 
+                        LIMIT :limit
+                    """),
+                    {"department": department, "limit": limit}
+                )
+            elif device_id:
+                # Filter by device_id only
+                result = conn.execute(
+                    text("""
+                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
                         FROM sensor_data 
                         WHERE device_id = :device_id
                         ORDER BY ds DESC 
@@ -1073,9 +1533,10 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
                     {"device_id": device_id, "limit": limit}
                 )
             else:
+                # No filters
                 result = conn.execute(
                     text("""
-                        SELECT id, ds, device_id, value 
+                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
                         FROM sensor_data 
                         ORDER BY ds DESC 
                         LIMIT :limit
@@ -1089,7 +1550,53 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
                     "id": row[0],
                     "timestamp": row[1].isoformat() if row[1] else None,
                     "device_id": row[2],
-                    "value": row[3]
+                    "value": row[3],
+                    "voltage": row[4],
+                    "current": row[5],
+                    "power": row[6],
+                    "energy": row[7],
+                    "frequency": row[8],
+                    "power_factor": row[9]
+                }
+                for row in rows
+            ]
+            return {"status": "success", "data": data}
+            
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
+
+
+@app.get("/rooms")
+def get_all_rooms(department: str = None):
+    """Get all rooms with their floor and threshold information.
+    Optional: filter by department if provided."""
+    try:
+        with engine.begin() as conn:
+            if department and not _is_admin_department(department):
+                rows = conn.execute(
+                    text("""
+                        SELECT room_id, room_name, floor_number, threshold 
+                        FROM rooms 
+                        WHERE department = :department
+                        ORDER BY floor_number, room_name
+                    """),
+                    {"department": department}
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    text("""
+                        SELECT room_id, room_name, floor_number, threshold 
+                        FROM rooms 
+                        ORDER BY floor_number, room_name
+                    """)
+                ).fetchall()
+            
+            data = [
+                {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": row[3]
                 }
                 for row in rows
             ]
@@ -1101,9 +1608,155 @@ def get_sensor_data(device_id: str = None, limit: int = 100):
             }
     
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
+
+
+@app.get("/rooms/floor/{floor_number}")
+def get_rooms_by_floor(floor_number: int):
+    """Get all rooms on a specific floor."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    WHERE floor_number = :floor
+                    ORDER BY room_name
+                """),
+                {"floor": floor_number}
+            ).fetchall()
+            
+            data = [
+                {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": row[3]
+                }
+                for row in rows
+            ]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
+
+
+@app.get("/rooms/floors")
+def get_all_floors():
+    """Get all unique floors."""
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT DISTINCT floor_number 
+                    FROM rooms 
+                    ORDER BY floor_number
+                """)
+            ).fetchall()
+            
+            data = [{"floor_number": row[0]} for row in rows]
+            
+            return {
+                "status": "success",
+                "count": len(data),
+                "data": data
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error retrieving floors: {str(e)}")
+
+
+@app.put("/rooms/{room_id}/threshold")
+def update_room_threshold(room_id: str, threshold: float = None):
+    """Update the threshold for a specific room."""
+    try:
+        if threshold is None:
+            raise HTTPException(status_code=400, detail="Threshold value is required")
+        
+        if threshold <= 0:
+            raise HTTPException(status_code=400, detail="Threshold must be greater than 0")
+        
+        with engine.begin() as conn:
+            # Check if room exists first
+            check_row = conn.execute(
+                text("""
+                    SELECT id FROM rooms WHERE room_id = :room_id
+                """),
+                {"room_id": room_id}
+            ).fetchone()
+            
+            if not check_row:
+                raise HTTPException(status_code=404, detail=f"Room with ID '{room_id}' not found")
+            
+            result = conn.execute(
+                text("""
+                    UPDATE rooms 
+                    SET threshold = :threshold, updated_at = NOW() 
+                    WHERE room_id = :room_id
+                """),
+                {"threshold": threshold, "room_id": room_id}
+            )
+            
+            if result.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Failed to update room")
+            
+            # Retrieve updated room data
+            row = conn.execute(
+                text("""
+                    SELECT room_id, room_name, floor_number, threshold 
+                    FROM rooms 
+                    WHERE room_id = :room_id
+                """),
+                {"room_id": room_id}
+            ).fetchone()
+            
+            return {
+                "status": "success",
+                "message": "Threshold updated successfully",
+                "data": {
+                    "room_id": row[0],
+                    "room_name": row[1],
+                    "floor_number": row[2],
+                    "threshold": float(row[3])
+                }
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error updating threshold: {str(e)}")
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+def _generate_short_password(length: int = 6) -> str:
+    """Generate a 6-char password with letters, digits, and a symbol (unique chars)."""
+    if length < 3:
+        raise ValueError("Password length must be at least 3")
+
+    letters = string.ascii_letters
+    digits = string.digits
+    symbols = "!@#$%*"
+
+    # Ensure at least one of each
+    password_chars = [
+        secrets.choice(letters),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+
+    # Fill the rest with unique characters
+    pool = list(set(letters + digits + symbols) - set(password_chars))
+    secrets.SystemRandom().shuffle(pool)
+    password_chars.extend(pool[: length - 3])
+
+    # Shuffle final password
+    secrets.SystemRandom().shuffle(password_chars)
+    return "".join(password_chars)
