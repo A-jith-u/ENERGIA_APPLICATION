@@ -7,7 +7,7 @@ import 'package:energia/services/pdf_export.dart';
 import 'package:energia/services/csv_export.dart';
 import 'role_selection_page.dart'; // For Logout navigation
 // Departmental page imports
-import 'computer_science_classrooms_page.dart';
+import 'computer_science_classrooms_page.dart'; 
 import 'Electrical.dart';
 import 'Electronics.dart';
 import 'mechanical.dart';
@@ -21,8 +21,9 @@ import 'services/user_counts.dart';
 import 'services/user_lists.dart';
 import 'services/validators.dart'; // Import validation functions
 import 'activity_logs_page.dart'; // Import activity logs page
+import 'monthly_report_page.dart'; // Import monthly report page
 import 'dart:ui'; // For ImageFilter (glassmorphism effect)
-import 'package:energia/widgets/quick_message_sender.dart'; // Quick message sender widget
+import 'package:flutter/foundation.dart';
 
 // --- HELPER WIDGETS ---
 
@@ -31,12 +32,8 @@ class _CampusStatCard extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color color;
-  const _CampusStatCard({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
+  final VoidCallback? onTap;
+  const _CampusStatCard({required this.label, required this.value, required this.icon, required this.color, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -45,29 +42,25 @@ class _CampusStatCard extends StatelessWidget {
     return SizedBox(
       width: 160,
       height: 120,
-      child: Card(
-        elevation: 2,
-        shadowColor: Colors.transparent,
-        color:
-            isDark
-                ? theme.colorScheme.surfaceContainerHighest
-                : theme.cardTheme.color,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 28, color: color),
-              const Spacer(),
-              Text(
-                value,
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(label, style: theme.textTheme.labelLarge),
-            ],
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Card(
+          elevation: 2,
+          shadowColor: Colors.transparent,
+          color: isDark ? theme.colorScheme.surfaceContainerHighest : theme.cardTheme.color,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 28, color: color),
+                const Spacer(),
+                Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text(label, style: theme.textTheme.labelLarge),
+              ],
+            ),
           ),
         ),
       ),
@@ -80,12 +73,7 @@ class _UserStatsCard extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color color;
-  const _UserStatsCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
+  const _UserStatsCard({required this.title, required this.value, required this.icon, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -99,13 +87,7 @@ class _UserStatsCard extends StatelessWidget {
           children: [
             Icon(icon, size: 32, color: color),
             const SizedBox(height: 8),
-            Text(
-              value,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
+            Text(value, style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold, color: color)),
             Text(title, style: theme.textTheme.bodyMedium),
           ],
         ),
@@ -115,77 +97,49 @@ class _UserStatsCard extends StatelessWidget {
 }
 
 class _CampusEnergyPieChart extends StatelessWidget {
-  const _CampusEnergyPieChart({super.key});
-
+  const _CampusEnergyPieChart({super.key}); 
+  
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final theme = Theme.of(context);
-
+    
     // Computer Science Department Classrooms/Labs Data
     final csRooms = [
-      {
-        'name': 'CS Lab 1',
-        'usage': 4.2,
-        'capacity': 5.0,
-        'color': const Color(0xFF2196F3),
-      },
-      {
-        'name': 'CS Lab 2',
-        'usage': 3.8,
-        'capacity': 5.0,
-        'color': const Color(0xFF1976D2),
-      },
-      {
-        'name': 'CS Lab 3',
-        'usage': 4.5,
-        'capacity': 5.0,
-        'color': const Color(0xFF1565C0),
-      },
-      {
-        'name': 'Classroom A',
-        'usage': 2.1,
-        'capacity': 3.0,
-        'color': const Color(0xFF42A5F5),
-      },
-      {
-        'name': 'Classroom B',
-        'usage': 1.8,
-        'capacity': 3.0,
-        'color': const Color(0xFF64B5F6),
-      },
+      {'name': 'CS Lab 1', 'usage': 4.2, 'capacity': 5.0, 'color': const Color(0xFF2196F3)},
+      {'name': 'CS Lab 2', 'usage': 3.8, 'capacity': 5.0, 'color': const Color(0xFF1976D2)},
+      {'name': 'CS Lab 3', 'usage': 4.5, 'capacity': 5.0, 'color': const Color(0xFF1565C0)},
+      {'name': 'Classroom A', 'usage': 2.1, 'capacity': 3.0, 'color': const Color(0xFF42A5F5)},
+      {'name': 'Classroom B', 'usage': 1.8, 'capacity': 3.0, 'color': const Color(0xFF64B5F6)},
     ];
-
+    
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors:
-              isDark
-                  ? [
-                    Colors.grey.shade900.withOpacity(0.5),
-                    Colors.grey.shade800.withOpacity(0.3),
-                  ]
-                  : [
-                    Colors.white.withOpacity(0.7),
-                    Colors.grey.shade100.withOpacity(0.5),
-                  ],
+          colors: isDark 
+            ? [
+                Colors.grey.shade900.withOpacity(0.5),
+                Colors.grey.shade800.withOpacity(0.3),
+              ]
+            : [
+                Colors.white.withOpacity(0.7),
+                Colors.grey.shade100.withOpacity(0.5),
+              ],
         ),
         border: Border.all(
-          color:
-              isDark
-                  ? Colors.white.withOpacity(0.1)
-                  : Colors.white.withOpacity(0.8),
+          color: isDark 
+            ? Colors.white.withOpacity(0.1) 
+            : Colors.white.withOpacity(0.8),
           width: 1.5,
         ),
         boxShadow: [
           BoxShadow(
-            color:
-                isDark
-                    ? Colors.black.withOpacity(0.3)
-                    : Colors.grey.withOpacity(0.2),
+            color: isDark 
+              ? Colors.black.withOpacity(0.3)
+              : Colors.grey.withOpacity(0.2),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),
@@ -201,16 +155,15 @@ class _CampusEnergyPieChart extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors:
-                    isDark
-                        ? [
-                          Colors.grey.shade900.withOpacity(0.3),
-                          Colors.grey.shade800.withOpacity(0.2),
-                        ]
-                        : [
-                          Colors.white.withOpacity(0.4),
-                          Colors.white.withOpacity(0.2),
-                        ],
+                colors: isDark
+                  ? [
+                      Colors.grey.shade900.withOpacity(0.3),
+                      Colors.grey.shade800.withOpacity(0.2),
+                    ]
+                  : [
+                      Colors.white.withOpacity(0.4),
+                      Colors.white.withOpacity(0.2),
+                    ],
               ),
             ),
             child: Column(
@@ -253,7 +206,7 @@ class _CampusEnergyPieChart extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 24),
-
+                
                 // Bar Chart
                 Expanded(
                   child: BarChart(
@@ -291,10 +244,7 @@ class _CampusEnergyPieChart extends StatelessWidget {
                                   child: Text(
                                     room['name'] as String,
                                     style: TextStyle(
-                                      color:
-                                          isDark
-                                              ? Colors.white70
-                                              : Colors.black87,
+                                      color: isDark ? Colors.white70 : Colors.black87,
                                       fontWeight: FontWeight.w600,
                                       fontSize: 11,
                                     ),
@@ -315,8 +265,7 @@ class _CampusEnergyPieChart extends StatelessWidget {
                               return Text(
                                 '${value.toInt()} kW',
                                 style: TextStyle(
-                                  color:
-                                      isDark ? Colors.white70 : Colors.black87,
+                                  color: isDark ? Colors.white70 : Colors.black87,
                                   fontWeight: FontWeight.w500,
                                   fontSize: 10,
                                 ),
@@ -337,21 +286,22 @@ class _CampusEnergyPieChart extends StatelessWidget {
                         horizontalInterval: 1,
                         getDrawingHorizontalLine: (value) {
                           return FlLine(
-                            color:
-                                isDark
-                                    ? Colors.white.withOpacity(0.1)
-                                    : Colors.black.withOpacity(0.1),
+                            color: isDark 
+                              ? Colors.white.withOpacity(0.1)
+                              : Colors.black.withOpacity(0.1),
                             strokeWidth: 1,
                           );
                         },
                       ),
-                      borderData: FlBorderData(show: false),
+                      borderData: FlBorderData(
+                        show: false,
+                      ),
                       barGroups: List.generate(csRooms.length, (index) {
                         final room = csRooms[index];
                         final usage = room['usage'] as double;
                         final capacity = room['capacity'] as double;
                         final percentage = (usage / capacity * 100).round();
-
+                        
                         return BarChartGroupData(
                           x: index,
                           barRods: [
@@ -366,10 +316,9 @@ class _CampusEnergyPieChart extends StatelessWidget {
                               backDrawRodData: BackgroundBarChartRodData(
                                 show: true,
                                 toY: capacity,
-                                color:
-                                    isDark
-                                        ? Colors.white.withOpacity(0.1)
-                                        : Colors.black.withOpacity(0.05),
+                                color: isDark
+                                  ? Colors.white.withOpacity(0.1)
+                                  : Colors.black.withOpacity(0.05),
                               ),
                               rodStackItems: [],
                             ),
@@ -380,9 +329,9 @@ class _CampusEnergyPieChart extends StatelessWidget {
                     ),
                   ),
                 ),
-
+                
                 const SizedBox(height: 16),
-
+                
                 // Legend
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -390,10 +339,8 @@ class _CampusEnergyPieChart extends StatelessWidget {
                     _buildLegendItem('Current Usage', const Color(0xFF2196F3)),
                     const SizedBox(width: 24),
                     _buildLegendItem(
-                      'Capacity',
-                      isDark
-                          ? Colors.white.withOpacity(0.1)
-                          : Colors.black.withOpacity(0.05),
+                      'Capacity', 
+                      isDark ? Colors.white.withOpacity(0.1) : Colors.black.withOpacity(0.05)
                     ),
                   ],
                 ),
@@ -420,12 +367,16 @@ class _CampusEnergyPieChart extends StatelessWidget {
         const SizedBox(width: 6),
         Text(
           label,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ],
     );
   }
 }
+
 
 // --- MAIN DASHBOARD AND SECTIONS ---
 
@@ -437,8 +388,8 @@ class AdminDashboardPage extends StatefulWidget {
 }
 
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
-  // FIX: Explicitly initialize _currentIndex to 0 (a valid index)
-  int _currentIndex = 0;
+  // FIX: Explicitly initialize _currentIndex to 0 (a valid index) 
+  int _currentIndex = 0; 
 
   void _performLogout() {
     // Navigate to RoleSelectionPage and clear stack.
@@ -464,7 +415,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         duration: const Duration(milliseconds: 300),
         child: _buildPage(_currentIndex, colorScheme),
       ),
-      currentIndex: _currentIndex,
+      currentIndex: _currentIndex, 
       onBottomNavTapped: (index) {
         // --- MODIFIED: Removed the index check, as logout is no longer in the bottom bar ---
         setState(() {
@@ -477,13 +428,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         BottomNavigationBarItem(
           icon: Icon(Icons.dashboard_outlined),
           activeIcon: Icon(Icons.dashboard),
-          label: 'Campus',
+          label: 'Campus', 
         ),
         // Index 1: User Management
         BottomNavigationBarItem(
           icon: Icon(Icons.people_outline),
           activeIcon: Icon(Icons.people),
-          label: 'Users',
+          label: 'Users', 
         ),
         // --- MODIFIED: LOGOUT ITEM REMOVED ---
       ],
@@ -497,7 +448,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return _CampusOverviewSection(scheme: scheme);
       case 1:
         return _UsersManagementSection(scheme: scheme);
-
+      
       default:
         return const SizedBox.shrink();
     }
@@ -515,7 +466,15 @@ class _CampusOverviewSection extends StatefulWidget {
 
 class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
   Map<String, int>? _userCounts;
-  bool _isLoading = false; // show immediately, refresh in background
+  bool _isLoading = false; // user counts
+  bool _isOverviewLoading = true;
+  Timer? _refreshTimer;
+
+  double? _totalUsageKwh;
+  int _activeRooms = 0;
+  int _totalRooms = 0;
+  double? _efficiencyPercent;
+  List<String> _inactiveRooms = const [];
 
   void _onCountsChanged() {
     setState(() {
@@ -532,6 +491,12 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
     _userCounts = UserCountsStore.instance.counts.value;
     // Refresh in background
     _loadUserCounts();
+    _loadCampusOverview();
+    
+    // Auto-refresh every 30 seconds
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _loadCampusOverview();
+    });
   }
 
   Future<void> _loadUserCounts() async {
@@ -548,19 +513,38 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
         setState(() {
           _isLoading = false;
           // Use default values on error
-          _userCounts ??= {
-            'admins': 0,
-            'coordinators': 0,
-            'class_representatives': 0,
-          };
+          _userCounts ??= {'coordinators': 0, 'class_representatives': 0};
         });
       }
+    }
+  }
+
+  Future<void> _loadCampusOverview() async {
+    try {
+      final data = await api.getCampusOverview(activeWindowMinutes: 5, usageWindowHours: 1);
+      if (!mounted) return;
+      setState(() {
+        _totalUsageKwh = (data['total_usage_kwh'] as num?)?.toDouble();
+        _activeRooms = data['active_rooms'] as int? ?? 0;
+        _totalRooms = data['total_rooms'] as int? ?? 0;
+        _inactiveRooms = List<String>.from(data['inactive_rooms'] ?? const []);
+        _efficiencyPercent = (data['efficiency_percent'] as num?)?.toDouble();
+        _isOverviewLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isOverviewLoading = false;
+      });
+      // Keep silent in UI but log to console
+      debugPrint('Failed to load campus overview: $e');
     }
   }
 
   @override
   void dispose() {
     UserCountsStore.instance.counts.removeListener(_onCountsChanged);
+    _refreshTimer?.cancel();
     super.dispose();
   }
 
@@ -569,15 +553,7 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
   }
 
   // Helper to build the Department Status Tiles
-  Widget _buildDepartmentStatusTile(
-    BuildContext context,
-    String dept,
-    String usage,
-    String efficiency,
-    Color color,
-    String status, {
-    VoidCallback? onTap,
-  }) {
+  Widget _buildDepartmentStatusTile(BuildContext context, String dept, String usage, String efficiency, Color color, String status, {VoidCallback? onTap}) {
     final theme = Theme.of(context);
     return Card(
       elevation: 2,
@@ -585,12 +561,7 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         leading: Icon(Icons.business_rounded, color: color, size: 28),
-        title: Text(
-          dept,
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        title: Text(dept, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         subtitle: Text('Usage: $usage • Efficiency: $efficiency'),
         trailing: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -599,14 +570,7 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: color.withOpacity(0.3)),
           ),
-          child: Text(
-            status,
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          child: Text(status, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
         ),
         onTap: onTap,
       ),
@@ -617,20 +581,18 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final totalUsers = _userCounts?['total_users'] ?? 0;
-
+    
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         // Admin Welcome Card
         _AdminWelcomeCard(scheme: widget.scheme),
         const SizedBox(height: 24),
-
+        
         // Campus-wide Key Stats
         Text(
           'Campus Energy Overview',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
         Wrap(
@@ -638,118 +600,115 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
           runSpacing: 16,
           alignment: WrapAlignment.center,
           children: [
-            const _CampusStatCard(
-              label: 'Total Usage',
-              value: '247.8 kW',
-              icon: Icons.electric_bolt_outlined,
-              color: Colors.red,
-            ),
-            _isLoading
-                ? const SizedBox(
-                  width: 160,
-                  height: 120,
-                  child: Card(
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                )
+            _isOverviewLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
                 : _CampusStatCard(
-                  label: 'Active Users',
-                  value: '$totalUsers',
-                  icon: Icons.people_outlined,
-                  color: Colors.blue,
-                ),
-            const _CampusStatCard(
-              label: 'Buildings',
-              value: '12 Online',
-              icon: Icons.business_outlined,
-              color: Colors.purple,
-            ),
-            const _CampusStatCard(
-              label: 'Efficiency',
-              value: '94.2%',
-              icon: Icons.eco_outlined,
-              color: Colors.green,
-            ),
+                    label: 'Total Usage (1h)',
+                    value: _totalUsageKwh != null ? '${_totalUsageKwh!.toStringAsFixed(2)} kWh' : '--',
+                    icon: Icons.electric_bolt_outlined,
+                    color: Colors.red,
+                  ),
+            _isLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+                : _CampusStatCard(label: 'Active Users', value: '$totalUsers', icon: Icons.people_outlined, color: Colors.blue),
+            _isOverviewLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+                : _CampusStatCard(
+                    label: 'Active Rooms',
+                    value: _totalRooms > 0 ? '$_activeRooms / $_totalRooms' : '--',
+                    icon: Icons.business_outlined,
+                    color: Colors.purple,
+                    onTap: _inactiveRooms.isEmpty
+                        ? null
+                        : () {
+                            showModalBottomSheet(
+                              context: context,
+                              builder: (ctx) {
+                                return Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Inactive Rooms', style: Theme.of(context).textTheme.titleLarge),
+                                      const SizedBox(height: 12),
+                                      if (_inactiveRooms.isEmpty)
+                                        const Text('All rooms are reporting live data')
+                                      else
+                                        ..._inactiveRooms.map((id) => ListTile(
+                                              leading: const Icon(Icons.meeting_room_outlined),
+                                              title: Text(id),
+                                            )),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                  ),
+            _isOverviewLoading
+                ? const SizedBox(width: 160, height: 120, child: Card(child: Center(child: CircularProgressIndicator())))
+                : _CampusStatCard(
+                    label: 'Efficiency',
+                    value: _efficiencyPercent != null ? '${_efficiencyPercent!.toStringAsFixed(1)}%' : '--',
+                    icon: Icons.eco_outlined,
+                    color: Colors.green,
+                  ),
           ],
         ),
         const SizedBox(height: 32),
-
+        
         // Campus Energy Distribution (Pie Chart is essential for high-level visualization)
         Text(
           'Energy Distribution by Department',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 16),
         const SizedBox(height: 300, child: _CampusEnergyPieChart()),
-
+        
         const SizedBox(height: 32),
-
+        
         // Department Status - Computer Science Only
         Text(
           'Department Status',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
-
+        
         // Computer Science Department (Primary Focus)
         _buildDepartmentStatusTile(
-          context,
-          'Computer Science',
-          '18.4 kW',
-          '87%',
-          Colors.green.shade600,
+          context, 
+          'Computer Science', 
+          '18.4 kW', 
+          '87%', 
+          Colors.green.shade600, 
           'Optimal',
           onTap: () {
             Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => const ComputerScienceClassroomsPage(),
-              ),
+              context, 
+              MaterialPageRoute(builder: (context) => const ComputerScienceClassroomsPage()),
             );
           },
         ),
 
         const SizedBox(height: 32),
-
-        // Quick Message Sender Widget
-        const QuickMessageSender(),
-
-        const SizedBox(height: 32),
-
+        
         // Quick Links (Admin specific actions)
         Text(
           'Admin Quick Actions',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
-        _buildActionCard(
-          context,
-          'Generate Monthly Report',
-          'Create campus-wide consumption report.',
-          Icons.picture_as_pdf,
-        ), //
-        _buildActionCard(
-          context,
-          'Manage Thresholds',
-          'Adjust campus-level anomaly limits.',
-          Icons.tune,
-        ), //
+        _buildActionCard(context, 'Generate Monthly Report', 'Create campus-wide consumption report.', Icons.picture_as_pdf, onTap: () {
+          Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MonthlyReportPage()));
+        }),
+        _buildActionCard(context, 'Manage Thresholds', 'Adjust campus-level anomaly limits.', Icons.tune),
+
       ],
     );
   }
 
-  Widget _buildActionCard(
-    BuildContext context,
-    String title,
-    String description,
-    IconData icon,
-  ) {
+  Widget _buildActionCard(BuildContext context, String title, String description, IconData icon, {VoidCallback? onTap}) {
     final theme = Theme.of(context);
     return Card(
       elevation: 2,
@@ -757,15 +716,10 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: Icon(icon, color: theme.colorScheme.primary, size: 32),
-        title: Text(
-          title,
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         subtitle: Text(description),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-        onTap: () {},
+        onTap: onTap ?? () {},
       ),
     );
   }
@@ -779,111 +733,99 @@ class _AdminWelcomeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return TweenAnimationBuilder<double>(
-      duration: const Duration(milliseconds: 1200),
-      tween: Tween(begin: 0.0, end: 1.0),
-      curve: Curves.easeOutBack,
-      builder: (context, value, child) {
-        return Transform.translate(
-          offset: Offset(0, 20 * (1 - value)),
-          child: Opacity(
-            opacity: value.clamp(0.0, 1.0),
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    scheme.primaryContainer.withOpacity(0.9),
-                    scheme.primaryContainer.withOpacity(0.6),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: scheme.primary.withOpacity(0.3),
-                  width: 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: scheme.primary.withOpacity(0.2),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          scheme.primary,
-                          scheme.primary.withOpacity(0.7),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.admin_panel_settings,
-                      size: 32,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Welcome, System Administrator! ⚙️',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: scheme.onPrimaryContainer,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          'GECI ENERGIA Control Center',
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            color: scheme.onPrimaryContainer.withOpacity(0.8),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.amber.shade400,
-                                Colors.orange.shade400,
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          child: Text(
-                            '🏆 Master of Campus Energy',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
+          duration: const Duration(milliseconds: 1200),
+          tween: Tween(begin: 0.0, end: 1.0),
+          curve: Curves.easeOutBack,
+          builder: (context, value, child) {
+            return Transform.translate(
+              offset: Offset(0, 20 * (1 - value)),
+              child: Opacity(
+                opacity: value.clamp(0.0, 1.0),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        scheme.primaryContainer.withOpacity(0.9),
+                        scheme.primaryContainer.withOpacity(0.6),
                       ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: scheme.primary.withOpacity(0.3), width: 1),
+                    boxShadow: [
+                      BoxShadow(
+                        color: scheme.primary.withOpacity(0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
-                ],
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [scheme.primary, scheme.primary.withOpacity(0.7)],
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.admin_panel_settings,
+                          size: 32,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Welcome, System Administrator! ⚙️',
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: scheme.onPrimaryContainer,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'GECI ENERGIA Control Center',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: scheme.onPrimaryContainer.withOpacity(0.8),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [Colors.amber.shade400, Colors.orange.shade400],
+                                ),
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                              child: Text(
+                                '🏆 Master of Campus Energy',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
-      },
-    );
   }
 }
 
@@ -893,8 +835,7 @@ class _UsersManagementSection extends StatefulWidget {
   const _UsersManagementSection({required this.scheme});
 
   @override
-  State<_UsersManagementSection> createState() =>
-      _UsersManagementSectionState();
+  State<_UsersManagementSection> createState() => _UsersManagementSectionState();
 }
 
 class _UsersManagementSectionState extends State<_UsersManagementSection> {
@@ -945,42 +886,32 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
     final totalUsers = _userCounts?['total_users'] ?? 0;
     final coordinatorCount = _userCounts?['coordinators'] ?? 0;
     final classRepCount = _userCounts?['class_representatives'] ?? 0;
-
+    
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         Text(
           'User Management',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         Text(
           'Manage all ENERGIA system users',
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: Colors.grey.shade600,
-          ),
+          style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
         ),
         const SizedBox(height: 24),
-
+        
         Row(
           children: [
             Expanded(
-              child:
-                  _isLoading
-                      ? const Card(
-                        child: Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Center(child: CircularProgressIndicator()),
-                        ),
-                      )
-                      : _UserStatsCard(
-                        title: 'Total Users',
-                        value: '$totalUsers',
-                        icon: Icons.people_outlined,
-                        color: Colors.blue.shade600,
-                      ),
+              child: _isLoading 
+                ? const Card(child: Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator())))
+                : _UserStatsCard(
+                    title: 'Total Users',
+                    value: '$totalUsers',
+                    icon: Icons.people_outlined,
+                    color: Colors.blue.shade600,
+                  ),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -994,107 +925,81 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
           ],
         ),
         const SizedBox(height: 24),
-
+        
         // Tappable User Type Cards with navigation (hide Administrators & Students as requested)
         _buildUserTypeCard(
           context,
-          'Coordinators',
-          _isLoading ? 'Loading...' : '$coordinatorCount Users',
-          Icons.supervisor_account_outlined,
+          'Coordinators', 
+          _isLoading ? 'Loading...' : '$coordinatorCount Users', 
+          Icons.supervisor_account_outlined, 
           Colors.orange.shade600,
           onTap: () {
-            Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: (_) => const CoordinatorsPage()));
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CoordinatorsPage()));
           },
         ),
         _buildUserTypeCard(
           context,
-          'Class Representatives',
-          _isLoading ? 'Loading...' : '$classRepCount Users',
-          Icons.school_outlined,
+          'Class Representatives', 
+          _isLoading ? 'Loading...' : '$classRepCount Users', 
+          Icons.school_outlined, 
           Colors.blue.shade600,
           onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const ClassRepresentativesPage(),
-              ),
-            );
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClassRepresentativesPage()));
           },
         ),
-
         // (Students card removed)
+        
         const SizedBox(height: 24),
-
+        
         // Quick Actions
         Text(
           'Quick Actions',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
-
+        
         _buildActionCard(
-          context,
-          'Add New User',
-          'Register a new system user',
+          context, 
+          'Add New User', 
+          'Register a new system user', 
           Icons.person_add_outlined,
           onTap: () {
-            Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: (_) => const AddUserPage()));
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddUserPage()));
           },
         ),
         _buildActionCard(
-          context,
-          'Bulk Import',
-          'Export all users to CSV file',
+          context, 
+          'Bulk Export', 
+          'Export all users to CSV file', 
           Icons.download_outlined,
           onTap: () => _exportAllUsersCSV(context),
         ),
+        _buildActionCard(context, 'User Permissions', 'Manage access controls', Icons.security_outlined),
         _buildActionCard(
-          context,
-          'User Permissions',
-          'Manage access controls',
-          Icons.security_outlined,
-        ),
-        _buildActionCard(
-          context,
-          'Activity Logs',
-          'View user activity history',
+          context, 
+          'Activity Logs', 
+          'View user activity history', 
           Icons.history_outlined,
           onTap: () {
-            Navigator.of(
-              context,
-            ).push(MaterialPageRoute(builder: (_) => const ActivityLogsPage()));
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ActivityLogsPage()));
           },
         ),
-
+        
         const SizedBox(height: 24),
-
+        
         // Real-time User Activity
         Text(
           'Live User Activity',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
-
+        
         _ActivityLogWidget(),
       ],
     );
   }
 
-  Widget _buildUserActivity(
-    BuildContext context,
-    String user,
-    String action,
-    IconData icon,
-    Color color,
-    String time,
-  ) {
+  Widget _buildUserActivity(BuildContext context, String user, String action, IconData icon, Color color, String time) {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1106,22 +1011,12 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  user,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                Text(user, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
                 Text(action, style: theme.textTheme.bodySmall),
               ],
             ),
           ),
-          Text(
-            time,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: Colors.grey.shade600,
-            ),
-          ),
+          Text(time, style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade600)),
         ],
       ),
     );
@@ -1132,46 +1027,33 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
       // Get all coordinators and class representatives data from backend
       final coordinators = await api.getCoordinators();
       final classReps = await api.getClassRepresentatives();
-
+      
       // Convert to the format expected by CSV export
-      final coordsForCsv =
-          coordinators
-              .map(
-                (c) => {
-                  'name': c['name']?.toString() ?? '',
-                  'ktuid': c['username']?.toString() ?? '',
-                  'department': c['department']?.toString() ?? '',
-                },
-              )
-              .toList();
-
-      final repsForCsv =
-          classReps
-              .map(
-                (r) => {
-                  'name': r['name']?.toString() ?? '',
-                  'ktuid': r['ktu_id']?.toString() ?? '',
-                  'department': r['department']?.toString() ?? '',
-                  'room':
-                      r['email']?.toString() ??
-                      '', // Using email instead of room
-                  'year': r['year']?.toString() ?? '',
-                  'gender': 'N/A', // Not available in backend
-                },
-              )
-              .toList();
-
+      final coordsForCsv = coordinators.map((c) => {
+        'name': c['name']?.toString() ?? '',
+        'ktuid': c['username']?.toString() ?? '',
+        'department': c['department']?.toString() ?? '',
+      }).toList();
+      
+      final repsForCsv = classReps.map((r) => {
+        'name': r['name']?.toString() ?? '',
+        'ktuid': r['ktu_id']?.toString() ?? '',
+        'department': r['department']?.toString() ?? '',
+        'room': r['email']?.toString() ?? '',  // Using email instead of room
+        'year': r['year']?.toString() ?? '',
+        'gender': 'N/A',  // Not available in backend
+      }).toList();
+      
       // Export to CSV
       final filePath = await exportUsersCSV(
         coordinators: coordsForCsv,
         classReps: repsForCsv,
       );
-
+      
       if (context.mounted) {
-        final msg =
-            filePath != null
-                ? 'CSV exported to: $filePath'
-                : 'CSV export initiated';
+        final msg = filePath != null
+            ? 'CSV exported to: $filePath'
+            : 'CSV export initiated';
         AppNotifier.showInfo(context, msg);
       }
     } catch (e) {
@@ -1181,14 +1063,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
     }
   }
 
-  Widget _buildUserTypeCard(
-    BuildContext context,
-    String type,
-    String count,
-    IconData icon,
-    Color color, {
-    VoidCallback? onTap,
-  }) {
+  Widget _buildUserTypeCard(BuildContext context, String type, String count, IconData icon, Color color, {VoidCallback? onTap}) {
     final theme = Theme.of(context);
     return Card(
       elevation: 2,
@@ -1196,12 +1071,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: Icon(icon, color: color, size: 32),
-        title: Text(
-          type,
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        title: Text(type, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         subtitle: Text(count),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
         onTap: onTap,
@@ -1209,13 +1079,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
     );
   }
 
-  Widget _buildActionCard(
-    BuildContext context,
-    String title,
-    String description,
-    IconData icon, {
-    VoidCallback? onTap,
-  }) {
+  Widget _buildActionCard(BuildContext context, String title, String description, IconData icon, {VoidCallback? onTap}) {
     final theme = Theme.of(context);
     return Card(
       elevation: 2,
@@ -1223,12 +1087,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: Icon(icon, color: theme.colorScheme.primary, size: 32),
-        title: Text(
-          title,
-          style: theme.textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
         subtitle: Text(description),
         trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
         onTap: onTap ?? () {},
@@ -1261,9 +1120,7 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
     // Subscribe to shared coordinators list
     UserListsStore.instance.coordinators.addListener(_onCoordinatorsChanged);
     // Initialize from cached store for instant display
-    _allCoordinators = List<Map<String, dynamic>>.from(
-      UserListsStore.instance.coordinators.value,
-    );
+    _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
     _filteredCoordinators = List.from(_allCoordinators);
     // Refresh in background
     _loadCoordinators();
@@ -1271,9 +1128,7 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
 
   void _onCoordinatorsChanged() {
     setState(() {
-      _allCoordinators = List<Map<String, dynamic>>.from(
-        UserListsStore.instance.coordinators.value,
-      );
+      _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
       _filteredCoordinators = List.from(_allCoordinators);
     });
   }
@@ -1305,50 +1160,42 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
 
   void _filterData() {
     setState(() {
-      _filteredCoordinators =
-          _allCoordinators.where((coord) {
-            final name = coord['name']?.toString().toLowerCase() ?? '';
-            final username = coord['username']?.toString().toLowerCase() ?? '';
-            final searchLower = _searchController.text.toLowerCase();
-
-            final matchesSearch =
-                _searchController.text.isEmpty ||
-                name.contains(searchLower) ||
-                username.contains(searchLower);
-
-            final matchesDepartment =
-                _selectedDepartment == 'All Departments' ||
-                coord['department'] == _selectedDepartment;
-
-            return matchesSearch && matchesDepartment;
-          }).toList();
+      _filteredCoordinators = _allCoordinators.where((coord) {
+        final name = coord['name']?.toString().toLowerCase() ?? '';
+        final username = coord['username']?.toString().toLowerCase() ?? '';
+        final searchLower = _searchController.text.toLowerCase();
+        
+        final matchesSearch = _searchController.text.isEmpty ||
+            name.contains(searchLower) ||
+            username.contains(searchLower);
+        
+        final matchesDepartment = _selectedDepartment == 'All Departments' ||
+            coord['department'] == _selectedDepartment;
+        
+        return matchesSearch && matchesDepartment;
+      }).toList();
     });
   }
 
   void _exportData() {
     final headers = ['Name', 'Username', 'Department'];
-    final rows =
-        _filteredCoordinators
-            .map(
-              (c) => [
-                c['name']?.toString() ?? '',
-                c['username']?.toString() ?? '',
-                c['department']?.toString() ?? '',
-              ],
-            )
-            .toList();
+    final rows = _filteredCoordinators
+        .map((c) => [
+          c['name']?.toString() ?? '',
+          c['username']?.toString() ?? '',
+          c['department']?.toString() ?? ''
+        ])
+        .toList();
 
     exportTablePdfAutoSave(
       'Department Coordinators',
       headers,
       rows,
-      subtitle:
-          'Exported ${_filteredCoordinators.length} coordinators · ${DateTime.now()}',
+      subtitle: 'Exported ${_filteredCoordinators.length} coordinators · ${DateTime.now()}',
     ).then((savedPath) {
-      final msg =
-          savedPath != null
-              ? 'Saved PDF to: $savedPath'
-              : 'PDF ready – choose location in Save/Share';
+      final msg = savedPath != null
+          ? 'Saved PDF to: $savedPath'
+          : 'PDF ready – choose location in Save/Share';
       AppNotifier.showInfo(context, msg);
     });
   }
@@ -1356,36 +1203,31 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
   void _confirmDeleteUser(String username, String name) {
     showDialog(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Delete User'),
-            content: Text(
-              'Are you sure you want to delete $name ($username)?\n\nThis action cannot be undone.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _deleteUser(username);
-                },
-                child: const Text('Delete'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('Delete User'),
+        content: Text('Are you sure you want to delete $name ($username)?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
           ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteUser(username);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
   }
 
   Future<void> _deleteUser(String username) async {
     try {
       // Optimistic update: remove from list immediately
-      final indexToRemove = _allCoordinators.indexWhere(
-        (c) => c['username'] == username,
-      );
+      final indexToRemove = _allCoordinators.indexWhere((c) => c['username'] == username);
       if (indexToRemove != -1) {
         final removedUser = _allCoordinators[indexToRemove];
         setState(() {
@@ -1395,7 +1237,7 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
         // Reflect change in global user counts immediately
         UserCountsStore.instance.decrement('coordinators');
         AppNotifier.showSuccess(context, 'User deleted successfully');
-
+        
         // Call API in background
         try {
           await api.deleteUser(username);
@@ -1424,9 +1266,13 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Coordinators'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        backgroundColor: theme.appBarTheme.backgroundColor ?? scheme.surface,
+        foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
+        elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -1435,50 +1281,30 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
           ),
         ],
       ),
-      body: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              scheme.surfaceContainerLowest,
-              scheme.surfaceContainerHigh,
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 900),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
             child: Padding(
               padding: const EdgeInsets.all(20),
-              child:
-                  _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _errorMessage != null
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _errorMessage != null
                       ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.error_outline,
-                              size: 64,
-                              color: Colors.red.shade400,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _errorMessage!,
-                              style: theme.textTheme.titleMedium,
-                            ),
-                            const SizedBox(height: 16),
-                            ElevatedButton.icon(
-                              onPressed: _loadCoordinators,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      )
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
+                              const SizedBox(height: 16),
+                              Text(_errorMessage!, style: theme.textTheme.titleMedium),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                onPressed: _loadCoordinators,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        )
                       : SingleChildScrollView(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1487,144 +1313,92 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
                             Card(
                               elevation: 0,
                               color: scheme.primaryContainer,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               child: Padding(
                                 padding: const EdgeInsets.all(16),
                                 child: Row(
                                   children: [
-                                    Icon(
-                                      Icons.supervisor_account,
-                                      color: scheme.onPrimaryContainer,
-                                    ),
+                                    Icon(Icons.supervisor_account, color: scheme.onPrimaryContainer),
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          Text(
-                                            'Department Coordinators',
-                                            style: theme.textTheme.titleLarge
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                  color:
-                                                      scheme.onPrimaryContainer,
-                                                ),
-                                          ),
-                                          Text(
-                                            'Manage and review coordinator roster',
-                                            style: theme.textTheme.bodyMedium
-                                                ?.copyWith(
-                                                  color: scheme
-                                                      .onPrimaryContainer
-                                                      .withOpacity(0.85),
-                                                ),
-                                          ),
+                                          Text('Department Coordinators', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: scheme.onPrimaryContainer)),
+                                          Text('Manage and review coordinator roster', style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onPrimaryContainer.withOpacity(0.85))),
                                         ],
                                       ),
                                     ),
                                     // Quick actions
-                                    FilledButton.icon(
-                                      onPressed: _exportData,
-                                      icon: const Icon(Icons.file_download),
-                                      label: const Text('Export'),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    OutlinedButton.icon(
-                                      onPressed: () {
-                                        showDialog(
-                                          context: context,
-                                          builder:
-                                              (context) => AlertDialog(
-                                                title: const Text(
-                                                  'Filter Options',
-                                                ),
-                                                content: Column(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    DropdownButtonFormField<
-                                                      String
-                                                    >(
-                                                      value:
-                                                          _selectedDepartment,
-                                                      decoration:
-                                                          const InputDecoration(
-                                                            labelText:
-                                                                'Department',
-                                                            border:
-                                                                OutlineInputBorder(),
-                                                          ),
-                                                      items: const [
-                                                        DropdownMenuItem(
-                                                          value:
-                                                              'All Departments',
-                                                          child: Text(
-                                                            'All Departments',
-                                                          ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 16),
+                                      child: Row(
+                                        children: [
+                                          FilledButton.icon(
+                                            onPressed: _exportData,
+                                            icon: const Icon(Icons.file_download),
+                                            label: const Text('Export'),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          OutlinedButton.icon(
+                                            onPressed: () {
+                                              showDialog(
+                                                context: context,
+                                                builder: (context) => AlertDialog(
+                                                  title: const Text('Filter Options'),
+                                                  content: Column(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      DropdownButtonFormField<String>(
+                                                        value: _selectedDepartment,
+                                                        decoration: const InputDecoration(
+                                                          labelText: 'Department',
+                                                          border: OutlineInputBorder(),
                                                         ),
-                                                        DropdownMenuItem(
-                                                          value: 'CSE',
-                                                          child: Text('CSE'),
-                                                        ),
-                                                        DropdownMenuItem(
-                                                          value: 'ECE',
-                                                          child: Text('ECE'),
-                                                        ),
-                                                        DropdownMenuItem(
-                                                          value: 'ME',
-                                                          child: Text('ME'),
-                                                        ),
-                                                        DropdownMenuItem(
-                                                          value: 'CE',
-                                                          child: Text('CE'),
-                                                        ),
-                                                        DropdownMenuItem(
-                                                          value: 'AD',
-                                                          child: Text('AD'),
-                                                        ),
-                                                      ],
-                                                      onChanged: (value) {
-                                                        if (value != null) {
-                                                          setState(() {
-                                                            _selectedDepartment =
-                                                                value;
-                                                          });
-                                                        }
+                                                        items: const [
+                                                          DropdownMenuItem(value: 'All Departments', child: Text('All Departments')),
+                                                          DropdownMenuItem(value: 'CSE', child: Text('CSE')),
+                                                          DropdownMenuItem(value: 'ECE', child: Text('ECE')),
+                                                          DropdownMenuItem(value: 'ME', child: Text('ME')),
+                                                          DropdownMenuItem(value: 'CE', child: Text('CE')),
+                                                          DropdownMenuItem(value: 'AD', child: Text('AD')),
+                                                        ],
+                                                        onChanged: (value) {
+                                                          if (value != null) {
+                                                            setState(() {
+                                                              _selectedDepartment = value;
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  actions: [
+                                                    TextButton(
+                                                      onPressed: () {
+                                                        setState(() {
+                                                          _selectedDepartment = 'All Departments';
+                                                        });
+                                                        _filterData();
+                                                        Navigator.pop(context);
                                                       },
+                                                      child: const Text('Clear'),
+                                                    ),
+                                                    FilledButton(
+                                                      onPressed: () {
+                                                        _filterData();
+                                                        Navigator.pop(context);
+                                                      },
+                                                      child: const Text('Apply'),
                                                     ),
                                                   ],
                                                 ),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () {
-                                                      setState(() {
-                                                        _selectedDepartment =
-                                                            'All Departments';
-                                                      });
-                                                      _filterData();
-                                                      Navigator.pop(context);
-                                                    },
-                                                    child: const Text('Clear'),
-                                                  ),
-                                                  FilledButton(
-                                                    onPressed: () {
-                                                      _filterData();
-                                                      Navigator.pop(context);
-                                                    },
-                                                    child: const Text('Apply'),
-                                                  ),
-                                                ],
-                                              ),
-                                        );
-                                      },
-                                      icon: const Icon(Icons.filter_alt),
-                                      label: Text(
-                                        _selectedDepartment == 'All Departments'
-                                            ? 'Filter'
-                                            : 'Filtered',
+                                              );
+                                            },
+                                            icon: const Icon(Icons.filter_alt),
+                                            label: Text(_selectedDepartment == 'All Departments' ? 'Filter' : 'Filtered'),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ],
@@ -1632,13 +1406,10 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
                               ),
                             ),
                             const SizedBox(height: 16),
-
                             // Content Card with centered table
                             Card(
                               elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               child: Padding(
                                 padding: const EdgeInsets.all(16),
                                 child: Column(
@@ -1659,119 +1430,47 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
                                       scrollDirection: Axis.horizontal,
                                       child: DataTable(
                                         columns: [
-                                          DataColumn(
-                                            label: Text(
-                                              'Name',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'Username',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'Department',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'Actions',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
+                                          DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
+                                          DataColumn(label: Text('Username', style: theme.textTheme.titleMedium)),
+                                          DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
+                                          DataColumn(label: Text('Actions', style: theme.textTheme.titleMedium)),
                                         ],
-                                        rows:
-                                            _filteredCoordinators.map((c) {
-                                              return DataRow(
-                                                cells: [
-                                                  DataCell(
-                                                    Text(
-                                                      c['name']?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    Text(
-                                                      c['username']
-                                                              ?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    Text(
-                                                      c['department']
-                                                              ?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                        Icons.delete_outline,
-                                                        color: Colors.red,
-                                                      ),
-                                                      tooltip: 'Delete user',
-                                                      onPressed:
-                                                          () => _confirmDeleteUser(
-                                                            c['username']
-                                                                    ?.toString() ??
-                                                                '',
-                                                            c['name']
-                                                                    ?.toString() ??
-                                                                'User',
-                                                          ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              );
-                                            }).toList(),
+                                        rows: _filteredCoordinators.map((c) {
+                                          return DataRow(cells: [
+                                            DataCell(Text(c['name']?.toString() ?? 'N/A')),
+                                            DataCell(Text(c['username']?.toString() ?? 'N/A')),
+                                            DataCell(Text(c['department']?.toString() ?? 'N/A')),
+                                            DataCell(
+                                              IconButton(
+                                                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                                tooltip: 'Delete user',
+                                                onPressed: () => _confirmDeleteUser(c['username']?.toString() ?? '', c['name']?.toString() ?? 'User'),
+                                              ),
+                                            ),
+                                          ]);
+                                        }).toList(),
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
                             ),
-
                             const SizedBox(height: 16),
                             // Footer stats
                             Row(
                               children: [
-                                Expanded(
-                                  child: _UserStatsCard(
-                                    title: 'Total Coordinators',
-                                    value: '${_filteredCoordinators.length}',
-                                    icon: Icons.people,
-                                    color: Colors.blue.shade600,
-                                  ),
-                                ),
+                                Expanded(child: _UserStatsCard(title: 'Total Coordinators', value: '${_filteredCoordinators.length}', icon: Icons.people, color: Colors.blue.shade600)),
                                 const SizedBox(width: 12),
-                                Expanded(
-                                  child: _UserStatsCard(
-                                    title: 'Showing',
-                                    value:
-                                        '${_filteredCoordinators.length}/${_allCoordinators.length}',
-                                    icon: Icons.filter_list,
-                                    color: Colors.green.shade600,
-                                  ),
-                                ),
+                                Expanded(child: _UserStatsCard(title: 'Showing', value: '${_filteredCoordinators.length}/${_allCoordinators.length}', icon: Icons.filter_list, color: Colors.green.shade600)),
                               ],
                             ),
                           ],
                         ),
                       ),
-            ),
-          ),
-        ),
-      ),
-    );
+                    ),
+                  ),
+                ),
+              );
   }
 }
 
@@ -1779,8 +1478,7 @@ class ClassRepresentativesPage extends StatefulWidget {
   const ClassRepresentativesPage({super.key});
 
   @override
-  State<ClassRepresentativesPage> createState() =>
-      _ClassRepresentativesPageState();
+  State<ClassRepresentativesPage> createState() => _ClassRepresentativesPageState();
 }
 
 class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
@@ -1800,9 +1498,7 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
     // Subscribe to shared reps list
     UserListsStore.instance.classReps.addListener(_onRepsChanged);
     // Initialize from cached store for instant display
-    _allReps = List<Map<String, dynamic>>.from(
-      UserListsStore.instance.classReps.value,
-    );
+    _allReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
     _filteredReps = List.from(_allReps);
     // Refresh in background
     _loadClassRepresentatives();
@@ -1810,9 +1506,7 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
 
   void _onRepsChanged() {
     setState(() {
-      _allReps = List<Map<String, dynamic>>.from(
-        UserListsStore.instance.classReps.value,
-      );
+      _allReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
       _filteredReps = List.from(_allReps);
       _sortData();
     });
@@ -1848,25 +1542,22 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
 
   void _filterData() {
     setState(() {
-      _filteredReps =
-          _allReps.where((rep) {
-            final name = rep['name']?.toString().toLowerCase() ?? '';
-            final ktuId = rep['ktu_id']?.toString().toLowerCase() ?? '';
-            final email = rep['email']?.toString().toLowerCase() ?? '';
-            final searchLower = _searchController.text.toLowerCase();
-
-            final matchesSearch =
-                _searchController.text.isEmpty ||
-                name.contains(searchLower) ||
-                ktuId.contains(searchLower) ||
-                email.contains(searchLower);
-
-            final matchesDepartment =
-                _selectedDepartment == 'All Departments' ||
-                rep['department'] == _selectedDepartment;
-
-            return matchesSearch && matchesDepartment;
-          }).toList();
+      _filteredReps = _allReps.where((rep) {
+        final name = rep['name']?.toString().toLowerCase() ?? '';
+        final ktuId = rep['ktu_id']?.toString().toLowerCase() ?? '';
+        final email = rep['email']?.toString().toLowerCase() ?? '';
+        final searchLower = _searchController.text.toLowerCase();
+        
+        final matchesSearch = _searchController.text.isEmpty ||
+            name.contains(searchLower) ||
+            ktuId.contains(searchLower) ||
+            email.contains(searchLower);
+        
+        final matchesDepartment = _selectedDepartment == 'All Departments' ||
+            rep['department'] == _selectedDepartment;
+        
+        return matchesSearch && matchesDepartment;
+      }).toList();
       _sortData();
     });
   }
@@ -1876,19 +1567,13 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
       int comparison;
       switch (_sortBy) {
         case 'name':
-          comparison = (a['name']?.toString() ?? '').compareTo(
-            b['name']?.toString() ?? '',
-          );
+          comparison = (a['name']?.toString() ?? '').compareTo(b['name']?.toString() ?? '');
           break;
         case 'ktuid':
-          comparison = (a['ktu_id']?.toString() ?? '').compareTo(
-            b['ktu_id']?.toString() ?? '',
-          );
+          comparison = (a['ktu_id']?.toString() ?? '').compareTo(b['ktu_id']?.toString() ?? '');
           break;
         case 'department':
-          comparison = (a['department']?.toString() ?? '').compareTo(
-            b['department']?.toString() ?? '',
-          );
+          comparison = (a['department']?.toString() ?? '').compareTo(b['department']?.toString() ?? '');
           break;
         case 'year':
           final yearA = int.tryParse(a['year']?.toString() ?? '0') ?? 0;
@@ -1904,18 +1589,15 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
 
   void _exportData() {
     final headers = ['Name', 'KTU ID', 'Department', 'Email', 'Year'];
-    final rows =
-        _filteredReps
-            .map(
-              (r) => [
-                r['name']?.toString() ?? '',
-                r['ktu_id']?.toString() ?? '',
-                r['department']?.toString() ?? '',
-                r['email']?.toString() ?? '',
-                r['year']?.toString() ?? '',
-              ],
-            )
-            .toList();
+    final rows = _filteredReps
+        .map((r) => [
+              r['name']?.toString() ?? '',
+              r['ktu_id']?.toString() ?? '',
+              r['department']?.toString() ?? '',
+              r['email']?.toString() ?? '',
+              r['year']?.toString() ?? '',
+            ])
+        .toList();
 
     exportTablePdfAutoSave(
       'Class Representatives',
@@ -1923,10 +1605,9 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
       rows,
       subtitle: 'Exported ${_filteredReps.length} reps · ${DateTime.now()}',
     ).then((savedPath) {
-      final msg =
-          savedPath != null
-              ? 'Saved PDF to: $savedPath'
-              : 'PDF ready – choose location in Save/Share';
+      final msg = savedPath != null
+          ? 'Saved PDF to: $savedPath'
+          : 'PDF ready – choose location in Save/Share';
       AppNotifier.showInfo(context, msg);
     });
   }
@@ -1934,36 +1615,31 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
   void _confirmDeleteUser(String username, String name) {
     showDialog(
       context: context,
-      builder:
-          (context) => AlertDialog(
-            title: const Text('Delete User'),
-            content: Text(
-              'Are you sure you want to delete $name ($username)?\n\nThis action cannot be undone.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _deleteUser(username);
-                },
-                child: const Text('Delete'),
-              ),
-            ],
+      builder: (context) => AlertDialog(
+        title: const Text('Delete User'),
+        content: Text('Are you sure you want to delete $name ($username)?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
           ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(context);
+              _deleteUser(username);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
     );
   }
 
   Future<void> _deleteUser(String username) async {
     try {
       // Optimistic update: remove from list immediately
-      final indexToRemove = _allReps.indexWhere(
-        (r) => r['username'] == username || r['ktu_id'] == username,
-      );
+      final indexToRemove = _allReps.indexWhere((r) => r['username'] == username || r['ktu_id'] == username);
       if (indexToRemove != -1) {
         final removedUser = _allReps[indexToRemove];
         setState(() {
@@ -1973,7 +1649,7 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
         // Reflect change in global user counts immediately
         UserCountsStore.instance.decrement('class_representatives');
         AppNotifier.showSuccess(context, 'User deleted successfully');
-
+        
         // Call API in background
         try {
           await api.deleteUser(username);
@@ -2002,9 +1678,13 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Class Representatives'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        backgroundColor: theme.appBarTheme.backgroundColor ?? scheme.surface,
+        foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
+        elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -2013,41 +1693,21 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
           ),
         ],
       ),
-      body: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              scheme.surfaceContainerLowest,
-              scheme.surfaceContainerHigh,
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1000),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child:
-                  _isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _errorMessage != null
-                      ? Center(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1000),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _errorMessage != null
+                    ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(
-                              Icons.error_outline,
-                              size: 64,
-                              color: Colors.red.shade400,
-                            ),
+                            Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
                             const SizedBox(height: 16),
-                            Text(
-                              _errorMessage!,
-                              style: theme.textTheme.titleMedium,
-                            ),
+                            Text(_errorMessage!, style: theme.textTheme.titleMedium),
                             const SizedBox(height: 16),
                             ElevatedButton.icon(
                               onPressed: _loadClassRepresentatives,
@@ -2057,356 +1717,209 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
                           ],
                         ),
                       )
-                      : SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            // Header
-                            Card(
-                              elevation: 0,
-                              color: scheme.secondaryContainer,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.school,
-                                      color: scheme.onSecondaryContainer,
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Class Representatives Directory',
-                                            style: theme.textTheme.titleLarge
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                  color:
-                                                      scheme
-                                                          .onSecondaryContainer,
-                                                ),
-                                          ),
-                                          Text(
-                                            'Browse class reps by department and year',
-                                            style: theme.textTheme.bodyMedium
-                                                ?.copyWith(
-                                                  color: scheme
-                                                      .onSecondaryContainer
-                                                      .withOpacity(0.85),
-                                                ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    FilledButton.icon(
-                                      onPressed: _exportData,
-                                      icon: const Icon(Icons.file_download),
-                                      label: const Text('Export'),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    OutlinedButton.icon(
-                                      onPressed: () {
-                                        showDialog(
-                                          context: context,
-                                          builder:
-                                              (context) => AlertDialog(
-                                                title: const Text(
-                                                  'Sort Options',
-                                                ),
-                                                content: Column(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    RadioListTile<String>(
-                                                      title: const Text('Name'),
-                                                      value: 'name',
-                                                      groupValue: _sortBy,
-                                                      onChanged: (value) {
-                                                        setState(() {
-                                                          _sortBy = value!;
-                                                        });
-                                                      },
-                                                    ),
-                                                    RadioListTile<String>(
-                                                      title: const Text(
-                                                        'KTU ID',
-                                                      ),
-                                                      value: 'ktuid',
-                                                      groupValue: _sortBy,
-                                                      onChanged: (value) {
-                                                        setState(() {
-                                                          _sortBy = value!;
-                                                        });
-                                                      },
-                                                    ),
-                                                    RadioListTile<String>(
-                                                      title: const Text(
-                                                        'Department',
-                                                      ),
-                                                      value: 'department',
-                                                      groupValue: _sortBy,
-                                                      onChanged: (value) {
-                                                        setState(() {
-                                                          _sortBy = value!;
-                                                        });
-                                                      },
-                                                    ),
-                                                    RadioListTile<String>(
-                                                      title: const Text('Year'),
-                                                      value: 'year',
-                                                      groupValue: _sortBy,
-                                                      onChanged: (value) {
-                                                        setState(() {
-                                                          _sortBy = value!;
-                                                        });
-                                                      },
-                                                    ),
-                                                    const SizedBox(height: 12),
-                                                    SwitchListTile(
-                                                      title: const Text(
-                                                        'Ascending',
-                                                      ),
-                                                      value: _sortAscending,
-                                                      onChanged: (value) {
-                                                        setState(() {
-                                                          _sortAscending =
-                                                              value;
-                                                        });
-                                                      },
-                                                    ),
-                                                  ],
-                                                ),
-                                                actions: [
-                                                  FilledButton(
-                                                    onPressed: () {
-                                                      _filterData();
-                                                      Navigator.pop(context);
-                                                    },
-                                                    child: const Text('Apply'),
-                                                  ),
-                                                ],
-                                              ),
-                                        );
-                                      },
-                                      icon: const Icon(Icons.sort),
-                                      label: const Text('Sort'),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-
-                            // Content Card with centered table
-                            Card(
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  children: [
-                                    // Toolbar
-                                    Row(
+                    : SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // Header
+                          Card(
+                            elevation: 0,
+                            color: scheme.secondaryContainer,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.school, color: scheme.onSecondaryContainer),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Expanded(
-                                          child: TextField(
-                                            controller: _searchController,
-                                            onChanged: (_) => _filterData(),
-                                            decoration: const InputDecoration(
-                                              hintText:
-                                                  'Search by name, KTU ID, or email',
-                                              prefixIcon: Icon(Icons.search),
-                                              border: OutlineInputBorder(),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        DropdownButton<String>(
-                                          value: _selectedDepartment,
-                                          items: const [
-                                            DropdownMenuItem(
-                                              value: 'All Departments',
-                                              child: Text('All Departments'),
-                                            ),
-                                            DropdownMenuItem(
-                                              value: 'CSE',
-                                              child: Text('CSE'),
-                                            ),
-                                            DropdownMenuItem(
-                                              value: 'ECE',
-                                              child: Text('ECE'),
-                                            ),
-                                            DropdownMenuItem(
-                                              value: 'ME',
-                                              child: Text('ME'),
-                                            ),
-                                            DropdownMenuItem(
-                                              value: 'CE',
-                                              child: Text('CE'),
-                                            ),
-                                            DropdownMenuItem(
-                                              value: 'AD',
-                                              child: Text('AD'),
-                                            ),
-                                          ],
-                                          onChanged: (value) {
-                                            if (value != null) {
-                                              setState(() {
-                                                _selectedDepartment = value;
-                                              });
-                                              _filterData();
-                                            }
-                                          },
-                                        ),
+                                        Text('Class Representatives Directory', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700, color: scheme.onSecondaryContainer)),
+                                        Text('Browse class reps by department and year', style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSecondaryContainer.withOpacity(0.85))),
                                       ],
                                     ),
-                                    const SizedBox(height: 12),
-                                    // Table
-                                    SingleChildScrollView(
-                                      scrollDirection: Axis.horizontal,
-                                      child: DataTable(
-                                        columns: [
-                                          DataColumn(
-                                            label: Text(
-                                              'Name',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'KTU ID',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'Department',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'Email',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'Year',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                          DataColumn(
-                                            label: Text(
-                                              'Actions',
-                                              style:
-                                                  theme.textTheme.titleMedium,
-                                            ),
-                                          ),
-                                        ],
-                                        rows:
-                                            _filteredReps.map((r) {
-                                              return DataRow(
-                                                cells: [
-                                                  DataCell(
-                                                    Text(
-                                                      r['name']?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    Text(
-                                                      r['ktu_id']?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    Text(
-                                                      r['department']
-                                                              ?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    Text(
-                                                      r['email']?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    Text(
-                                                      r['year']?.toString() ??
-                                                          'N/A',
-                                                    ),
-                                                  ),
-                                                  DataCell(
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                        Icons.delete_outline,
-                                                        color: Colors.red,
-                                                      ),
-                                                      tooltip: 'Delete user',
-                                                      onPressed:
-                                                          () => _confirmDeleteUser(
-                                                            r['username']
-                                                                    ?.toString() ??
-                                                                '',
-                                                            r['name']
-                                                                    ?.toString() ??
-                                                                'User',
-                                                          ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              );
-                                            }).toList(),
+                                  ),
+                                  FilledButton.icon(
+                                    onPressed: _exportData,
+                                    icon: const Icon(Icons.file_download),
+                                    label: const Text('Export'),
+                                  ),
+                                  const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Sort Options'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      RadioListTile<String>(
+                                        title: const Text('Name'),
+                                        value: 'name',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
                                       ),
+                                      RadioListTile<String>(
+                                        title: const Text('KTU ID'),
+                                        value: 'ktuid',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
+                                      ),
+                                      RadioListTile<String>(
+                                        title: const Text('Department'),
+                                        value: 'department',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
+                                      ),
+                                      RadioListTile<String>(
+                                        title: const Text('Year'),
+                                        value: 'year',
+                                        groupValue: _sortBy,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortBy = value!;
+                                          });
+                                        },
+                                      ),
+                                      const SizedBox(height: 12),
+                                      SwitchListTile(
+                                        title: const Text('Ascending'),
+                                        value: _sortAscending,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _sortAscending = value;
+                                          });
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                  actions: [
+                                    FilledButton(
+                                      onPressed: () {
+                                        _filterData();
+                                        Navigator.pop(context);
+                                      },
+                                      child: const Text('Apply'),
                                     ),
                                   ],
                                 ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 16),
-                            // Footer stats
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _UserStatsCard(
-                                    title: 'Total Representatives',
-                                    value: '${_filteredReps.length}',
-                                    icon: Icons.groups,
-                                    color: Colors.blue.shade600,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: _UserStatsCard(
-                                    title: 'Showing',
-                                    value:
-                                        '${_filteredReps.length}/${_allReps.length}',
-                                    icon: Icons.filter_list,
-                                    color: Colors.orange.shade600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                              );
+                            },
+                            icon: const Icon(Icons.sort),
+                            label: const Text('Sort'),
+                          ),
+                        ],
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Content Card with centered table
+                  Card(
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          // Toolbar
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _searchController,
+                                  onChanged: (_) => _filterData(),
+                                  decoration: const InputDecoration(
+                                    hintText: 'Search by name, KTU ID, or email',
+                                    prefixIcon: Icon(Icons.search),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              DropdownButton<String>(
+                                value: _selectedDepartment,
+                                items: const [
+                                  DropdownMenuItem(value: 'All Departments', child: Text('All Departments')),
+                                  DropdownMenuItem(value: 'CSE', child: Text('CSE')),
+                                  DropdownMenuItem(value: 'ECE', child: Text('ECE')),
+                                  DropdownMenuItem(value: 'ME', child: Text('ME')),
+                                  DropdownMenuItem(value: 'CE', child: Text('CE')),
+                                  DropdownMenuItem(value: 'AD', child: Text('AD')),
+                                ],
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    setState(() {
+                                      _selectedDepartment = value;
+                                    });
+                                    _filterData();
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          // Table
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              columns: [
+                                DataColumn(label: Text('Name', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('KTU ID', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Department', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Email', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Year', style: theme.textTheme.titleMedium)),
+                                DataColumn(label: Text('Actions', style: theme.textTheme.titleMedium)),
+                              ],
+                              rows: _filteredReps.map((r) {
+                                return DataRow(cells: [
+                                  DataCell(Text(r['name']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['ktu_id']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['department']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['email']?.toString() ?? 'N/A')),
+                                  DataCell(Text(r['year']?.toString() ?? 'N/A')),
+                                  DataCell(
+                                    IconButton(
+                                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                      tooltip: 'Delete user',
+                                      onPressed: () => _confirmDeleteUser(r['username']?.toString() ?? '', r['name']?.toString() ?? 'User'),
+                                    ),
+                                  ),
+                                ]);
+                              }).toList(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+                  // Footer stats
+                  Row(
+                    children: [
+                      Expanded(child: _UserStatsCard(title: 'Total Representatives', value: '${_filteredReps.length}', icon: Icons.groups, color: Colors.blue.shade600)),
+                      const SizedBox(width: 12),
+                      Expanded(child: _UserStatsCard(title: 'Showing', value: '${_filteredReps.length}/${_allReps.length}', icon: Icons.filter_list, color: Colors.orange.shade600)),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -2432,11 +1945,13 @@ class _AddUserPageState extends State<AddUserPage> {
   String _role = 'Class Representative';
   String _department = 'CSE';
   String _year = '2';
-  String _semester = 'S3';
   String _classGroup = 'CSE - A';
 
-  static const roles = ['Class Representative', 'Coordinator'];
-  static const departments = ['CSE', 'ECE', 'ME', 'CE', 'AD'];
+  static const roles = [
+    'Class Representative',
+    'Coordinator',
+  ];
+  static const departments = ['CSE', 'ECE', 'ME', 'IT', 'RA','EEE'];
 
   @override
   void dispose() {
@@ -2467,20 +1982,17 @@ class _AddUserPageState extends State<AddUserPage> {
     AppNotifier.showSuccess(context, 'Created ${user['role']}: ${user['name']}');
     Navigator.of(context).pop(user);
   }*/
-  // Inside _AddUserPageState in admin_dashboard.dart
-  void _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+// Inside _AddUserPageState in admin_dashboard.dart
+void _submit() async {
+  if (!_formKey.currentState!.validate()) return;
+  
+  // Show loading dialog
+  showDialog(context: context, builder: (_) => const Center(child: CircularProgressIndicator()));
 
-    // Show loading dialog
-    showDialog(
-      context: context,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-
-    try {
-      // Call your new invite API
-      /*final response = await http.post(
-  Uri.parse('http://localhost:8000/auth/admin/invite-user'),
+  try {
+    // Call your new invite API
+   /*final response = await http.post(
+  Uri.parse('http://localhost:5000/admin/invite-user'),
   headers: {'Content-Type': 'application/json'},
   body: jsonEncode({
     'username': _emailCtl.text.trim(), // Backend expects 'username'
@@ -2491,47 +2003,51 @@ class _AddUserPageState extends State<AddUserPage> {
     // No password sent here; backend generates the OTP
   }),
 );*/
-      // Inside _submit() in admin_dashboard.dart
-      final response = await http.post(
-        Uri.parse('http://localhost:8000/auth/admin/invite-user'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': _emailCtl.text.trim(),
-          'name': _nameCtl.text.trim(), // Include the Name
-          'role': _role.toLowerCase(),
-          // Department required for both coordinator and class rep
-          'department': _department,
-          // Class rep–specific fields
-          if (_role == 'Class Representative') ...{
-            'ktu_id': _admissionCtl.text.trim(),
-            'year': _year,
-          },
-        }),
-      );
+// Inside _submit() in admin_dashboard.dart
+final response = await http.post(
+  Uri.parse('http://localhost:5000/admin/invite-user'),
+  headers: {'Content-Type': 'application/json'},
+  body: jsonEncode({
+    'username': _emailCtl.text.trim(),
+    'name': _nameCtl.text.trim(), // Include the Name
+    'role': _role.toLowerCase(),
+      // Department required for both coordinator and class rep
+      'department': _department,
+      // Class rep–specific fields
+      if (_role == 'Class Representative') ...{
+        'ktu_id': _admissionCtl.text.trim(),
+        'year': _year,
+      },
+  }),
+);
 
-      Navigator.pop(context); // Close loading
-      if (response.statusCode == 200) {
-        AppNotifier.showSuccess(context, 'Invitation email sent!');
-        Navigator.pop(context);
-      }
-    } catch (e) {
+    Navigator.pop(context); // Close loading
+    if (response.statusCode == 200) {
+      AppNotifier.showSuccess(context, 'Invitation email sent!');
       Navigator.pop(context);
-      // Handle error...
     }
+  } catch (e) {
+    Navigator.pop(context);
+    // Handle error...
   }
-
+}
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
         title: const Text('Add New User'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
+        backgroundColor: theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface,
+        foregroundColor: theme.appBarTheme.foregroundColor ?? theme.colorScheme.onSurface,
+        elevation: theme.appBarTheme.elevation ?? 0,
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Card(
           elevation: 2,
+          color: theme.cardTheme.color ?? theme.colorScheme.surface,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Form(
@@ -2580,8 +2096,7 @@ class _AddUserPageState extends State<AddUserPage> {
                   ),
 
                   // Extra fields shown when role requires academic context
-                  if (_role == 'Class Representative' ||
-                      _role == 'Coordinator') ...[
+                  if (_role == 'Class Representative' || _role == 'Coordinator') ...[
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       value: _department,
@@ -2610,22 +2125,11 @@ class _AddUserPageState extends State<AddUserPage> {
                               .map(
                                 (y) => DropdownMenuItem(
                                   value: y,
-                                  child: Text('$y'),
+                                  child: Text('Year $y'),
                                 ),
                               )
                               .toList(),
                       onChanged: (v) => setState(() => _year = v!),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      initialValue: _semester,
-                      decoration: const InputDecoration(
-                        labelText: 'Semester',
-                        hintText: 'S3',
-                      ),
-                      onChanged: (v) => _semester = v,
-                      validator:
-                          (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
                     ),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -2789,10 +2293,7 @@ class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      'Loading activity logs...',
-                      style: theme.textTheme.bodySmall,
-                    ),
+                    Text('Loading activity logs...', style: theme.textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -2805,16 +2306,9 @@ class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    Icon(
-                      Icons.error_outline,
-                      color: Colors.red.shade600,
-                      size: 32,
-                    ),
+                    Icon(Icons.error_outline, color: Colors.red.shade600, size: 32),
                     const SizedBox(height: 8),
-                    Text(
-                      'Error loading activity logs',
-                      style: theme.textTheme.bodySmall,
-                    ),
+                    Text('Error loading activity logs', style: theme.textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -2830,10 +2324,7 @@ class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
                   children: [
                     Icon(Icons.history, color: Colors.grey.shade400, size: 32),
                     const SizedBox(height: 8),
-                    Text(
-                      'No activity logs found',
-                      style: theme.textTheme.bodySmall,
-                    ),
+                    Text('No activity logs found', style: theme.textTheme.bodySmall),
                   ],
                 ),
               ),
@@ -2850,9 +2341,7 @@ class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
               final status = log['status'] ?? 'success';
 
               return Padding(
-                padding: EdgeInsets.only(
-                  bottom: index < logs.length - 1 ? 12 : 0,
-                ),
+                padding: EdgeInsets.only(bottom: index < logs.length - 1 ? 12 : 0),
                 child: Row(
                   children: [
                     Container(
@@ -2874,9 +2363,7 @@ class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
                         children: [
                           Text(
                             userName,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),

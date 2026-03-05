@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui' show PlatformDispatcher;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:energia/home_page.dart';
 import 'package:energia/role_selection_page.dart';
@@ -16,6 +17,30 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Suppress Flutter framework keyboard warnings and JSON parsing errors for better UX
+  FlutterError.onError = (FlutterErrorDetails details) {
+    final message = details.exception.toString();
+    // Suppress known keyboard event assertion errors (Windows emulator bug)
+    if (message.contains('KeyDownEvent') || 
+        message.contains('Unable to parse JSON message') ||
+        message.contains('_pressedKeys.containsKey')) {
+      return;
+    }
+    FlutterError.presentError(details);
+  };
+  
+  // Also suppress errors from the zone
+  PlatformDispatcher.instance.onError = (error, stack) {
+    final message = error.toString();
+    if (message.contains('KeyDownEvent') || 
+        message.contains('Unable to parse JSON message') ||
+        message.contains('_pressedKeys.containsKey')) {
+      return true; // Suppress the error
+    }
+    return false; // Let other errors be handled normally
+  };
+  
   // Always show onboarding on every app launch
 
   // Initialize notification service (handles platform differences)

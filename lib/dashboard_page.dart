@@ -1,12 +1,13 @@
 import 'services/notifier.dart';
-import 'services/api.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 import 'analysis_graph_page.dart'; 
 import 'anomaly_viewer_page.dart';
 import 'role_selection_page.dart';
 import 'dashboard_scaffold.dart'; // Ensure this is imported
 import 'prediction_page.dart';
+import 'prediction_comparison_page.dart';
 import 'recommendations_page.dart';
 import 'widgets/recommendation_widgets.dart';
 import 'widgets/energy_visualization_widgets.dart';
@@ -14,6 +15,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
 import 'package:http/http.dart' as http; // Fixes 'http'
+import 'dart:async';
+import 'dart:math';
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -23,7 +26,7 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
-  final GlobalKey<_AlertsSectionState> _alertsSectionKey = GlobalKey<_AlertsSectionState>();
+  String? _authToken;
 
   // Dynamic titles based on the selected tab
   final List<String> _titles = [
@@ -32,6 +35,19 @@ class _DashboardPageState extends State<DashboardPage> {
     'Recent Alerts',
     'My Profile',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAuthToken();
+  }
+
+  Future<void> _loadAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _authToken = prefs.getString('auth_token');
+    });
+  }
 
   void _performLogout() {
     Navigator.of(context).pushAndRemoveUntil(
@@ -89,9 +105,9 @@ class _DashboardPageState extends State<DashboardPage> {
       case 0:
         return _WelcomeSection(scheme: scheme);
       case 1:
-        return _ReportsSection(scheme: scheme);
+        return _ReportsSection(scheme: scheme, userToken: _authToken);
       case 2:
-        return _AlertsSection(key: _alertsSectionKey, scheme: scheme);
+        return _AlertsSection(scheme: scheme);
       case 3:
         return _ProfileSection(scheme: scheme);
       default:
@@ -363,7 +379,7 @@ Future<void> _saveProfile() async {
     
     // Call the update-profile API
     final response = await http.post(
-      Uri.parse('http://localhost:8000/auth/update-profile'),
+      Uri.parse('http://localhost:5000/update-profile'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -397,10 +413,10 @@ Future<void> _saveProfile() async {
 Future<void> _updatePassword(String currentP, String newP) async {
   try {
     final response = await http.post(
-      Uri.parse('http://localhost:8000/auth/change-password'),
+      Uri.parse('http://localhost:5000/change-password'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'username': _ktuIdController.text, // Backend identifies by KTU ID
+        'username': _ktuIdController.text,
         'current_password': currentP,
         'new_password': newP,
       }),
@@ -476,7 +492,7 @@ Future<void> _handleChangePassword() async {
   }
 
   try {
-    // Logic to call /auth/change-password
+    // Logic to call /change-password
     // Pass _ktuIdController.text as 'username' to the backend
     AppNotifier.showSuccess(context, "Password updated!");
     Navigator.pop(context); // Close dialog
@@ -673,9 +689,9 @@ void _showPasswordDialog() {
                             setState(() => isLoading = true);
                             
                             try {
-                              // Perform API Call to /auth/change-password
+                              // Perform API Call to /change-password
                               final response = await http.post(
-                                Uri.parse('http://localhost:8000/auth/change-password'),
+                                Uri.parse('http://localhost:5000/change-password'),
                                 headers: {'Content-Type': 'application/json'},
                                 body: jsonEncode({
                                   'username': _ktuIdController.text, // Using KTU ID as identifier
@@ -766,14 +782,277 @@ class _ProfileInfoTile extends StatelessWidget {
 
 // --- WELCOME SECTION ---
 
-class _WelcomeSection extends StatelessWidget {
+class _WelcomeSection extends StatefulWidget {
   final ColorScheme scheme;
   const _WelcomeSection({required this.scheme});
 
   @override
+  State<_WelcomeSection> createState() => _WelcomeSectionState();
+}
+
+class _WelcomeSectionState extends State<_WelcomeSection> {
+  // Treat raw sensor reading as W, convert to kW only for display/widgets.
+  double _currentPowerW = 0;
+  double _peakTodayW = 0;
+  double _dailyTotalKwh = 0;
+
+  // Live sensor readings
+  double _currentEnergyWh = 0;
+  double _currentVoltageV = 0;
+  double _currentCurrentA = 0;
+  double _currentFrequencyHz = 0;
+  double _currentPowerFactorPf = 0;
+
+  List<FlSpot> _livePowerSeriesKw = [];
+  List<DateTime> _liveDataTimestamps = [];
+  bool _isLoading = true;
+  String _status = 'Loading...';
+  bool _liveDataAvailable = false;
+  DateTime? _lastDataUpdate;
+  Timer? _refreshTimer;
+
+  // Getter for power in kW
+  double get _currentPowerKw => _currentPowerW / 1000.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLiveData();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (_) => _loadLiveData());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadLiveData() async {
+    try {
+      final List<String> apiCandidates = [
+        'http://10.0.2.2:5000',
+        'http://192.168.160.1:5000',
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+      ];
+
+      for (final baseUrl in apiCandidates) {
+        try {
+          // Fetch latest 60 readings directly from sensor_data table
+          final response = await http
+              .get(
+                Uri.parse('$baseUrl/sensor-data?limit=60'),
+                headers: {'Content-Type': 'application/json'},
+              )
+              .timeout(const Duration(seconds: 5));
+
+          if (response.statusCode != 200) continue;
+
+          final data = jsonDecode(response.body);
+          final readings = (data['data'] as List?) ?? [];
+          
+          if (readings.isEmpty) {
+            // No sensor data in database
+            continue;
+          }
+
+          // API returns latest-first; reverse so chart goes oldest->newest (left to right)
+          final ordered = readings.reversed.toList();
+
+          double peakW = 0;
+          double totalKwh = 0;
+          final List<FlSpot> spotsKw = [];
+          final List<DateTime> timestamps = [];
+
+          // Process all readings for chart with anomaly filtering
+          for (int i = 0; i < ordered.length; i++) {
+            final r = ordered[i] as Map<String, dynamic>;
+            
+            // Get power value from sensor reading
+            final powerW = (r['power'] as num?)?.toDouble() ??
+                (r['value'] as num?)?.toDouble() ??
+                0.0;
+
+            // Skip anomalous readings (likely sensor errors)
+            // Normal classroom power usage: 0-10,000W (10kW)
+            if (powerW < 0 || powerW > 10000) {
+              print('⚠️ Filtered anomalous reading: ${powerW}W at index $i');
+              continue;
+            }
+
+            peakW = max(peakW, powerW);
+            totalKwh += (powerW / 1000.0) * (1.0 / 60.0);
+            spotsKw.add(FlSpot(spotsKw.length.toDouble(), powerW / 1000.0));
+            
+            // Extract timestamp for this reading
+            DateTime readingTime = DateTime.now();
+            try {
+              final ts = r['timestamp'] ?? r['created_at'] ?? r['ds'];
+              if (ts != null) {
+                readingTime = DateTime.parse(ts.toString());
+              }
+            } catch (e) {
+              print('Error parsing reading timestamp: $e');
+            }
+            timestamps.add(readingTime);
+          }
+
+          // Get latest reading (first item since API returns latest-first)
+          final latest = readings.first as Map<String, dynamic>;
+          final latestW = (latest['power'] as num?)?.toDouble() ??
+              (latest['value'] as num?)?.toDouble() ??
+              0.0;
+
+          // Parse timestamp from latest reading
+          DateTime? latestTime;
+          try {
+            final ts = latest['timestamp'] ?? latest['created_at'];
+            if (ts != null) {
+              latestTime = DateTime.parse(ts.toString());
+            }
+          } catch (e) {
+            print('Error parsing timestamp: $e');
+            latestTime = DateTime.now();
+          }
+
+          // Check if data is fresh (within last 5 minutes)
+          final dataAge = latestTime != null 
+              ? DateTime.now().difference(latestTime).inMinutes 
+              : 999;
+          final isDataFresh = dataAge < 5;
+
+          // Extract all sensor fields from latest reading
+          final latestEnergy = (latest['energy'] as num?)?.toDouble() ?? 0.0;
+          final latestVoltage = (latest['voltage'] as num?)?.toDouble() ?? 0.0;
+          final latestCurrent = (latest['current'] as num?)?.toDouble() ?? 0.0;
+          final latestFrequency = (latest['frequency'] as num?)?.toDouble() ?? 0.0;
+          final latestPowerFactor = (latest['power_factor'] as num?)?.toDouble() ?? 0.0;
+
+          // Determine status based on freshness and power level
+          String statusMsg;
+          if (!isDataFresh) {
+            statusMsg = 'Stale Data (${dataAge}m old)';
+          } else if (latestW < 1.0) {
+            statusMsg = 'Connected • No Load';
+          } else if (latestW < 100) {
+            statusMsg = 'Low Usage';
+          } else {
+            statusMsg = 'Active Usage';
+          }
+
+          // If we have data, it's "live" - use it as-is
+          if (!mounted) return;
+          setState(() {
+            _currentPowerW = latestW;
+            _peakTodayW = peakW;
+            _dailyTotalKwh = totalKwh;
+            _livePowerSeriesKw = spotsKw;
+            _liveDataTimestamps = timestamps;
+            _isLoading = false;
+            _liveDataAvailable = isDataFresh; // Only show as live if fresh
+            _lastDataUpdate = latestTime ?? DateTime.now();
+            _status = statusMsg;
+            
+            // Update sensor readings
+            _currentEnergyWh = latestEnergy;
+            _currentVoltageV = latestVoltage;
+            _currentCurrentA = latestCurrent;
+            _currentFrequencyHz = latestFrequency;
+            _currentPowerFactorPf = latestPowerFactor;
+          });
+          print('✅ Latest sensor data loaded - Power: ${latestW.toStringAsFixed(1)}W, Energy: ${latestEnergy.toStringAsFixed(2)}Wh');
+          return;
+        } catch (e) {
+          print('Error with backend: $e');
+          continue;
+        }
+      }
+
+      // No data available from any backend
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _liveDataAvailable = false;
+        _status = 'No sensor data available';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _liveDataAvailable = false;
+        _status = 'Error loading data';
+      });
+    }
+  }
+
+  Widget _buildSensorCard(
+    ThemeData theme,
+    String title,
+    String mainValue,
+    String subValue,
+    IconData icon,
+    Color color,
+  ) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              color.withOpacity(0.1),
+              color.withOpacity(0.05),
+            ],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  title,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                Icon(icon, size: 20, color: color),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              mainValue,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subValue,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
+
+    final currentKw = _currentPowerW / 1000.0;
+    final peakKw = _peakTodayW / 1000.0;
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -790,8 +1069,8 @@ class _WelcomeSection extends StatelessWidget {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      scheme.primary.withOpacity(0.9),
-                      scheme.primaryContainer.withOpacity(0.8),
+                      widget.scheme.primary.withOpacity(0.9),
+                      widget.scheme.primaryContainer.withOpacity(0.8),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -799,7 +1078,7 @@ class _WelcomeSection extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: scheme.primary.withOpacity(0.3),
+                      color: widget.scheme.primary.withOpacity(0.3),
                       blurRadius: 15,
                       offset: const Offset(0, 8),
                     ),
@@ -817,10 +1096,31 @@ class _WelcomeSection extends StatelessWidget {
                             color: Colors.white70,
                           ),
                         ),
-                        Icon(
-                          Icons.check_circle_outline,
-                          color: Colors.lightGreenAccent,
-                          size: 28,
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _liveDataAvailable ? Colors.greenAccent.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.radio_button_on,
+                                size: 10,
+                                color: _liveDataAvailable ? Colors.greenAccent : Colors.red,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _liveDataAvailable ? '📡 Live' : '⚠️ No Live Data',
+                                style: TextStyle(
+                                  color: _liveDataAvailable ? Colors.greenAccent : Colors.red,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -834,11 +1134,25 @@ class _WelcomeSection extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Monitor real-time consumption and check your alerts here.',
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        color: Colors.white70,
-                      ),
+                      _isLoading
+                          ? 'Loading live data...'
+                          : _liveDataAvailable
+                              ? _currentPowerW < 1.0
+                                  ? 'ESP32 Connected • No Load Detected (${_currentPowerW.toStringAsFixed(1)} W)'
+                                  : 'Live power: ${currentKw.toStringAsFixed(3)} kW (${_currentPowerW.toStringAsFixed(0)} W)'
+                              : _status.contains('Stale')
+                                  ? 'Last reading: ${_currentPowerW.toStringAsFixed(0)} W ($_status)'
+                                  : 'No live readings available',
+                      style: theme.textTheme.bodyLarge?.copyWith(color: Colors.white70),
                     ),
+                    if (_lastDataUpdate != null && _liveDataAvailable)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Updated: ${_lastDataUpdate!.hour}:${_lastDataUpdate!.minute.toString().padLeft(2, '0')}',
+                          style: theme.textTheme.labelSmall?.copyWith(color: Colors.white54),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -855,85 +1169,437 @@ class _WelcomeSection extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         
-        // Main energy meter
-        LiveEnergyMeter(
-          currentPower: 4.2,
-          maxCapacity: 8.0,
-          label: 'CS-201 - Live Power',
-          status: 'Active Usage',
-          showTrend: true,
-          trendPercentage: -2.5,
-        ),
-        const SizedBox(height: 20),
-        
-        // Quick stats using StatRow for consistency
-        Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
+        // Real-time sensor readings in card format
+        if (_liveDataAvailable)
+          Row(
+            children: [
+              Expanded(
+                child: _buildSensorCard(
+                  theme,
+                  'Power',
+                  '${_currentPowerW.toStringAsFixed(0)} W',
+                  '${(_currentPowerW / 1000).toStringAsFixed(2)} kW',
+                  Icons.flash_on,
+                  EnergyColorScheme.primaryBlue,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildSensorCard(
+                  theme,
+                  'Energy',
+                  '${_currentEnergyWh.toStringAsFixed(1)} Wh',
+                  '${(_currentEnergyWh / 1000).toStringAsFixed(3)} kWh',
+                  Icons.battery_charging_full,
+                  Colors.green.shade600,
+                ),
+              ),
+            ],
+          )
+        else
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.red.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.red.shade200),
+            ),
             child: Column(
               children: [
-                StatRow(
-                  label: 'Today\'s Peak',
-                  value: '6.8',
-                  unit: 'kW',
-                  icon: Icons.trending_up_outlined,
-                  color: Colors.red,
+                Icon(Icons.signal_wifi_off, size: 48, color: Colors.red.shade400),
+                const SizedBox(height: 12),
+                Text(
+                  'No Live Sensor Data',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red.shade700,
+                  ),
                 ),
-                const Divider(height: 16),
-                StatRow(
-                  label: 'Efficiency',
-                  value: '87',
-                  unit: '%',
-                  icon: Icons.eco,
-                  color: Colors.green,
+                const SizedBox(height: 8),
+                Text(
+                  'Sensor is not connected or offline',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.red.shade600,
+                  ),
                 ),
-                const Divider(height: 16),
-                StatRow(
-                  label: 'Daily Goal',
-                  value: '28.7',
-                  unit: '/ 30 kWh',
-                  icon: Icons.track_changes,
-                  color: Colors.blue,
-                ),
-                const Divider(height: 16),
-                StatRow(
-                  label: 'Status',
-                  value: 'Normal',
-                  unit: '',
-                  icon: Icons.check_circle,
-                  color: Colors.green,
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: _loadLiveData,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
                 ),
               ],
             ),
           ),
+        
+        const SizedBox(height: 20),
+        
+        // Quick stats (use correct units)
+        Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            child: _liveDataAvailable
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _statTile(theme, 'Peak Today', '${peakKw.toStringAsFixed(2)} kW', Icons.trending_up, EnergyColorScheme.warningOrange),
+                      _statTile(theme, 'Daily Total', '${_dailyTotalKwh.toStringAsFixed(2)} kWh', Icons.bar_chart, EnergyColorScheme.primaryBlue),
+                      _statTile(theme, 'Status', _status, Icons.info, _statusColor),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _status.contains('Stale') ? Icons.warning_amber_rounded : Icons.wifi_off_rounded, 
+                        size: 48, 
+                        color: _status.contains('Stale') ? Colors.orange.shade400 : Colors.red.shade400
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _status.contains('Stale') ? 'Stale Data Warning' : 'No Live Readings Available',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: _status.contains('Stale') ? Colors.orange.shade400 : Colors.red.shade400,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _status.contains('Stale') 
+                            ? 'Sensor data is outdated - $_status'
+                            : 'Sensor not connected or offline',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade600,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        onPressed: _loadLiveData,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+          ),
         ),
-
         const SizedBox(height: 40),
 
-        // Daily consumption preview
-        _buildConsumptionChart(),
-        const SizedBox(height: 40),
+        // Live Power Graph with proper scaling
+        if (_liveDataAvailable && _livePowerSeriesKw.isNotEmpty)
+          _buildLivePowerGraph()
+        else if (!_isLoading && !_liveDataAvailable)
+          Container(
+            height: 300,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.signal_wifi_off, size: 48, color: Colors.grey.shade400),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No Live Power Data',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
 
-       
+        const SizedBox(height: 40),
       ],
     );
   }
-  
-  Widget _buildConsumptionChart() {
-    return ResponsiveLineChart(
-      spots: [
-        const FlSpot(0, 1.5), const FlSpot(1, 1.8), const FlSpot(2, 1.4), const FlSpot(3, 2.5),
-        const FlSpot(4, 2.2), const FlSpot(5, 3.5), const FlSpot(6, 3.8), const FlSpot(7, 3.0),
-        const FlSpot(8, 2.5), const FlSpot(9, 4.1), const FlSpot(10, 3.2), const FlSpot(11, 2.8),
-        const FlSpot(12, 4.5), const FlSpot(13, 4.2), const FlSpot(14, 3.9), const FlSpot(15, 4.7),
-        const FlSpot(16, 4.4), const FlSpot(17, 3.8), const FlSpot(18, 4.1), const FlSpot(19, 3.5),
-        const FlSpot(20, 3.2), const FlSpot(21, 2.9), const FlSpot(22, 2.5), const FlSpot(23, 2.2),
+
+  Color get _statusColor {
+    if (!_liveDataAvailable) return Colors.red;
+    return _currentPowerW > 0 ? Colors.orange : Colors.green;
+  }
+
+  String _formatTimeDiff(Duration diff) {
+    if (diff.inMinutes < 60) {
+      return '${diff.inMinutes}m ago';
+    } else if (diff.inHours < 24) {
+      return '${diff.inHours}h ago';
+    } else {
+      return '${diff.inDays}d ago';
+    }
+  }
+
+  Widget _statTile(ThemeData theme, String label, String value, IconData icon, Color color) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 24),
+        const SizedBox(height: 8),
+        Text(label, style: theme.textTheme.labelSmall?.copyWith(color: Colors.grey.shade600)),
+        const SizedBox(height: 4),
+        Text(value, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: color)),
       ],
-      title: 'Today\'s Hourly Usage',
+    );
+  }
+
+  Widget _buildLivePowerGraph() {
+    if (_livePowerSeriesKw.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // Calculate chart dimensions
+    final screenWidth = MediaQuery.of(context).size.width;
+    final chartWidth = screenWidth - 40;
+    
+    // Convert kW back to Watts for Y-axis display
+    List<FlSpot> powerSeriesW = _livePowerSeriesKw.map((spot) {
+      return FlSpot(spot.x, spot.y * 1000);
+    }).toList();
+
+    // Fixed Y-axis scale: 0W, 40W, 80W, 120W, 160W
+    const double yMax = 160.0;
+    const double yInterval = 40.0;
+    
+    // Get timestamps for X-axis
+    List<DateTime> timestamps = [];
+    if (_liveDataTimestamps.isNotEmpty) {
+      timestamps = _liveDataTimestamps;
+    }
+    
+    // Calculate X-axis interval (show every Nth timestamp to avoid crowding)
+    final xInterval = max(1, (powerSeriesW.length ~/ 6));
+    
+    return Container(
+      width: chartWidth,
+      height: 380,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1F2E),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Title
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Text(
+              'Power Consumption Trend',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+                fontSize: 20,
+              ),
+            ),
+          ),
+          
+          // Chart - Horizontally scrollable
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: max(screenWidth - 48, (powerSeriesW.length * 20).toDouble()),
+                child: LineChart(
+              LineChartData(
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: yInterval,
+                  getDrawingHorizontalLine: (value) {
+                    return FlLine(
+                      color: const Color(0xFF2A3142),
+                      strokeWidth: 1,
+                      dashArray: [5, 5],
+                    );
+                  },
+                ),
+                titlesData: FlTitlesData(
+                  show: true,
+                  rightTitles: AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  topTitles: AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 38,
+                      interval: max(1, (powerSeriesW.length ~/ 8)).toDouble(),
+                      getTitlesWidget: (value, meta) {
+                        final index = value.toInt();
+                        if (index < 0 || index >= timestamps.length) {
+                          return const SizedBox.shrink();
+                        }
+                        final time = timestamps[index];
+                        final formatted = DateFormat('h:mm:ss a').format(time);
+                        return Transform.translate(
+                          offset: const Offset(0, 8),
+                          child: Text(
+                            formatted,
+                            style: const TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 45,
+                      interval: yInterval,
+                      getTitlesWidget: (value, meta) {
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Text(
+                            '${value.toStringAsFixed(0)}W',
+                            style: const TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w400,
+                            ),
+                            textAlign: TextAlign.right,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                borderData: FlBorderData(
+                  show: false,
+                ),
+                minX: 0,
+                maxX: max(1, (powerSeriesW.length - 1).toDouble()),
+                minY: 0,
+                maxY: yMax,
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: powerSeriesW,
+                    isCurved: true,
+                    curveSmoothness: 0.35,
+                    barWidth: 2.5,
+                    isStrokeCapRound: true,
+                    dotData: FlDotData(
+                      show: false,
+                    ),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        colors: [
+                          const Color(0xFF10B981).withOpacity(0.4),
+                          const Color(0xFF10B981).withOpacity(0.1),
+                          const Color(0xFF10B981).withOpacity(0.0),
+                        ],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                    ),
+                    color: const Color(0xFF10B981),
+                  ),
+                ],
+                lineTouchData: LineTouchData(
+                  enabled: true,
+                  touchTooltipData: LineTouchTooltipData(
+                    getTooltipColor: (touchedSpot) => const Color(0xFF1F2937),
+                    tooltipRoundedRadius: 8,
+                    tooltipPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    tooltipBorder: const BorderSide(color: Color(0xFF10B981), width: 1.5),
+                    getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
+                      return touchedBarSpots.map((barSpot) {
+                        final index = barSpot.x.toInt();
+                        final time = index >= 0 && index < timestamps.length
+                            ? DateFormat('h:mm:ss a').format(timestamps[index])
+                            : '';
+                        return LineTooltipItem(
+                          '${barSpot.y.toStringAsFixed(1)} W\n$time',
+                          const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        );
+                      }).toList();
+                    },
+                  ),
+                  handleBuiltInTouches: true,
+                ),
+              ), // end LineChartData
+            ), // end LineChart
+          ), // end SizedBox
+        ), // end SingleChildScrollView
+      ), // end Expanded
+          
+          // Legend/Info with current values
+          Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF10B981).withOpacity(0.5),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Current: ${(_currentPowerW).toStringAsFixed(0)} W (${_currentPowerKw.toStringAsFixed(2)} kW)',
+                  style: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Calculate appropriate Y-axis interval for clean scale (in Watts) with equal spacing
+  double _calculateWattAxisInterval(double maxY) {
+    // Determine the order of magnitude
+    if (maxY <= 500) return 100;      // 100W intervals
+    if (maxY <= 1000) return 200;     // 200W intervals
+    if (maxY <= 2000) return 400;     // 400W intervals
+    if (maxY <= 5000) return 1000;    // 1000W (1kW) intervals
+    if (maxY <= 10000) return 2000;   // 2000W (2kW) intervals
+    return 5000;                      // 5000W (5kW) intervals
+  }
+
+  Widget _buildConsumptionChart() {
+    final peakKw = (_peakTodayW / 1000.0);
+    return ResponsiveLineChart(
+      spots: _livePowerSeriesKw,
+      title: 'Live Power (last ${_livePowerSeriesKw.length} readings)',
       unit: 'kW',
-      maxY: 5.0,
+      maxY: max(1.0, (peakKw * 1.2)).clamp(1.0, 20.0),
       isMonthly: false,
       lineColor: EnergyColorScheme.primaryBlue,
     );
@@ -943,216 +1609,49 @@ class _WelcomeSection extends StatelessWidget {
 
 // --- Alerts Section (CR Receives Alerts) ---
 
-class _AlertsSection extends StatefulWidget {
+class _AlertsSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _AlertsSection({Key? key, required this.scheme}) : super(key: key);
-
-  @override
-  State<_AlertsSection> createState() => _AlertsSectionState();
-}
-
-class _AlertsSectionState extends State<_AlertsSection> {
-  bool _loading = true;
-  List<Map<String, dynamic>> _notifications = [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadNotifications();
-  }
-
-  Future<void> _loadNotifications() async {
-    setState(() => _loading = true);
-    try {
-      final list = await getRecentNotifications(limit: 20);
-      if (mounted) setState(() { _notifications = list; });
-    } catch (e) {
-      // ignore errors - show empty list
-      print('[Alerts] Failed to load notifications: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
+  const _AlertsSection({required this.scheme});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return RefreshIndicator(
-      onRefresh: _loadNotifications,
-      child: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Text(
-            'Recent Alerts',
-            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Recent messages and broadcasts from campus administrators.',
-            style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 24),
-          if (_loading) const Center(child: CircularProgressIndicator()),
-          if (!_loading && _notifications.isEmpty)
-            Card(
-              elevation: 0,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text('No recent alerts or messages.', style: theme.textTheme.bodyMedium),
-              ),
-            ),
-          ..._notifications.map((n) {
-            final title = n['title'] ?? 'Message';
-            final body = n['body'] ?? '';
-            final ts = n['timestamp'] ?? '';
-            return Card(
-              elevation: 2,
-              margin: const EdgeInsets.only(bottom: 12),
-              child: ListTile(
-                leading: Icon(Icons.campaign, color: theme.colorScheme.primary, size: 32),
-                title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                subtitle: Text(body, maxLines: 2, overflow: TextOverflow.ellipsis),
-                trailing: Text(ts.toString().split('T').first, style: theme.textTheme.bodySmall),
-                onTap: () => _showNotificationDetail(context, title, body, ts.toString()),
-              ),
-            );
-          }),
-        ],
-      ),
+    return ListView(
+      padding: const EdgeInsets.all(20),
+      children: [
+        Text(
+          'Recent Alerts (CS-201)',
+          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Notifications about unusual energy usage in your assigned classroom.',
+          style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 24),
+        // Scoped alerts to CR's location (CS-201)
+        _buildAlertCard(context, 'High Usage Alert', 'CS-201: AC running after 6 PM. Usage: 5.2 kW.', Icons.power_outlined, Colors.red.shade400, '2h ago'),
+        _buildAlertCard(context, 'Anomaly Detected', 'CS-201: Projector left on overnight (Occupancy Mismatch).', Icons.lightbulb_outline, Colors.amber.shade600, '1d ago'),
+        _buildAlertCard(context, 'Sensor Offline', 'CS-201 PIR Sensor is not responding.', Icons.sensors_off_outlined, Colors.grey.shade500, '3d ago'),
+      ],
     );
   }
 
-  void _showNotificationDetail(BuildContext context, String title, String body, String timestamp) {
-    final replyController = TextEditingController();
-    bool isReplying = false;
-
-    showDialog<void>(
-      context: context,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return StatefulBuilder(
-          builder: (ctx, setState) => Dialog(
-            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-            child: Card(
-              margin: EdgeInsets.zero,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(title, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                        ),
-                        Text(timestamp.split('T').first, style: theme.textTheme.bodySmall),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(body, style: theme.textTheme.bodyMedium),
-                    const SizedBox(height: 16),
-                    // Reply text field
-                    TextField(
-                      controller: replyController,
-                      maxLines: 3,
-                      maxLength: 300,
-                      enabled: !isReplying,
-                      decoration: InputDecoration(
-                        hintText: 'Type your reply...',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                        contentPadding: const EdgeInsets.all(12),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // Action buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: isReplying ? null : () => Navigator.of(ctx).pop(),
-                          child: const Text('Close'),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.send),
-                          label: isReplying ? const Text('Sending...') : const Text('Reply'),
-                          onPressed: isReplying || replyController.text.trim().isEmpty
-                              ? null
-                              : () async {
-                                  setState(() => isReplying = true);
-                                  try {
-                                    // Get current user info
-                                    final prefs = await SharedPreferences.getInstance();
-                                    final token = prefs.getString('access_token') ?? '';
-                                    String userName = 'Anonymous';
-                                    String userId = 'unknown';
-                                    
-                                    if (token.isNotEmpty) {
-                                      try {
-                                        final decoded = JwtDecoder.decode(token);
-                                        userId = decoded['sub'] as String? ?? 'unknown';
-                                        userName = decoded['name'] as String? ?? decoded['sub'] as String? ?? 'Anonymous';
-                                      } catch (e) {
-                                        print('Could not decode token: $e');
-                                      }
-                                    }
-
-                                    // Extract notification ID from title/timestamp or use timestamp hash
-                                    int notificationId = timestamp.hashCode.abs();
-
-                                    // Post reply
-                                    final success = await postReply(
-                                      notificationId,
-                                      userId,
-                                      userName,
-                                      replyController.text.trim(),
-                                    );
-
-                                    if (!mounted) return;
-                                    if (success) {
-                                      ScaffoldMessenger.of(ctx).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Reply sent successfully!'),
-                                          backgroundColor: Colors.green,
-                                          duration: Duration(seconds: 2),
-                                        ),
-                                      );
-                                      // Refresh alerts after reply (optional - user can refresh manually)
-                                      if (ctx.mounted) Navigator.of(ctx).pop();
-                                    } else {
-                                      ScaffoldMessenger.of(ctx).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Failed to send reply'),
-                                          backgroundColor: Colors.red,
-                                          duration: Duration(seconds: 2),
-                                        ),
-                                      );
-                                      setState(() => isReplying = false);
-                                    }
-                                  } catch (e) {
-                                    print('Error posting reply: $e');
-                                    if (!mounted) return;
-                                    ScaffoldMessenger.of(ctx).showSnackBar(
-                                      SnackBar(
-                                        content: Text('Error: $e'),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
-                                    setState(() => isReplying = false);
-                                  }
-                                },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
+  Widget _buildAlertCard(BuildContext context, String title, String subtitle, IconData icon, Color color, String time) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 2,
+      shadowColor: Colors.transparent,
+      margin: const EdgeInsets.only(bottom: 16),
+      child: ListTile(
+        leading: Icon(icon, color: color, size: 32),
+        title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: color)),
+        subtitle: Text(subtitle),
+        trailing: Text(time, style: theme.textTheme.bodySmall),
+        onTap: () {
+          // Placeholder for alert details
+        },
+      ),
     );
   }
 }
@@ -1161,7 +1660,8 @@ class _AlertsSectionState extends State<_AlertsSection> {
 
 class _ReportsSection extends StatelessWidget {
   final ColorScheme scheme;
-  const _ReportsSection({required this.scheme});
+  final String? userToken;
+  const _ReportsSection({required this.scheme, required this.userToken});
 
   @override
   Widget build(BuildContext context) {
@@ -1182,8 +1682,8 @@ class _ReportsSection extends StatelessWidget {
         const SizedBox(height: 16),
 
         // Recommendations Section
-        const RecommendationsList(
-          userToken: null, // Pass actual token when available
+        RecommendationsList(
+          userToken: userToken,
           showHeader: true,
           maxItems: 3,
         ),
@@ -1197,6 +1697,28 @@ class _ReportsSection extends StatelessWidget {
           Icons.insights,
           Colors.purple.shade600,
         ),
+
+        // ✅ New compare page tile
+        Card(
+          elevation: 4,
+          margin: const EdgeInsets.only(bottom: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: ListTile(
+            leading: Icon(Icons.compare_arrows, color: Colors.indigo.shade600),
+            title: const Text('Compare Prediction vs Live (5 min)'),
+            subtitle: const Text('Check how accurate the 5-minute forecast is for CS-201.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const PredictionComparisonPage(roomName: 'CS-201'),
+                ),
+              );
+            },
+          ),
+        ),
+
         const SizedBox(height: 32),
 
         Text(
@@ -1240,7 +1762,14 @@ class _ReportsSection extends StatelessWidget {
     );
   }
 
-  Widget _buildGraphTile(BuildContext context, String title, String subtitle, IconData icon, Color color, String type) {
+  Widget _buildGraphTile(
+    BuildContext context,
+    String title,
+    String subtitle,
+    IconData icon,
+    Color color,
+    String type,
+  ) {
     final theme = Theme.of(context);
     return Card(
       elevation: 4,
@@ -1249,7 +1778,6 @@ class _ReportsSection extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         onTap: () {
-          // Navigate to new page for graph visualization
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -1299,7 +1827,13 @@ class _ReportsSection extends StatelessWidget {
     );
   }
 
-  Widget _buildAnomalyReportTile(BuildContext context, String title, String subtitle, IconData icon, Color color) {
+  Widget _buildAnomalyReportTile(
+    BuildContext context,
+    String title,
+    String subtitle,
+    IconData icon,
+    Color color,
+  ) {
     final theme = Theme.of(context);
     return Card(
       elevation: 4,
@@ -1308,12 +1842,9 @@ class _ReportsSection extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         onTap: () {
-          // Navigate to new page for anomaly list visualization
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (context) => const AnomalyViewerPage(),
-            ),
+            MaterialPageRoute(builder: (context) => const AnomalyViewerPage()),
           );
         },
         borderRadius: BorderRadius.circular(16),
@@ -1346,7 +1877,6 @@ class _ReportsSection extends StatelessWidget {
                   ],
                 ),
               ),
-              // CR cannot download, so we use a view icon
               const Icon(Icons.visibility_outlined, size: 24, color: Colors.grey),
             ],
           ),
@@ -1355,7 +1885,13 @@ class _ReportsSection extends StatelessWidget {
     );
   }
 
-  Widget _buildPredictionTile(BuildContext context, String title, String subtitle, IconData icon, Color color) {
+  Widget _buildPredictionTile(
+    BuildContext context,
+    String title,
+    String subtitle,
+    IconData icon,
+    Color color,
+  ) {
     final theme = Theme.of(context);
     return Card(
       elevation: 4,
@@ -1364,12 +1900,9 @@ class _ReportsSection extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         onTap: () {
-          // Navigate to prediction page
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (context) => const PredictionPage(),
-            ),
+            MaterialPageRoute(builder: (context) => const PredictionPage()),
           );
         },
         borderRadius: BorderRadius.circular(16),
@@ -1392,9 +1925,12 @@ class _ReportsSection extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text(
-                          title,
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         const SizedBox(width: 8),
                         Container(
@@ -1430,9 +1966,6 @@ class _ReportsSection extends StatelessWidget {
     );
   }
 }
-
-
-// --- Helper Classes (Standard Helpers) ---
 
 class _EnergyUsageChart extends StatelessWidget {
   final bool isDark;

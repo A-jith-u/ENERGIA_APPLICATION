@@ -68,9 +68,23 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
     }
   }
 
+  DateTime? _parseTimestamp(String timestamp) {
+    if (timestamp.isEmpty) return null;
+
+    final hasTz = RegExp(r'(Z|[+-]\d\d:\d\d)$').hasMatch(timestamp);
+    final normalized = timestamp.contains('T')
+        ? timestamp
+        : timestamp.replaceFirst(' ', 'T');
+
+    final iso = hasTz ? normalized : '${normalized}Z';
+    return DateTime.tryParse(iso)?.toLocal();
+  }
+
   String _getTimeAgo(String timestamp) {
     try {
-      final logTime = DateTime.parse(timestamp);
+      final logTime = _parseTimestamp(timestamp);
+      if (logTime == null) return 'unknown';
+
       final now = DateTime.now();
       final difference = now.difference(logTime);
 

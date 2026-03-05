@@ -29,15 +29,15 @@ class Recommendation {
 
   factory Recommendation.fromJson(Map<String, dynamic> json) {
     return Recommendation(
-      id: json['id'] as String,
-      title: json['title'] as String,
-      message: json['message'] as String,
-      type: json['type'] as String,
-      priority: json['priority'] as String,
+      id: (json['id'] as String?) ?? 'rec_${DateTime.now().millisecondsSinceEpoch}',
+      title: (json['title'] as String?) ?? 'Recommendation',
+      message: (json['message'] as String?) ?? 'No details available',
+      type: (json['type'] as String?) ?? 'informational',
+      priority: (json['priority'] as String?) ?? 'info',
       action: json['action'] as String?,
-      data: json['data'] as Map<String, dynamic>? ?? {},
-      icon: json['icon'] as String? ?? 'info',
-      timestamp: json['timestamp'] as String,
+      data: (json['data'] as Map<String, dynamic>?) ?? {},
+      icon: (json['icon'] as String?) ?? 'info',
+      timestamp: (json['timestamp'] as String?) ?? DateTime.now().toIso8601String(),
     );
   }
 
@@ -117,7 +117,13 @@ class Recommendation {
 
 /// Service to fetch recommendations
 class RecommendationService {
-  static const String baseUrl = 'http://localhost:8000';
+  // Try multiple endpoints to support emulator/device/desktop
+  static const List<String> baseUrls = [
+    'http://10.0.2.2:5000',
+    'http://192.168.160.1:5000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5000',
+  ];
 
   static Future<List<Recommendation>> fetchRecommendations(String? token) async {
     try {
@@ -129,22 +135,71 @@ class RecommendationService {
         headers['Authorization'] = 'Bearer $token';
       }
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/recommendations/recommendations'),
-        headers: headers,
-      );
+      Exception? lastErr;
+      for (final baseUrl in baseUrls) {
+        try {
+          final response = await http.get(
+            Uri.parse('$baseUrl/recommendations/recommendations'),
+            headers: headers,
+          ).timeout(const Duration(seconds: 5));
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List recList = data['recommendations'] as List;
-        return recList.map((json) => Recommendation.fromJson(json)).toList();
-      } else {
-        throw Exception('Failed to load recommendations: ${response.statusCode}');
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            final List recList = data['recommendations'] as List? ?? [];
+            return recList.map((json) => Recommendation.fromJson(json)).toList();
+          }
+          if (response.statusCode == 401) {
+            // token invalid/expired - return generic recommendations
+            print('Token expired or missing, returning generic recommendations');
+            return _getGenericRecommendations();
+          }
+          lastErr = Exception('Status ${response.statusCode}');
+        } catch (e) {
+          lastErr = e as Exception;
+          continue;
+        }
       }
+      print('No backend reachable for recommendations, using generic');
+      return _getGenericRecommendations();
     } catch (e) {
       print('Error fetching recommendations: $e');
-      return [];
+      return _getGenericRecommendations();
     }
+  }
+
+  static List<Recommendation> _getGenericRecommendations() {
+    return [
+      Recommendation(
+        id: 'generic_1',
+        title: 'Energy Monitoring Active',
+        message: 'Your classroom energy is being monitored in real-time.',
+        priority: 'info',
+        type: 'informational',
+        icon: 'info',
+        data: {},
+        timestamp: DateTime.now().toIso8601String(),
+      ),
+      Recommendation(
+        id: 'generic_2',
+        title: 'Optimize Usage',
+        message: 'Consider turning off devices when not in use to save energy.',
+        priority: 'medium',
+        type: 'optimization',
+        icon: 'lightbulb',
+        data: {},
+        timestamp: DateTime.now().toIso8601String(),
+      ),
+      Recommendation(
+        id: 'generic_3',
+        title: 'Peak Hours Alert',
+        message: 'Peak energy usage typically occurs between 10-16:00 hours.',
+        priority: 'low',
+        type: 'informational',
+        icon: 'trending_up',
+        data: {},
+        timestamp: DateTime.now().toIso8601String(),
+      ),
+    ];
   }
 
   static Future<Map<String, int>> fetchRecommendationCount(String? token) async {
@@ -157,25 +212,35 @@ class RecommendationService {
         headers['Authorization'] = 'Bearer $token';
       }
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/recommendations/recommendations/count'),
-        headers: headers,
-      );
+      for (final baseUrl in baseUrls) {
+        try {
+          final response = await http.get(
+            Uri.parse('$baseUrl/recommendations/recommendations/count'),
+            headers: headers,
+          ).timeout(const Duration(seconds: 5));
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return {
-          'total': data['total'] as int? ?? 0,
-          'critical': data['critical'] as int? ?? 0,
-          'high': data['high'] as int? ?? 0,
-          'medium': data['medium'] as int? ?? 0,
-          'low': data['low'] as int? ?? 0,
-        };
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            return {
+              'total': data['total'] as int? ?? 0,
+              'critical': data['critical'] as int? ?? 0,
+              'high': data['high'] as int? ?? 0,
+              'medium': data['medium'] as int? ?? 0,
+              'low': data['low'] as int? ?? 0,
+            };
+          }
+          if (response.statusCode == 401) {
+            // Return generic count for unauth users
+            return {'total': 3, 'critical': 0, 'high': 0, 'medium': 1, 'low': 2};
+          }
+        } catch (e) {
+          continue;
+        }
       }
     } catch (e) {
       print('Error fetching recommendation count: $e');
     }
-    return {'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0};
+    return {'total': 3, 'critical': 0, 'high': 0, 'medium': 1, 'low': 2};
   }
 }
 

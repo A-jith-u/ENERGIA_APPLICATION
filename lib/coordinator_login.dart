@@ -1,11 +1,15 @@
 // Coordinator login UI. Authenticates the coordinator via backend API
 // and persists the JWT token in `SharedPreferences` for subsequent API calls.
 import 'dart:ui';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/api.dart';
 import 'services/notifier.dart';
+import 'package:energia/models/user_role_model.dart';
+import 'package:energia/services/department_auth_service.dart';
+import 'package:energia/coordinator_dashboard.dart';
 
 class CoordinatorLoginPage extends StatefulWidget {
   const CoordinatorLoginPage({super.key});
@@ -27,28 +31,69 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
   void _login() {
     if (_formKey.currentState?.validate() ?? false) {
       _performLogin();
+    } else {
+      setState(() {
+        _errorMessage = 'Please fill all the credentials correctly';
+      });
     }
+  }
+
+  @override
+  void dispose() {
+    _idController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 
   Future<void> _performLogin() async {
     final id = _idController.text.trim();
     final password = _passwordController.text;
     final department = _selectedDepartment;
+    
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
+    
     try {
-      final token = await login(id, password, department: department);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('auth_token', token);
-      Navigator.of(context).pop();
-      Navigator.pushReplacementNamed(context, '/coordinator_dashboard');
+      // Use new department authentication service
+      final authService = DepartmentAuthService();
+      final loginResult = await authService.loginCoordinator(
+        coordinatorId: id,
+        password: password,
+        department: department,
+      );
+      
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
+      
+      if (loginResult.success && loginResult.user != null) {
+        // Save user data to shared preferences (token is already saved by authService)
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('current_user', jsonEncode(loginResult.user!.toJson()));
+        
+        // Navigate to dashboard with user object
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CoordinatorDashboardPage(user: loginResult.user),
+          ),
+        );
+      } else {
+        setState(() {
+          _errorMessage = loginResult.message ?? 'Login failed';
+        });
+        AppNotifier.showError(context, loginResult.message ?? 'Login failed');
+      }
     } catch (e) {
-      Navigator.of(context).pop();
-      final msg = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
-      setState(() { _errorMessage = msg; });
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Close loading dialog
+      
+      final msg = 'Login failed: ${e.toString()}';
+      setState(() {
+        _errorMessage = msg;
+      });
       AppNotifier.showError(context, msg);
     }
   }
@@ -59,10 +104,19 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
     required IconData icon,
     bool obscure = false,
     String? Function(String?)? validator,
+    VoidCallback? onSubmit,
   }) {
     return TextFormField(
       controller: controller,
       obscureText: obscure && !_isPasswordVisible,
+      enableInteractiveSelection: true,
+      maxLines: 1,
+      onChanged: (_) {
+        setState(() {
+          _errorMessage = null; // Clear error message when user types
+        });
+      },
+      onFieldSubmitted: onSubmit != null ? (_) => onSubmit() : null,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
@@ -233,6 +287,7 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                         label: 'Password',
                                         icon: Icons.lock_outline,
                                         obscure: true,
+                                        onSubmit: _login,
                                         validator: (v) {
                                           if (v == null || v.isEmpty) return 'Enter password';
                                           return null;

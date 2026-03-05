@@ -1,20 +1,68 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import 'widgets/energy_visualization_widgets.dart';
+import 'services/api.dart'; // Ensure this matches your project structure
+import 'services/notifier.dart'; // Ensure this matches your project structure
 
-class AnomalyViewerPage extends StatelessWidget {
+class AnomalyViewerPage extends StatefulWidget {
   const AnomalyViewerPage({super.key});
 
-  // Sample data simulating the anomaly report list
-  final List<Map<String, dynamic>> anomalies = const [
-    {'time': 'Dec 10, 11:30 PM', 'event': 'AC run time exceeded threshold (7 kWh)', 'severity': 'High', 'location': 'CS-Lab 1', 'type': 'Consumption'},
-    {'time': 'Dec 08, 08:15 AM', 'event': 'Usage spike during non-occupancy hours', 'severity': 'Medium', 'location': 'CS-201', 'type': 'Anomaly'},
-    {'time': 'Nov 25, 02:00 PM', 'event': 'Voltage fluctuation detected (Device 302)', 'severity': 'Low', 'location': 'Server Room', 'type': 'Hardware'},
-    {'time': 'Nov 20, 06:00 PM', 'event': 'Occupancy mismatch (Lights left on)', 'severity': 'Medium', 'location': 'CS-Lab 2', 'type': 'Occupancy'},
-    {'time': 'Nov 15, 09:00 PM', 'event': 'PIR sensor reported offline status', 'severity': 'High', 'location': 'CS-Lab 3', 'type': 'Sensor'},
-  ];
+  @override
+  State<AnomalyViewerPage> createState() => _AnomalyViewerPageState();
+}
+
+class _AnomalyViewerPageState extends State<AnomalyViewerPage> {
+  // State variables
+  List<dynamic> _anomalies = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchDepartmentAnomalies();
+  }
 
   // Define the consistent dark header color
   static const _headerColor = Color(0xFF1B2A3B);
+
+  Future<void> _fetchDepartmentAnomalies() async {
+    final prefs = await SharedPreferences.getInstance();
+    // Get the department saved during login
+    final department = prefs.getString('user_department') ?? ""; 
+  Future<void> _fetchDepartmentAnomalies() async {
+  // Your backend endpoint that queries: 
+  // SELECT * FROM sensor WHERE is_anomaly = 1 OR rule_anomaly = 1
+  final response = await http.get(Uri.parse('http://your-api:5000/anomalies'));
+  
+  if (response.statusCode == 200) {
+    setState(() {
+      _anomalies = json.decode(response.body);
+      _isLoading = false;
+    });
+  }
+}
+    try {
+      // Replace with your actual backend URL or use your Config class
+      final response = await http.get(
+        Uri.parse('http://your-api-url:5000/coordinator/alerts?department=$department'),
+        headers: {'Authorization': 'Bearer ${prefs.getString('auth_token')}'},
+      );
+
+      if (response.statusCode == 200) {
+        setState(() {
+          _anomalies = json.decode(response.body);
+          _isLoading = false;
+        });
+      } else {
+        throw Exception('Failed to load anomalies');
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      AppNotifier.showError(context, "Failed to load department alerts");
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,139 +70,44 @@ class AnomalyViewerPage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Anomaly Detection Report'),
+        title: const Text('Department Anomalies'),
         backgroundColor: _headerColor,
-        foregroundColor: Colors.white,
       ),
-      body: ListView(
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator())
+        : Column(
         children: [
-          // Header Section
-          Padding(
+          // Header Summary Card
+          Container(
             padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            color: _headerColor,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Summary Stats
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Total Anomalies',
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '${anomalies.length}',
-                                style: theme.textTheme.headlineSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Critical Issues',
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: Colors.grey.shade600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '2',
-                                style: theme.textTheme.headlineSmall?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Recent Detected Anomalies',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                _buildStatItem('Total', _anomalies.length.toString(), Colors.white),
+                _buildStatItem('High', _countBySeverity('High'), Colors.redAccent),
+                _buildStatItem('Medium', _countBySeverity('Medium'), Colors.orangeAccent),
               ],
             ),
           ),
-          // Anomaly List
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              children: anomalies.map((anomaly) {
-                return AnomalyAlertCard(
-                  timestamp: anomaly['time'].toString(),
-                  event: anomaly['event'].toString(),
-                  severity: anomaly['severity'].toString(),
+          Expanded(
+            child: _anomalies.isEmpty 
+              ? const Center(child: Text("No anomalies detected for your department"))
+              : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _anomalies.length,
+              itemBuilder: (context, index) {
+                final anomaly = _anomalies[index];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: ListTile(
+                    leading: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                    title: Text(anomaly['description'] ?? 'Energy Anomaly'),
+                    subtitle: Text('Time: ${anomaly['timestamp']}'),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  ),
                 );
-              }).toList(),
-            ),
-          ),
-          const SizedBox(height: 24),
-          // Statistics Section
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Anomaly Distribution by Type',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Card(
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        _buildDistributionRow('Consumption', 2, Colors.orange),
-                        const SizedBox(height: 12),
-                        _buildDistributionRow('Occupancy', 1, Colors.blue),
-                        const SizedBox(height: 12),
-                        _buildDistributionRow('Sensor', 1, Colors.red),
-                        const SizedBox(height: 12),
-                        _buildDistributionRow('Hardware', 1, Colors.purple),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+              },
             ),
           ),
         ],
@@ -162,36 +115,15 @@ class AnomalyViewerPage extends StatelessWidget {
     );
   }
 
-  Widget _buildDistributionRow(String label, int count, Color color) {
-    return Row(
+  String _countBySeverity(String severity) {
+    return _anomalies.where((a) => a['severity'] == severity).length.toString();
+  }
+
+  Widget _buildStatItem(String label, String value, Color color) {
+    return Column(
       children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(3),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(label),
-        ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            '$count',
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-            ),
-          ),
-        ),
+        Text(value, style: TextStyle(color: color, fontSize: 24, fontWeight: FontWeight.bold)),
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
       ],
     );
   }
