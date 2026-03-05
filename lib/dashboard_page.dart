@@ -1,4 +1,5 @@
 import 'services/notifier.dart';
+import 'services/api.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'analysis_graph_page.dart'; 
@@ -22,6 +23,7 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
+  final GlobalKey<_AlertsSectionState> _alertsSectionKey = GlobalKey<_AlertsSectionState>();
 
   // Dynamic titles based on the selected tab
   final List<String> _titles = [
@@ -89,7 +91,7 @@ class _DashboardPageState extends State<DashboardPage> {
       case 1:
         return _ReportsSection(scheme: scheme);
       case 2:
-        return _AlertsSection(scheme: scheme);
+        return _AlertsSection(key: _alertsSectionKey, scheme: scheme);
       case 3:
         return _ProfileSection(scheme: scheme);
       default:
@@ -941,49 +943,216 @@ class _WelcomeSection extends StatelessWidget {
 
 // --- Alerts Section (CR Receives Alerts) ---
 
-class _AlertsSection extends StatelessWidget {
+class _AlertsSection extends StatefulWidget {
   final ColorScheme scheme;
-  const _AlertsSection({required this.scheme});
+  const _AlertsSection({Key? key, required this.scheme}) : super(key: key);
+
+  @override
+  State<_AlertsSection> createState() => _AlertsSectionState();
+}
+
+class _AlertsSectionState extends State<_AlertsSection> {
+  bool _loading = true;
+  List<Map<String, dynamic>> _notifications = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications();
+  }
+
+  Future<void> _loadNotifications() async {
+    setState(() => _loading = true);
+    try {
+      final list = await getRecentNotifications(limit: 20);
+      if (mounted) setState(() { _notifications = list; });
+    } catch (e) {
+      // ignore errors - show empty list
+      print('[Alerts] Failed to load notifications: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          'Recent Alerts (CS-201)',
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Notifications about unusual energy usage in your assigned classroom.',
-          style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 24),
-        // Scoped alerts to CR's location (CS-201)
-        _buildAlertCard(context, 'High Usage Alert', 'CS-201: AC running after 6 PM. Usage: 5.2 kW.', Icons.power_outlined, Colors.red.shade400, '2h ago'),
-        _buildAlertCard(context, 'Anomaly Detected', 'CS-201: Projector left on overnight (Occupancy Mismatch).', Icons.lightbulb_outline, Colors.amber.shade600, '1d ago'),
-        _buildAlertCard(context, 'Sensor Offline', 'CS-201 PIR Sensor is not responding.', Icons.sensors_off_outlined, Colors.grey.shade500, '3d ago'),
-      ],
+    return RefreshIndicator(
+      onRefresh: _loadNotifications,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Text(
+            'Recent Alerts',
+            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Recent messages and broadcasts from campus administrators.',
+            style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 24),
+          if (_loading) const Center(child: CircularProgressIndicator()),
+          if (!_loading && _notifications.isEmpty)
+            Card(
+              elevation: 0,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('No recent alerts or messages.', style: theme.textTheme.bodyMedium),
+              ),
+            ),
+          ..._notifications.map((n) {
+            final title = n['title'] ?? 'Message';
+            final body = n['body'] ?? '';
+            final ts = n['timestamp'] ?? '';
+            return Card(
+              elevation: 2,
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                leading: Icon(Icons.campaign, color: theme.colorScheme.primary, size: 32),
+                title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                subtitle: Text(body, maxLines: 2, overflow: TextOverflow.ellipsis),
+                trailing: Text(ts.toString().split('T').first, style: theme.textTheme.bodySmall),
+                onTap: () => _showNotificationDetail(context, title, body, ts.toString()),
+              ),
+            );
+          }),
+        ],
+      ),
     );
   }
 
-  Widget _buildAlertCard(BuildContext context, String title, String subtitle, IconData icon, Color color, String time) {
-    final theme = Theme.of(context);
-    return Card(
-      elevation: 2,
-      shadowColor: Colors.transparent,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: ListTile(
-        leading: Icon(icon, color: color, size: 32),
-        title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: color)),
-        subtitle: Text(subtitle),
-        trailing: Text(time, style: theme.textTheme.bodySmall),
-        onTap: () {
-          // Placeholder for alert details
-        },
-      ),
+  void _showNotificationDetail(BuildContext context, String title, String body, String timestamp) {
+    final replyController = TextEditingController();
+    bool isReplying = false;
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return StatefulBuilder(
+          builder: (ctx, setState) => Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            child: Card(
+              margin: EdgeInsets.zero,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(title, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                        ),
+                        Text(timestamp.split('T').first, style: theme.textTheme.bodySmall),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(body, style: theme.textTheme.bodyMedium),
+                    const SizedBox(height: 16),
+                    // Reply text field
+                    TextField(
+                      controller: replyController,
+                      maxLines: 3,
+                      maxLength: 300,
+                      enabled: !isReplying,
+                      decoration: InputDecoration(
+                        hintText: 'Type your reply...',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        contentPadding: const EdgeInsets.all(12),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Action buttons
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: isReplying ? null : () => Navigator.of(ctx).pop(),
+                          child: const Text('Close'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.send),
+                          label: isReplying ? const Text('Sending...') : const Text('Reply'),
+                          onPressed: isReplying || replyController.text.trim().isEmpty
+                              ? null
+                              : () async {
+                                  setState(() => isReplying = true);
+                                  try {
+                                    // Get current user info
+                                    final prefs = await SharedPreferences.getInstance();
+                                    final token = prefs.getString('access_token') ?? '';
+                                    String userName = 'Anonymous';
+                                    String userId = 'unknown';
+                                    
+                                    if (token.isNotEmpty) {
+                                      try {
+                                        final decoded = JwtDecoder.decode(token);
+                                        userId = decoded['sub'] as String? ?? 'unknown';
+                                        userName = decoded['name'] as String? ?? decoded['sub'] as String? ?? 'Anonymous';
+                                      } catch (e) {
+                                        print('Could not decode token: $e');
+                                      }
+                                    }
+
+                                    // Extract notification ID from title/timestamp or use timestamp hash
+                                    int notificationId = timestamp.hashCode.abs();
+
+                                    // Post reply
+                                    final success = await postReply(
+                                      notificationId,
+                                      userId,
+                                      userName,
+                                      replyController.text.trim(),
+                                    );
+
+                                    if (!mounted) return;
+                                    if (success) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Reply sent successfully!'),
+                                          backgroundColor: Colors.green,
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                      // Refresh alerts after reply (optional - user can refresh manually)
+                                      if (ctx.mounted) Navigator.of(ctx).pop();
+                                    } else {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Failed to send reply'),
+                                          backgroundColor: Colors.red,
+                                          duration: Duration(seconds: 2),
+                                        ),
+                                      );
+                                      setState(() => isReplying = false);
+                                    }
+                                  } catch (e) {
+                                    print('Error posting reply: $e');
+                                    if (!mounted) return;
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Error: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                    setState(() => isReplying = false);
+                                  }
+                                },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

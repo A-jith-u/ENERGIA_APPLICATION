@@ -137,6 +137,30 @@ activity_logs_table = Table(
     Column("timestamp", DateTime, nullable=False, server_default=func.now()),
 )
 
+
+# Notifications table - store admin broadcasts and system messages
+notifications_table = Table(
+    "notifications",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("title", String, nullable=False),
+    Column("body", Text, nullable=False),
+    Column("data", Text, nullable=True),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+# Notification Replies table - store user replies to broadcasts
+notification_replies_table = Table(
+    "notification_replies",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("notification_id", BigInteger, nullable=False),  # FK to notifications.id
+    Column("user_id", String, nullable=True),  # username or student ID
+    Column("user_name", String, nullable=True),  # Full name for display
+    Column("body", Text, nullable=False),  # Reply text
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
 metadata.create_all(engine)
 
 insp = inspect(engine)
@@ -194,6 +218,15 @@ with engine.begin() as conn:
         conn.execute(text("ALTER TABLE sensor_data ADD COLUMN frequency DOUBLE PRECISION"))
     if "power_factor" not in sensor_columns:
         conn.execute(text("ALTER TABLE sensor_data ADD COLUMN power_factor DOUBLE PRECISION"))
+
+# Ensure notification_replies table exists and has all required columns (idempotent)
+if "notification_replies" in [t.name for t in inspect(engine).get_table_names()]:
+    replies_columns = [col["name"] for col in insp.get_columns("notification_replies")]
+    with engine.begin() as conn:
+        if "user_id" not in replies_columns:
+            conn.execute(text("ALTER TABLE notification_replies ADD COLUMN user_id VARCHAR"))
+        if "user_name" not in replies_columns:
+            conn.execute(text("ALTER TABLE notification_replies ADD COLUMN user_name VARCHAR"))
 
 coordinator_columns = [col["name"] for col in insp.get_columns("coordinators")]
 if "department" not in coordinator_columns:

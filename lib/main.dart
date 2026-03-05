@@ -10,10 +10,17 @@ import 'package:energia/registration_page.dart';
 import 'package:energia/admin_login.dart';
 import 'package:energia/admin_dashboard.dart';
 import 'package:energia/onboarding_page.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:io';
+import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Always show onboarding on every app launch
+
+  // Initialize notification service (handles platform differences)
+  await NotificationService().initialize();
+
   runApp(const MyApp(onboardingComplete: false));
 }
 

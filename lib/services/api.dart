@@ -29,13 +29,67 @@ class ApiError implements Exception {
   String toString() => 'ApiError: $message';
 }
 
+/// Post a reply to a notification. Returns success status.
+Future<bool> postReply(
+  int notificationId,
+  String userId,
+  String userName,
+  String replyText,
+) async {
+  Exception? lastError;
+  print('[API] Posting reply to notification $notificationId from $userName');
+
+  for (final base in _candidates) {
+    final uri = Uri.parse('$base/fcm/reply');
+    print('[API] Trying: $uri');
+    try {
+      final resp = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'notification_id': notificationId,
+              'user_id': userId,
+              'user_name': userName,
+              'body': replyText,
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+      print('[API] Reply response from $base: ${resp.statusCode}');
+
+      if (resp.statusCode == 200 || resp.statusCode == 201) {
+        print('[API] Reply posted successfully!');
+        return true;
+      }
+
+      if (resp.statusCode >= 500) {
+        print('[API] Backend system error: ${resp.statusCode}');
+        lastError = ApiError('Server error');
+        continue;
+      }
+
+      lastError = ApiError('Reply failed');
+    } catch (e) {
+      print('[API] Connection error with $base: $e');
+      lastError = e as Exception;
+      continue;
+    }
+  }
+  print('[API] All candidates failed for reply. Last error: $lastError');
+  return false;
+}
+
 /// Login with username/password. Returns access token string on success.
-Future<String> login(String username, String password, {String? department}) async {
+Future<String> login(
+  String username,
+  String password, {
+  String? department,
+}) async {
   // Try candidate bases until one responds successfully.
   Exception? lastError;
   print('[API] Attempting login for user: $username');
   print('[API] Trying candidates: $_candidates');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/login');
     print('[API] Trying: $uri');
@@ -44,18 +98,21 @@ Future<String> login(String username, String password, {String? department}) asy
       if (department != null) {
         requestBody['department'] = department;
       }
-      final resp = await http.post(uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(requestBody))
+      final resp = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(requestBody),
+          )
           .timeout(Duration(seconds: 5));
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Login successful!');
         return data['access_token'] as String;
       }
-      
+
       // Handle specific credential errors (400, 401)
       if (resp.statusCode == 400 || resp.statusCode == 401) {
         try {
@@ -69,13 +126,13 @@ Future<String> login(String username, String password, {String? department}) asy
           throw ApiError('Invalid credentials');
         }
       }
-      
+
       // Handle system errors (5xx)
       if (resp.statusCode >= 500) {
         print('[API] Backend system error: ${resp.statusCode}');
         throw ApiError('Something went wrong');
       }
-      
+
       // Other errors
       throw ApiError('Login failed');
     } catch (e) {
@@ -90,11 +147,22 @@ Future<String> login(String username, String password, {String? department}) asy
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Backend unreachable. Please check your connection or contact support.');
+  throw ApiError(
+    'Backend unreachable. Please check your connection or contact support.',
+  );
 }
 
 /// Register a new user
-Future<void> register(String username, String password, {String role = 'student', String? ktuId, String? name, String? department, String? year, String? email}) async {
+Future<void> register(
+  String username,
+  String password, {
+  String role = 'student',
+  String? ktuId,
+  String? name,
+  String? department,
+  String? year,
+  String? email,
+}) async {
   Exception? lastError;
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/register');
@@ -109,18 +177,24 @@ Future<void> register(String username, String password, {String role = 'student'
       if (department != null) body['department'] = department;
       if (year != null) body['year'] = year;
       if (email != null) body['email'] = email;
-      
-      final resp = await http.post(uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(body));
+
+      final resp = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
       if (resp.statusCode == 200) return;
-      throw ApiError('Register failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Register failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = e as Exception;
       continue;
     }
   }
-  throw ApiError('Register failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Register failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Send an email notification (alert/update) to one or more recipients.
@@ -139,25 +213,31 @@ Future<void> sendNotification({
   for (final base in _candidates) {
     final uri = Uri.parse('$base/notify/$type');
     try {
-      final resp = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'subject': subject,
-          'body': body,
-          'recipients': recipients,
-        }),
-      ).timeout(const Duration(seconds: 8));
+      final resp = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'subject': subject,
+              'body': body,
+              'recipients': recipients,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
 
       if (resp.statusCode == 200) return;
-      throw ApiError('Notification failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Notification failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = e as Exception;
       continue;
     }
   }
 
-  throw ApiError('Notification failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Notification failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 Future<void> requestPasswordReset(String username) async {
@@ -166,56 +246,72 @@ Future<void> requestPasswordReset(String username) async {
     final uri = Uri.parse('$base/auth/request-password-reset');
     try {
       final resp = await http
-          .post(uri,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'username': username}))
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'username': username}),
+          )
           .timeout(const Duration(seconds: 8));
       if (resp.statusCode == 200) return;
-      throw ApiError('Reset request failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Reset request failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = e as Exception;
       continue;
     }
   }
-  throw ApiError('Reset request failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Reset request failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
-Future<void> confirmPasswordReset(String username, String otp, String newPassword) async {
+Future<void> confirmPasswordReset(
+  String username,
+  String otp,
+  String newPassword,
+) async {
   Exception? lastError;
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/confirm-password-reset');
     try {
       final resp = await http
-          .post(uri,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'username': username,
-                'otp': otp,
-                'new_password': newPassword,
-              }))
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'username': username,
+              'otp': otp,
+              'new_password': newPassword,
+            }),
+          )
           .timeout(const Duration(seconds: 8));
       if (resp.statusCode == 200) return;
-      throw ApiError('Reset confirm failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Reset confirm failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = e as Exception;
       continue;
     }
   }
-  throw ApiError('Reset confirm failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Reset confirm failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch all coordinators from the backend
 Future<List<Map<String, dynamic>>> getCoordinators() async {
   Exception? lastError;
   print('[API] Fetching coordinators');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/users/coordinators');
     print('[API] Trying: $uri');
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched ${data['total']} coordinators');
@@ -223,7 +319,9 @@ Future<List<Map<String, dynamic>>> getCoordinators() async {
         UserListsStore.instance.setCoordinators(list);
         return list;
       }
-      throw ApiError('Get coordinators failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get coordinators failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = e as Exception;
@@ -231,29 +329,35 @@ Future<List<Map<String, dynamic>>> getCoordinators() async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get coordinators failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get coordinators failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch all class representatives from the backend
 Future<List<Map<String, dynamic>>> getClassRepresentatives() async {
   Exception? lastError;
   print('[API] Fetching class representatives');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/users/class-representatives');
     print('[API] Trying: $uri');
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched ${data['total']} class representatives');
-        final list = List<Map<String, dynamic>>.from(data['class_representatives']);
+        final list = List<Map<String, dynamic>>.from(
+          data['class_representatives'],
+        );
         UserListsStore.instance.setClassRepresentatives(list);
         return list;
       }
-      throw ApiError('Get class representatives failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get class representatives failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = e as Exception;
@@ -261,21 +365,23 @@ Future<List<Map<String, dynamic>>> getClassRepresentatives() async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get class representatives failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get class representatives failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch user counts from the backend
 Future<Map<String, int>> getUserCounts() async {
   Exception? lastError;
   print('[API] Fetching user counts');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/users/counts');
     print('[API] Trying: $uri');
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 5));
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched user counts: ${data}');
@@ -289,7 +395,9 @@ Future<Map<String, int>> getUserCounts() async {
         UserCountsStore.instance.setCounts(result);
         return result;
       }
-      throw ApiError('Get user counts failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get user counts failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = e as Exception;
@@ -297,21 +405,23 @@ Future<Map<String, int>> getUserCounts() async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get user counts failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get user counts failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Delete a user (coordinator or class representative) by username
 Future<void> deleteUser(String username) async {
   Exception? lastError;
   print('[API] Deleting user: $username');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/auth/users/$username');
     print('[API] Trying DELETE: $uri');
     try {
       final resp = await http.delete(uri).timeout(const Duration(seconds: 5));
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         print('[API] User deleted successfully');
         return;
@@ -319,7 +429,9 @@ Future<void> deleteUser(String username) async {
       if (resp.statusCode == 404) {
         throw ApiError('User not found or cannot be deleted');
       }
-      throw ApiError('Delete user failed (${base}): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Delete user failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = e as Exception;
@@ -328,12 +440,18 @@ Future<void> deleteUser(String username) async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Delete user failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Delete user failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
+
 /// Get activity logs from the backend
-Future<List<Map<String, dynamic>>> getActivityLogs({int limit = 10, int days = 1}) async {
+Future<List<Map<String, dynamic>>> getActivityLogs({
+  int limit = 10,
+  int days = 1,
+}) async {
   Exception? lastError;
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/activity/logs?limit=$limit&days=$days');
     try {
@@ -355,4 +473,63 @@ Future<List<Map<String, dynamic>>> getActivityLogs({int limit = 10, int days = 1
   }
   print('[API] Failed to get activity logs. Last error: $lastError');
   return [];
+}
+
+/// Send a push notification to all devices via backend FCM endpoint.
+Future<void> sendPushToAll({
+  required String title,
+  required String body,
+  Map<String, dynamic>? data,
+}) async {
+  Exception? lastError;
+  for (final base in _candidates) {
+    final uri = Uri.parse('$base/fcm/send-to-all');
+    try {
+      final resp = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'title': title,
+              'body': body,
+              'data': data ?? {},
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+
+      if (resp.statusCode == 200) return;
+      throw ApiError(
+        'Send push failed (${base}): ${resp.statusCode} ${resp.body}',
+      );
+    } catch (e) {
+      lastError = e as Exception;
+      continue;
+    }
+  }
+
+  throw ApiError(
+    'Send push failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
+}
+
+/// Fetch recent broadcast notifications stored by the backend
+Future<List<Map<String, dynamic>>> getRecentNotifications({int limit = 20}) async {
+  Exception? lastError;
+  for (final base in _candidates) {
+    final uri = Uri.parse('$base/fcm/recent?limit=$limit');
+    try {
+      final resp = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final list = List<Map<String, dynamic>>.from(data['notifications'] ?? []);
+        return list;
+      }
+      throw ApiError('Get notifications failed (${base}): ${resp.statusCode} ${resp.body}');
+    } catch (e) {
+      lastError = e as Exception;
+      continue;
+    }
+  }
+
+  throw ApiError('Get notifications failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
 }

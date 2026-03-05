@@ -20,6 +20,10 @@ auth_api = _load("auth_api")
 notify_api = _load("notify_api")
 recommendation_api = _load("recommendation_api")
 activity_log_api = _load("activity_log_api")
+try:
+    fcm_api = _load("fcm_api")
+except Exception:
+    fcm_api = None
 
 # Import model app lazily: it's optional for dev (heavy ML deps may be absent).
 try:
@@ -38,6 +42,10 @@ app.mount("/api", auth_api.app)
 app.mount("/notify", notify_api.app)
 app.mount("/recommendations", recommendation_api.app)
 app.mount("/activity", activity_log_api.app)
+if fcm_api is not None:
+    app.mount("/fcm", fcm_api.app)
+else:
+    print("[app_main] fcm_api not available; /fcm endpoints not mounted")
 if _model_app is not None:
     app.mount("/model", _model_app)
 else:
