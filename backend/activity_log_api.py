@@ -30,6 +30,17 @@ engine = create_engine(
 
 app = FastAPI(title="Activity Logging API")
 
+
+@app.get("/health")
+async def health_check():
+    """Quick health check endpoint - no database query."""
+    return {
+        "status": "healthy",
+        "service": "activity_logs",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 # Activity logs table definition
 activity_logs_metadata = {
     "user_id": str,
@@ -173,16 +184,17 @@ async def get_activity_logs(
     - days: Only retrieve logs from last N days (default: 1 for faster queries)
     """
     try:
-        # Cap limit to prevent slow queries
-        limit = min(limit, 50)
+        # Cap limit to prevent slow queries - reduced for performance
+        limit = min(limit, 20)  # Reduced from 50 to 20 for faster queries
         
         # Generate cache key
         cache_key = f"logs_{limit}_{offset}_{action_type}_{user_id}_{user_role}_{status}_{days}"
         
-        # Check cache
+        # Check cache first
         if cache_key in _logs_cache:
             cached_data, cached_time = _logs_cache[cache_key]
             if time.time() - cached_time < _CACHE_TTL:
+                print(f"[Activity Logs] Returning cached result for {cache_key}")
                 return cached_data
         
         cutoff_date = datetime.utcnow() - timedelta(days=days)
@@ -209,6 +221,7 @@ async def get_activity_logs(
 
         where_clause = " AND ".join(where_clauses)
 
+        # Simplified query - removed subqueries for performance
         query = text(f"""
             SELECT 
                 id, user_id, user_name, user_role, action_type, action_description,
@@ -222,24 +235,25 @@ async def get_activity_logs(
         params["limit"] = limit
         params["offset"] = offset
 
+        print(f"[Activity Logs] Executing query with params: limit={limit}, days={days}")
+        start_time = time.time()
+
+        # Execute query with timeout handling
         with engine.connect() as conn:
+            # Set statement timeout to 10 seconds to prevent hanging
+            try:
+                conn.execute(text("SET statement_timeout = '10s'"))
+            except:
+                pass  # Not all databases support this
+            
             result = conn.execute(query, params)
             rows = result.fetchall()
 
-        # Only count if we need total (can be expensive with large datasets)
+        query_time = time.time() - start_time
+        print(f"[Activity Logs] Query completed in {query_time:.2f}s, returned {len(rows)} rows")
+
+        # Skip expensive COUNT query - just use row count
         total_count = len(rows)
-        if len(rows) >= limit:
-            # Get estimated total for pagination only if needed
-            count_query = text(f"""
-                SELECT COUNT(*) FROM activity_logs
-                WHERE {where_clause}
-            """)
-            try:
-                with engine.connect() as conn:
-                    count_result = conn.execute(count_query, params)
-                    total_count = count_result.scalar()
-            except:
-                pass  # Use rows count if count fails
 
         logs = []
         for row in rows:
@@ -279,8 +293,20 @@ async def get_activity_logs(
         return result
 
     except Exception as e:
-        print(f"Error retrieving activity logs: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        print(f"[Activity Logs] Error retrieving activity logs: {error_msg}")
+        
+        # Return empty result instead of failing completely
+        return {
+            "status": "error",
+            "data": [],
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "total": 0,
+            },
+            "error": error_msg[:100],  # Truncate error message
+        }
 
 
 @app.get("/logs/summary")

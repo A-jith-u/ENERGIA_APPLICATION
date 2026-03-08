@@ -141,7 +141,9 @@ class RecommendationService {
           final response = await http.get(
             Uri.parse('$baseUrl/recommendations/recommendations'),
             headers: headers,
-          ).timeout(const Duration(seconds: 5));
+          ).timeout(const Duration(seconds: 15), onTimeout: () {
+            throw TimeoutException('Request timed out');
+          });
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
@@ -217,7 +219,9 @@ class RecommendationService {
           final response = await http.get(
             Uri.parse('$baseUrl/recommendations/recommendations/count'),
             headers: headers,
-          ).timeout(const Duration(seconds: 5));
+          ).timeout(const Duration(seconds: 15), onTimeout: () {
+            throw TimeoutException('Request timed out');
+          });
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
@@ -522,10 +526,9 @@ class _RecommendationsListState extends State<RecommendationsList> {
                   const SizedBox(height: 12),
                   Text(_errorMessage!, style: theme.textTheme.bodyMedium),
                   const SizedBox(height: 12),
-                  ElevatedButton.icon(
+                  ElevatedButton(
                     onPressed: _fetchRecommendations,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Retry'),
+                    child: const Text('Retry'),
                   ),
                 ],
               ),

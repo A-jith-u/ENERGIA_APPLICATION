@@ -18,6 +18,7 @@ Notes
 import argparse
 import os
 from pathlib import Path
+from typing import Optional
 
 import joblib
 import numpy as np
@@ -35,16 +36,169 @@ PLOT_DIR = Path("metrics")
 PLOT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_from_db(db_url: str, table_name: str, ts_col: str, limit: int | None = None) -> pd.DataFrame:
+def load_from_db(
+    db_url: str,
+    table_name: str,
+    ts_col: str,
+    limit: int | None = None,
+    lookback_days: Optional[int] = None,
+) -> pd.DataFrame:
     engine = create_engine(db_url)
-    query = f"SELECT * FROM {table_name} ORDER BY {ts_col}"
+    where_clause = ""
+    if lookback_days is not None and lookback_days > 0:
+        where_clause = f" WHERE {ts_col} >= NOW() - INTERVAL '{int(lookback_days)} days'"
+    query = f"SELECT * FROM {table_name}{where_clause} ORDER BY {ts_col}"
     if limit:
         query += f" LIMIT {limit}"
     return pd.read_sql(query, engine)
 
 
+def preprocess_sensor_table(
+    df: pd.DataFrame,
+    ts_col: str = "ds",
+    target_col: str = "value",
+    resample_rule: str = "1min",
+) -> pd.DataFrame:
+    """
+    Preprocess full sensor_data table with robust cleaning rules:
+    - remove fully-missing rows
+    - for single missing column, fill using nearest/median
+    - constrain voltage to 236-240V
+    - constrain other columns to frequent range (quantile clipping)
+    - output Prophet-ready ds/y after resampling
+    """
+    if ts_col not in df.columns:
+        raise ValueError(f"Timestamp column '{ts_col}' not found. Available: {list(df.columns)}")
+
+    working = df.copy()
+
+    # Derived robust target from real-world table sparsity
+    if target_col.lower() == "power_or_value":
+        if "power" not in working.columns or "value" not in working.columns:
+            raise ValueError("power_or_value requires both 'power' and 'value' columns in sensor_data")
+        working["power_or_value"] = pd.to_numeric(working["power"], errors="coerce").fillna(
+            pd.to_numeric(working["value"], errors="coerce")
+        )
+        target_col = "power_or_value"
+
+    if target_col not in working.columns:
+        raise ValueError(f"Target column '{target_col}' not found. Available: {list(working.columns)}")
+
+    numeric_candidates = [
+        "value",
+        "voltage",
+        "current",
+        "power",
+        "energy",
+        "frequency",
+        "power_factor",
+    ]
+    numeric_cols = [column for column in numeric_candidates if column in df.columns]
+
+    working[ts_col] = pd.to_datetime(working[ts_col], errors="coerce")
+    working = working.dropna(subset=[ts_col])
+
+    for column in numeric_cols:
+        working[column] = pd.to_numeric(working[column], errors="coerce")
+
+    if numeric_cols:
+        missing_count = working[numeric_cols].isna().sum(axis=1)
+
+        # Remove rows where all numeric columns are missing
+        working = working.loc[missing_count < len(numeric_cols)].copy()
+
+        # Fill rows with only one missing value using nearest neighbors first
+        single_missing_mask = working[numeric_cols].isna().sum(axis=1) == 1
+        nearest_filled = working[numeric_cols].ffill().bfill()
+        working.loc[single_missing_mask, numeric_cols] = working.loc[single_missing_mask, numeric_cols].fillna(
+            nearest_filled.loc[single_missing_mask, numeric_cols]
+        )
+
+        # Fill remaining gaps by interpolation, then median fallback
+        working[numeric_cols] = working[numeric_cols].interpolate(method="linear", limit_direction="both")
+        for column in numeric_cols:
+            working[column] = working[column].fillna(working[column].median())
+
+        # Voltage hard constraint
+        if "voltage" in working.columns:
+            working["voltage"] = working["voltage"].clip(lower=236.0, upper=240.0)
+
+        # Other numeric columns constrained to frequently occurring range (10th-90th percentile)
+        # Keep target_col untouched here to avoid flattening the training signal.
+        for column in numeric_cols:
+            if column == "voltage" or column.lower() == target_col.lower():
+                continue
+            q10, q90 = working[column].quantile([0.10, 0.90])
+            if pd.notna(q10) and pd.notna(q90) and q90 > q10:
+                working[column] = working[column].clip(lower=q10, upper=q90)
+
+    prophet_df = working[[ts_col, target_col]].rename(columns={ts_col: "ds", target_col: "y"})
+    prophet_df = prophet_df.dropna(subset=["ds", "y"]).sort_values("ds").drop_duplicates(subset=["ds"], keep="last")
+    prophet_df = prophet_df.set_index("ds").resample(resample_rule).mean()
+    prophet_df["y"] = prophet_df["y"].interpolate(method="time", limit=5, limit_direction="both")
+    prophet_df = prophet_df.reset_index().dropna(subset=["y"])
+    prophet_df["y"] = prophet_df["y"].clip(lower=0)
+
+    q_low, q_high = prophet_df["y"].quantile([0.01, 0.99])
+    prophet_df["y"] = prophet_df["y"].clip(lower=q_low, upper=q_high)
+    prophet_df = prophet_df.dropna(subset=["y"])
+
+    return prophet_df[["ds", "y"]]
+
+
+def add_synthetic_samples(df: pd.DataFrame, target_rows: int = 3000, resample_rule: str = "1min") -> pd.DataFrame:
+    """Augment with historical synthetic rows using minute-of-day profile and robust spread.
+
+    Synthetic rows are generated BEFORE the earliest real timestamp to avoid leakage
+    into evaluation windows.
+    """
+    clean = df[["ds", "y"]].dropna().sort_values("ds").copy()
+    clean["source"] = "real"
+    if len(clean) == 0 or len(clean) >= target_rows:
+        return clean
+
+    needed = target_rows - len(clean)
+    rule_delta = pd.to_timedelta(resample_rule)
+
+    # Build robust per-minute profile from real data
+    clean["minute_of_day"] = clean["ds"].dt.hour * 60 + clean["ds"].dt.minute
+    minute_median = clean.groupby("minute_of_day")["y"].median()
+    minute_q25 = clean.groupby("minute_of_day")["y"].quantile(0.25)
+    minute_q75 = clean.groupby("minute_of_day")["y"].quantile(0.75)
+
+    global_median = float(clean["y"].median())
+    global_iqr = float((clean["y"].quantile(0.75) - clean["y"].quantile(0.25)))
+    base_noise = max(global_iqr * 0.08, 0.5)
+
+    # Generate timestamps before real data to avoid leakage
+    end = clean["ds"].min() - rule_delta
+    synthetic_ds = pd.date_range(end=end, periods=needed, freq=resample_rule)
+    synthetic_df = pd.DataFrame({"ds": synthetic_ds})
+    synthetic_df["minute_of_day"] = synthetic_df["ds"].dt.hour * 60 + synthetic_df["ds"].dt.minute
+
+    synthetic_df["y_base"] = synthetic_df["minute_of_day"].map(minute_median).fillna(global_median)
+    spread = (minute_q75 - minute_q25).reindex(synthetic_df["minute_of_day"]).fillna(global_iqr)
+    noise = np.random.normal(0.0, 1.0, len(synthetic_df)) * np.maximum(spread.to_numpy() * 0.20, base_noise)
+    synthetic_df["y"] = (synthetic_df["y_base"] + noise).clip(lower=0)
+
+    # Final winsorization to keep synthetic values in realistic operating range
+    lo, hi = clean["y"].quantile([0.01, 0.99])
+    synthetic_df["y"] = synthetic_df["y"].clip(lower=lo, upper=hi)
+
+    synthetic_df = synthetic_df[["ds", "y"]]
+    synthetic_df["source"] = "synthetic"
+    augmented = pd.concat([synthetic_df, clean[["ds", "y", "source"]]], ignore_index=True).sort_values("ds")
+    return augmented
+
+
 def load_from_csv(path: str) -> pd.DataFrame:
-    return pd.read_csv(path)
+    for encoding in ['utf-16', 'utf-8-sig', 'utf-8', 'latin-1', 'cp1252']:
+        try:
+            return pd.read_csv(path, encoding=encoding)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    # If nothing worked, try with errors='ignore'
+    return pd.read_csv(path, encoding='utf-8', errors='ignore')
 
 
 def preprocess_raw(
@@ -255,44 +409,79 @@ def save_accuracy_plot(test_df: pd.DataFrame, forecast_df: pd.DataFrame, metrics
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train Prophet on minute-level energy data")
-    parser.add_argument("--csv", default=str(DEFAULT_CSV), help="Path to CSV with raw data")
+    parser.add_argument("--csv", default=None, help="Path to CSV with raw data")
+    parser.add_argument("--source", choices=["db", "csv"], default="db", help="Training source")
     parser.add_argument("--db-url", help="Database URL (overrides env DB_URL)")
-    parser.add_argument("--raw-table", default="pzem_readings", help="Raw input table name")
+    parser.add_argument("--raw-table", default="sensor_data", help="Raw input table name")
     parser.add_argument("--processed-table", default="prophet_preprocessed", help="Table to store preprocessed data")
     parser.add_argument("--predictions-table", default="prophet_predictions", help="Table to store forecast output")
     parser.add_argument("--ts-col", default="ds", help="Timestamp column in raw data")
-    parser.add_argument("--target-col", default="energy", help="Target column to forecast")
+    parser.add_argument("--target-col", default="power_or_value", help="Target column to forecast")
     parser.add_argument("--resample", default="1min", help="Pandas offset alias for resampling")
     parser.add_argument("--horizon-minutes", type=int, default=15, help="Forecast horizon in minutes")
     parser.add_argument("--out", default=str(MODEL_DIR / "prophet_model.joblib"), help="Path to save model")
     parser.add_argument("--limit", type=int, help="Limit rows from raw source")
+    parser.add_argument("--lookback-days", type=int, default=14,
+                        help="Use only the latest N days from DB source")
     parser.add_argument("--no-db-write", action="store_true", help="Skip writing to DB")
     parser.add_argument("--no-save-predictions", action="store_true", help="Skip writing predictions")
-    parser.add_argument("--eval-split", type=float, default=0.15, help="Evaluation split ratio")
-    parser.add_argument("--changepoint-prior", type=float, default=0.5, help="changepoint_prior_scale")
-    parser.add_argument("--seasonality-prior", type=float, default=10.0, help="seasonality_prior_scale")
+    parser.add_argument("--eval-split", type=float, default=0.2, help="Evaluation split ratio")
+    parser.add_argument("--changepoint-prior", type=float, default=0.2, help="changepoint_prior_scale")
+    parser.add_argument("--seasonality-prior", type=float, default=8.0, help="seasonality_prior_scale")
     parser.add_argument("--energy-to-power", action="store_true",
                         help="If target is energy (cumulative), convert to power W before training")
+    parser.add_argument("--synthetic-target-rows", type=int, default=600,
+                        help="Minimum rows after synthetic augmentation")
+    parser.add_argument(
+        "--export-training-csv",
+        default=str(PLOT_DIR / "prophet_training_combined.csv"),
+        help="Path to export combined real+synthetic training dataset CSV",
+    )
     parser.add_argument("--no-save-plot", action="store_true", help="Do not save accuracy plot")
     parser.add_argument("--no-show-plot", action="store_true", help="Do not show accuracy plot")
     args = parser.parse_args()
 
+    print(
+        "Training profile: "
+        f"source={args.source}, table={args.raw_table}, target={args.target_col}, "
+        f"lookback_days={args.lookback_days}, synthetic_target_rows={args.synthetic_target_rows}, "
+        f"eval_split={args.eval_split}, changepoint_prior={args.changepoint_prior}, "
+        f"seasonality_prior={args.seasonality_prior}"
+    )
+
     db_url = args.db_url or os.environ.get("DB_URL")
 
-    # Always use CSV (sensor_data_export_fixed.csv) unless explicitly changed via --csv
-    raw_df = load_from_csv(args.csv) if args.csv else load_from_db(
-        db_url, table_name=args.raw_table, ts_col=args.ts_col, limit=args.limit
-    )
-
-    print(f"Loaded {len(raw_df)} raw rows from {args.csv}")
-
-    processed_df = preprocess_raw(
-        raw_df,
-        ts_col=args.ts_col,
-        target_col=args.target_col,
-        resample_rule=args.resample,
-        energy_to_power=args.energy_to_power
-    )
+    if args.source == "db":
+        if not db_url:
+            raise RuntimeError("DB_URL is required when --source db")
+        raw_df = load_from_db(
+            db_url,
+            table_name=args.raw_table,
+            ts_col=args.ts_col,
+            limit=args.limit,
+            lookback_days=args.lookback_days,
+        )
+        print(
+            f"Loaded {len(raw_df)} raw rows from table '{args.raw_table}' "
+            f"(lookback_days={args.lookback_days})"
+        )
+        processed_df = preprocess_sensor_table(
+            raw_df,
+            ts_col=args.ts_col,
+            target_col=args.target_col,
+            resample_rule=args.resample,
+        )
+    else:
+        csv_path = args.csv or str(DEFAULT_CSV)
+        raw_df = load_from_csv(csv_path)
+        print(f"Loaded {len(raw_df)} raw rows from {csv_path}")
+        processed_df = preprocess_raw(
+            raw_df,
+            ts_col=args.ts_col,
+            target_col=args.target_col,
+            resample_rule=args.resample,
+            energy_to_power=args.energy_to_power,
+        )
 
     if db_url and not args.no_db_write:
         save_df_to_db(processed_df, db_url, args.processed_table, if_exists="replace")
@@ -304,7 +493,14 @@ if __name__ == "__main__":
     train_df = processed_df.iloc[:split_idx]
     test_df = processed_df.iloc[split_idx:]
 
-    eval_model = train_model(train_df, args.changepoint_prior, args.seasonality_prior)
+    train_df_aug = add_synthetic_samples(
+        train_df,
+        target_rows=args.synthetic_target_rows,
+        resample_rule=args.resample,
+    )
+    print(f"Real rows: {len(processed_df)} | Train rows after augmentation: {len(train_df_aug)}")
+
+    eval_model = train_model(train_df_aug, args.changepoint_prior, args.seasonality_prior)
     future_eval = eval_model.make_future_dataframe(periods=len(test_df), freq=args.resample)
     forecast_eval = eval_model.predict(future_eval.tail(len(test_df)))
 
@@ -318,7 +514,16 @@ if __name__ == "__main__":
     print(f"  R²:       {metrics['r2_score']:.4f}")
     print(f"  Coverage: {metrics['coverage']*100:.1f}%\n")
 
-    final_model = train_model(processed_df, args.changepoint_prior, args.seasonality_prior)
+    full_train_aug = add_synthetic_samples(
+        processed_df,
+        target_rows=max(args.synthetic_target_rows, len(processed_df)),
+        resample_rule=args.resample,
+    )
+    export_cols = ["ds", "y"] + (["source"] if "source" in full_train_aug.columns else [])
+    full_train_aug[export_cols].to_csv(args.export_training_csv, index=False)
+    print(f"Exported combined training dataset to {args.export_training_csv} ({len(full_train_aug)} rows)")
+
+    final_model = train_model(full_train_aug, args.changepoint_prior, args.seasonality_prior)
     joblib.dump(final_model, args.out)
     print(f"Saved model to {args.out}")
 

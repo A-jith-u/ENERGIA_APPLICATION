@@ -13,8 +13,11 @@ class SettingsPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: ListView(
-        children: [
+      body: RefreshIndicator(
+        onRefresh: () async {},
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
           ListTile(
             leading: const Icon(Icons.person_outline),
             title: const Text('Profile'),
@@ -38,6 +41,7 @@ class SettingsPage extends StatelessWidget {
             },
           ),
         ],
+      ),
       ),
     );
   }

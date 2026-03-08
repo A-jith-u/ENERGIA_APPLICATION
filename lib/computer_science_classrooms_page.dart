@@ -24,43 +24,45 @@ class ComputerScienceClassroomsPage extends StatelessWidget {
         title: const Text('Computer Science Classrooms'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Text(
-            'Room-Level Energy Monitoring',
-            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Detailed view of classrooms with real-time usage breakdown.',
-            style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
-          ),
-          const SizedBox(height: 24),
-          
-          // 1. List of Classroom Cards (Simplified)
-          ...classrooms.map((room) {
-            return _ClassroomCard(
-              name: room['name'] as String,
-              status: room['status'] as String,
-              usage: (room['usage_kw'] as double).toStringAsFixed(1) + ' kW',
-              color: room['color'] as Color,
-            );
-          }).toList(),
-
-          const SizedBox(height: 40),
-
-          // 2. Aggregate Pie Chart (New Section)
-          Text(
-            'Energy Distribution Among Classrooms',
-            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 250,
-            child: _ClassroomEnergyDistributionChart(classrooms: classrooms),
-          ),
-        ],
+      body: RefreshIndicator(
+        onRefresh: () async {},
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          children: [
+            Text(
+              'Room-Level Energy Monitoring',
+              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Detailed view of classrooms with real-time usage breakdown.',
+              style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 24),
+            
+            // 1. List of Classroom Cards (Simplified)
+            ...classrooms.map((room) {
+              return _ClassroomCard(
+                name: room['name'] as String,
+                status: room['status'] as String,
+                usage: (room['usage_kw'] as double).toStringAsFixed(1) + ' kW',
+                color: room['color'] as Color,
+              );
+            }).toList(),
+            const SizedBox(height: 40),
+            // 2. Aggregate Pie Chart (New Section)
+            Text(
+              'Energy Distribution Among Classrooms',
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 250,
+              child: _ClassroomEnergyDistributionChart(classrooms: classrooms),
+            ),
+          ],
+        ),
       ),
     );
   }

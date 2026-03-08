@@ -74,17 +74,20 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
           ),
         ],
       ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [scheme.surfaceContainerLowest, scheme.surfaceContainerHigh],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+      body: RefreshIndicator(
+        onRefresh: () async => setState(() {}),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [scheme.surfaceContainerLowest, scheme.surfaceContainerHigh],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
           ),
-        ),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(20),
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Filter chips
@@ -117,6 +120,7 @@ class _RecommendationsPageState extends State<RecommendationsPage> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

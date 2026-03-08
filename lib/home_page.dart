@@ -11,9 +11,12 @@ class HomePage extends StatelessWidget {
     return Scaffold(
       body: SafeArea(
         child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Column(
+          child: RefreshIndicator(
+            onRefresh: () async {},
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -100,8 +103,7 @@ class HomePage extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
+      ),      ),    );
   }
 }
 

@@ -7,6 +7,7 @@ import 'anomaly_adm.dart';
 import 'prediction_page.dart';
 import 'recommendations_page.dart';
 import 'widgets/recommendation_widgets.dart';
+import 'widgets/prediction_15min_widget.dart';
 
 class Dash extends StatefulWidget {
   const Dash({super.key});
@@ -178,6 +179,13 @@ class _ReportsSection extends StatelessWidget {
           userToken: null, // Pass actual token when available
           showHeader: true,
           maxItems: 3,
+        ),
+        const SizedBox(height: 32),
+
+        // Live 15-Minute Energy Forecast - NEW FEATURE
+        const Prediction15MinWidget(
+          userToken: null,
+          showHeader: true,
         ),
         const SizedBox(height: 32),
 

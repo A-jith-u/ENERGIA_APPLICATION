@@ -21,6 +21,22 @@ class _PredictionPageState extends State<PredictionPage> {
   Timer? _refreshTimer;
   int _intervalMinutes = 5; // fixed to 5 minutes horizon
   DateTime? _lastUpdated;
+  static const String _roomName = 'CS-201';
+
+  String _roomToDeviceId(String roomName) {
+    final r = roomName.trim().toUpperCase().replaceAll(' ', '');
+    if (r.startsWith('ESP32-')) return r;
+    if (r.startsWith('CS-')) return 'ESP32-CS-C${r.split('-').last}';
+    if (r.startsWith('CS') && r.length > 2) return 'ESP32-CS-C${r.substring(2)}';
+    return r;
+  }
+
+  double _sensorPower(Map<String, dynamic> m) {
+    return (m['power'] as num?)?.toDouble() ??
+        (m['value'] as num?)?.toDouble() ??
+        (m['energy'] as num?)?.toDouble() ??
+        0.0;
+  }
 
   @override
   void initState() {
@@ -37,6 +53,7 @@ class _PredictionPageState extends State<PredictionPage> {
   }
 
   Future<void> _fetchPrediction() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -46,18 +63,19 @@ class _PredictionPageState extends State<PredictionPage> {
       final List<String> apiCandidates = [
         'http://localhost:5000',
         'http://127.0.0.1:5000',
-        'http://192.168.160.1:5000',
-        'http://10.0.2.2:5000',
       ];
       
       for (final baseUrl in apiCandidates) {
         try {
           // STEP 1: Fetch latest sensor data from database
           print('🔍 Fetching latest sensor data from $baseUrl');
+          final deviceId = _roomToDeviceId(_roomName);
           final sensorResponse = await http.get(
-            Uri.parse('$baseUrl/sensor-data?limit=1'),
+            Uri.parse('$baseUrl/sensor-data?limit=1&device_id=${Uri.encodeComponent(deviceId)}'),
             headers: {'Content-Type': 'application/json'},
-          ).timeout(const Duration(seconds: 5));
+          ).timeout(const Duration(seconds: 5), onTimeout: () {
+            throw TimeoutException('Sensor data request timed out');
+          });
 
           if (sensorResponse.statusCode != 200) continue;
 
@@ -70,7 +88,8 @@ class _PredictionPageState extends State<PredictionPage> {
           }
 
           final latestSensor = sensorReadings.first as Map<String, dynamic>;
-          print('✅ Latest sensor data: ${latestSensor['value']}W at ${latestSensor['timestamp']}');
+          final latestPower = _sensorPower(latestSensor);
+          print('✅ Latest sensor data: ${latestPower.toStringAsFixed(1)}W at ${latestSensor['timestamp']}');
 
           // STEP 2: Get prediction using the timestamp from sensor data
           print('🔮 Getting prediction for timestamp: ${latestSensor['timestamp']}');
@@ -79,8 +98,11 @@ class _PredictionPageState extends State<PredictionPage> {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
               'horizon_minutes': _intervalMinutes,
+              'room_name': _roomName,
             }),
-          ).timeout(const Duration(seconds: 5));
+          ).timeout(const Duration(seconds: 5), onTimeout: () {
+            throw TimeoutException('Prediction request timed out');
+          });
 
           if (predResponse.statusCode != 200) continue;
 
@@ -89,6 +111,7 @@ class _PredictionPageState extends State<PredictionPage> {
 
           // Merge sensor data into prediction
           prediction['latest_sensor_reading'] = latestSensor;
+          prediction['latest_sensor_reading']['power'] = latestPower;
           prediction['latest_sensor_timestamp'] = latestSensor['timestamp'];
           prediction['has_live_sensor_data'] = true;
 
@@ -100,17 +123,23 @@ class _PredictionPageState extends State<PredictionPage> {
           });
           return;
         } catch (e) {
-          print('❌ Error with $baseUrl: $e');
+          if (e is TimeoutException) {
+            print('⏱️ Timeout with $baseUrl - trying next...');
+          } else {
+            print('❌ Error with $baseUrl: $e');
+          }
           continue;
         }
       }
 
       // No data from any backend
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'No sensor data available - sensor appears to be disconnected';
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Error: $e';
         _isLoading = false;
@@ -123,7 +152,9 @@ class _PredictionPageState extends State<PredictionPage> {
       final response = await http.get(
         Uri.parse('$baseUrl/sensor-data?limit=1'),
         headers: {'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 15), onTimeout: () {
+        throw TimeoutException('Request timed out');
+      });
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -153,67 +184,76 @@ class _PredictionPageState extends State<PredictionPage> {
         title: const Text('Energy Prediction'),
         backgroundColor: const Color(0xFF1B2A3B),
         foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchPrediction,
-            tooltip: 'Refresh',
-          ),
-        ],
       ),
-      body: _isLoading && _prediction == null
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null && _prediction == null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+      body: RefreshIndicator(
+        onRefresh: _fetchPrediction,
+        child: _isLoading && _prediction == null
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [
+                  SizedBox(height: 280, child: Center(child: CircularProgressIndicator())),
+                ],
+              )
+            : _errorMessage != null && _prediction == null
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
                     children: [
-                      Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
-                      const SizedBox(height: 16),
-                      Text(_errorMessage!, style: theme.textTheme.titleMedium),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: _fetchPrediction,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
+                      SizedBox(
+                        height: 360,
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
+                              const SizedBox(height: 16),
+                              Text(_errorMessage!, style: theme.textTheme.titleMedium),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Pull down to refresh',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
-                  ),
-                )
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Header Section
-                      _buildHeader(theme, scheme),
-                      const SizedBox(height: 24),
-
-                      _buildIntervalControls(theme, scheme),
-                      const SizedBox(height: 12),
-
-                      _buildInfoRow(theme),
-                      const SizedBox(height: 24),
-
-                      // Main Prediction Card
-                      if (_prediction != null) ...[
-                        _buildPredictionCardNew(theme, scheme),
+                  )
+                : SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Header Section
+                        _buildHeader(theme, scheme),
                         const SizedBox(height: 24),
 
-                        // Confidence and Range Chart
-                        _buildConfidenceChart(theme, scheme),
+                        _buildIntervalControls(theme, scheme),
+                        const SizedBox(height: 12),
+
+                        _buildInfoRow(theme),
                         const SizedBox(height: 24),
 
-                        // Prediction Timeline
-                        _buildTimelineChart(theme, scheme),
-                        const SizedBox(height: 24),
+                        // Main Prediction Card
+                        if (_prediction != null) ...[
+                          _buildPredictionCardNew(theme, scheme),
+                          const SizedBox(height: 24),
 
-                        // Details Section
-                        _buildDetailsSection(theme, scheme),
+                          // Confidence and Range Chart
+                          _buildConfidenceChart(theme, scheme),
+                          const SizedBox(height: 24),
+
+                          // Prediction Timeline
+                          _buildTimelineChart(theme, scheme),
+                          const SizedBox(height: 24),
+
+                          // Details Section
+                          _buildDetailsSection(theme, scheme),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
+      ),
     );
   }
 

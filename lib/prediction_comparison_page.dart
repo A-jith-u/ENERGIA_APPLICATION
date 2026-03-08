@@ -18,25 +18,67 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
   bool _loading = false;
   String? _error;
 
+  // Prediction data
   DateTime? _predictedForLocal;
   double? _predictedW;
+  double? _predictedLower;
+  double? _predictedUpper;
   double? _actualW;
   DateTime? _actualAtLocal;
-  bool _isLiveDataBased = false;  // Track if prediction uses live data
+  bool _isLiveDataBased = false;
 
-  // Change if your sensor cadence differs
+  // Live sensor tracking
+  double? _latestLivePowerW;
+  DateTime? _latestLiveTime;
+  double? _avgPower24h;
+  double? _maxPower24h;
+  double? _minPower24h;
+  String? _trendDirection; // 'increasing', 'decreasing', 'stable'
+  double? _accuracyPercent;
+
+  Timer? _autoRefreshTimer;
+  int _refreshCountdown = 60;
+  DateTime? _lastUpdateTime;
+
   final Duration _targetWindow = const Duration(minutes: 6);
 
-  // Both prediction + sensor live on port 5000
   List<String> _baseCandidates() => const [
-        'http://localhost:5000',      // Try localhost first
-        'http://127.0.0.1:5000',
-        'http://192.168.160.1:5000',
-        'http://10.0.2.2:5000',       // Try emulator last
-      ];
+    'http://localhost:5000',
+    'http://127.0.0.1:5000',
+    'http://192.168.160.1:5000',
+    'http://10.0.2.2:5000',
+  ];
 
-  // Sensor "ds" example: 2026-01-10 12:36:46.135623  (NO timezone)
-  // Treat as LOCAL time. Do NOT append 'Z'.
+  String _roomToDeviceId(String roomName) {
+    final r = roomName.trim().toUpperCase().replaceAll(' ', '');
+    if (r.startsWith('ESP32-')) return r;
+    if (r.startsWith('CS-')) return 'ESP32-CS-C${r.split('-').last}';
+    if (r.startsWith('CS') && r.length > 2) return 'ESP32-CS-C${r.substring(2)}';
+    return r;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _startAutoRefresh();
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        if (_refreshCountdown > 0) {
+          _refreshCountdown--;
+        }
+      });
+    });
+  }
+
   DateTime? _parseSensorDsLocal(dynamic ts) {
     if (ts == null) return null;
     final s = ts.toString().trim();
@@ -45,7 +87,6 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
     return DateTime.tryParse(normalized);
   }
 
-  // Prophet timestamp returned as ISO (usually with timezone) -> convert to local
   DateTime? _parseIsoToLocal(dynamic ts) {
     if (ts == null) return null;
     final s = ts.toString().trim();
@@ -53,12 +94,25 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
     return DateTime.tryParse(s)?.toLocal();
   }
 
-  // Parse timestamp from various formats
   DateTime? _parseTimestamp(dynamic ts) {
     return _parseSensorDsLocal(ts) ?? _parseIsoToLocal(ts);
   }
 
-  // Parse power value from reading (supports 'power', 'value', 'energy' fields)
+  String _extractBackendDetail(String body) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final detail = decoded['detail'];
+        if (detail is String && detail.trim().isNotEmpty) {
+          return detail.trim();
+        }
+      }
+    } catch (_) {
+      // Ignore parse errors and use fallback message.
+    }
+    return 'Prediction is temporarily unavailable.';
+  }
+
   double _parsePowerW(Map<String, dynamic> reading) {
     final power = (reading['power'] as num?)?.toDouble() ??
         (reading['value'] as num?)?.toDouble() ??
@@ -68,72 +122,92 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
   }
 
   Future<void> _fetchPrediction5Min() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
       _predictedForLocal = null;
       _predictedW = null;
+      _predictedLower = null;
+      _predictedUpper = null;
       _actualW = null;
-      _actualAtLocal = null;
-      _actualSeriesW = [];
-      _predSeriesW = [];
-      _isLiveDataBased = false;
     });
 
     for (final base in _baseCandidates()) {
       try {
-        // Try with /model/ prefix first (mounted API), then without
-        final uris = [
-          Uri.parse('$base/model/predict_5min'),
-          Uri.parse('$base/predict_5min'),
-        ];
-        
+        final uris = [Uri.parse('$base/model/predict_5min')];
+
         for (final uri in uris) {
           try {
-            print('🔍 Trying: $uri with room: ${widget.roomName}');
-            
-            // Send room_name in request body for live data context
+            print('🔍 Fetching prediction from: $uri');
+
             final body = jsonEncode({
               'horizon_minutes': 5,
               'room_name': widget.roomName,
             });
-            
+
             http.Response resp;
             try {
-              resp = await http.post(
-                uri,
-                headers: {'Content-Type': 'application/json'},
-                body: body,
-              ).timeout(const Duration(seconds: 5));
+              resp = await http
+                  .post(
+                    uri,
+                    headers: {'Content-Type': 'application/json'},
+                    body: body,
+                  )
+                  .timeout(const Duration(seconds: 5), onTimeout: () {
+                throw TimeoutException('Request timed out');
+              });
             } catch (_) {
               resp = await http.get(uri, headers: {'Content-Type': 'application/json'})
-                .timeout(const Duration(seconds: 5));
+                  .timeout(const Duration(seconds: 5), onTimeout: () {
+                throw TimeoutException('Request timed out');
+              });
             }
 
-            print('📊 Response: ${resp.statusCode}');
+            if (resp.statusCode == 409) {
+              final detail = _extractBackendDetail(resp.body);
+              if (!mounted) return;
+              setState(() {
+                _loading = false;
+                _error = detail;
+              });
+              return;
+            }
+
             if (resp.statusCode != 200) continue;
 
             final respBody = jsonDecode(resp.body) as Map<String, dynamic>;
             final when = _parseIsoToLocal(respBody['timestamp'] ?? respBody['ds']);
-            
-            // Extract yhat safely - could be in different fields
+
             final yhatValue = respBody['yhat'] ?? respBody['predicted_energy'] ?? respBody['predicted'];
-            final yhat = yhatValue is num ? yhatValue : null;
-            
-            // Check if this prediction is based on live data
+            final yhat = yhatValue is num ? yhatValue.toDouble() : null;
+
+            final lowerValue = respBody['yhat_lower'] ?? respBody['lower_bound'];
+            final lower = lowerValue is num ? lowerValue.toDouble() : null;
+
+            final upperValue = respBody['yhat_upper'] ?? respBody['upper_bound'];
+            final upper = upperValue is num ? upperValue.toDouble() : null;
+
             final isLiveBased = respBody['based_on_live_data'] as bool? ?? false;
 
-            print('✅ Prediction received: yhat=$yhat, when=$when, live_based=$isLiveBased');
-            
+            print('✅ Prediction received: yhat=$yhat');
+
             if (when == null || yhat == null) {
-              print('❌ Missing required fields: when=$when, yhat=$yhat');
+              print('❌ Missing required fields');
               continue;
             }
 
+            await _fetchLiveData();
+
+            if (!mounted) return;
             setState(() {
               _predictedForLocal = when;
-              _predictedW = (yhat as num).toDouble();
+              _predictedW = yhat;
+              _predictedLower = lower;
+              _predictedUpper = upper;
               _isLiveDataBased = isLiveBased;
+              _lastUpdateTime = DateTime.now();
+              _refreshCountdown = 60;
               _loading = false;
             });
             return;
@@ -147,14 +221,80 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
       }
     }
 
+    if (!mounted) return;
     setState(() {
       _loading = false;
-      _error = 'Prediction endpoint not reachable on :5000. Ensure /model/predict_5min exists.';
+      _error = 'Could not fetch prediction. Please check your server connection.';
     });
   }
 
-  List<FlSpot> _actualSeriesW = [];
-  List<FlSpot> _predSeriesW = [];
+  Future<void> _fetchLiveData() async {
+    final deviceId = _roomToDeviceId(widget.roomName);
+    for (final base in _baseCandidates()) {
+      try {
+        final uri = Uri.parse(
+          '$base/api/sensor-data?limit=120&device_id=${Uri.encodeComponent(deviceId)}',
+        );
+        final resp = await http.get(uri, headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 6));
+
+        if (resp.statusCode != 200) continue;
+
+        final body = jsonDecode(resp.body) as Map<String, dynamic>;
+        final readings = (body['data'] as List?) ?? [];
+        if (readings.isEmpty) continue;
+
+        // Get latest reading
+        final latest = readings.first as Map<String, dynamic>;
+        final latestPower = _parsePowerW(latest);
+        final latestTime = _parseTimestamp(latest['ds'] ?? latest['timestamp']);
+
+        // Calculate statistics (last 24 hours of data)
+        List<double> powerValues = [];
+        for (final r in readings) {
+          final reading = r as Map<String, dynamic>;
+          powerValues.add(_parsePowerW(reading));
+        }
+
+        double avgPower = 0;
+        double maxPower = 0;
+        double minPower = 0;
+
+        if (powerValues.isNotEmpty) {
+          avgPower = powerValues.reduce((a, b) => a + b) / powerValues.length;
+          maxPower = powerValues.reduce((a, b) => a > b ? a : b);
+          minPower = powerValues.reduce((a, b) => a < b ? a : b);
+        }
+
+        // Determine trend
+        String trend = 'stable';
+        if (powerValues.length > 5) {
+          final recentAvg = powerValues.take(5).reduce((a, b) => a + b) / 5;
+          final oldAvg = powerValues.skip(powerValues.length - 5).reduce((a, b) => a + b) / 5;
+          if (recentAvg > oldAvg * 1.1) {
+            trend = 'increasing';
+          } else if (recentAvg < oldAvg * 0.9) {
+            trend = 'decreasing';
+          }
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _latestLivePowerW = latestPower;
+          _latestLiveTime = latestTime;
+          _avgPower24h = avgPower;
+          _maxPower24h = maxPower;
+          _minPower24h = minPower;
+          _trendDirection = trend;
+        });
+
+        return;
+      } catch (e) {
+        print('Error fetching live data: $e');
+        continue;
+      }
+    }
+  }
 
   Future<void> _fetchActualForPredictedTime() async {
     final target = _predictedForLocal;
@@ -164,29 +304,20 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
       _loading = true;
       _error = null;
       _actualW = null;
-      _actualSeriesW = [];
-      _predSeriesW = [];
     });
 
     for (final base in _baseCandidates()) {
       try {
-        final uri = Uri.parse('$base/sensor-data?limit=120&room=${Uri.encodeComponent(widget.roomName)}');
-        final resp = await http.get(uri, headers: {'Content-Type': 'application/json'}).timeout(const Duration(seconds: 6));
+        final uri = Uri.parse('$base/api/sensor-data?limit=120&room=${Uri.encodeComponent(widget.roomName)}');
+        final resp = await http.get(uri, headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 15));
+
         if (resp.statusCode != 200) continue;
 
         final body = jsonDecode(resp.body) as Map<String, dynamic>;
         final readings = (body['data'] as List?) ?? [];
         if (readings.isEmpty) continue;
 
-        // Build actual series (oldest -> newest)
-        final ordered = readings.reversed.toList();
-        final List<FlSpot> actual = [];
-        for (int i = 0; i < ordered.length; i++) {
-          final r = ordered[i] as Map<String, dynamic>;
-          actual.add(FlSpot(i.toDouble(), _parsePowerW(r)));
-        }
-
-        // Find closest reading to predicted time (for the numeric comparison)
         Map<String, dynamic>? best;
         Duration? bestDelta;
 
@@ -203,288 +334,586 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
           }
         }
 
-        // Build predicted line segment at the end of the chart
-        final predW = _predictedW ?? 0.0;
-        final lastX = max(0, actual.length - 1).toDouble();
-        final List<FlSpot> predLine = [
-          FlSpot(lastX, predW),
-          FlSpot(lastX + 5, predW), // “next 5 minutes” segment (visual)
-        ];
+        if (best != null) {
+          final actualPower = _parsePowerW(best);
+          final predicted = _predictedW ?? 0;
+
+          // Calculate accuracy
+          double accuracy = 100;
+          if (predicted > 0 && actualPower > 0) {
+            final error = ((predicted - actualPower).abs() / actualPower) * 100;
+            accuracy = max(0, 100 - error);
+          }
+
+          setState(() {
+            _actualW = actualPower;
+            _accuracyPercent = accuracy;
+            _loading = false;
+            _error = null;
+          });
+          return;
+        }
 
         setState(() {
-          _actualSeriesW = actual;
-          _predSeriesW = predLine;
-          _actualW = best != null ? _parsePowerW(best!) : null;
           _loading = false;
-          _error = best == null
-              ? 'No sensor reading near predicted time yet. Try again after a few minutes.'
-              : null;
+          _error = 'No sensor reading near predicted time. Data may still be collecting.';
         });
         return;
-      } catch (_) {
+      } catch (e) {
+        print('Error fetching actual data: $e');
         continue;
       }
     }
 
     setState(() {
       _loading = false;
-      _error = 'Could not fetch sensor data (check backend URL/room mapping).';
+      _error = 'Could not fetch sensor data. Check connection.';
     });
+  }
+
+  Color _getStatusColor(double value, double limit) {
+    if (value > limit * 0.8) return Colors.red;
+    if (value > limit * 0.5) return Colors.orange;
+    return Colors.green;
+  }
+
+  String _getTrendIcon(String? trend) {
+    switch (trend) {
+      case 'increasing':
+        return '📈';
+      case 'decreasing':
+        return '📉';
+      default:
+        return '➡️';
+    }
+  }
+
+  Color _getTrendColor(String? trend) {
+    switch (trend) {
+      case 'increasing':
+        return Colors.orange;
+      case 'decreasing':
+        return Colors.green;
+      default:
+        return Colors.blue;
+    }
+  }
+
+  String _formatTime(DateTime? time) {
+    if (time == null) return '—';
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final pred = _predictedW;
+    final isDark = theme.brightness == Brightness.dark;
+    final cardTextPrimary = isDark ? Colors.white : Colors.black87;
+    final cardTextSecondary = isDark ? Colors.white70 : Colors.grey.shade700;
+    final pred = _predictedW ?? 0;
     final act = _actualW;
 
-    double? pctErr;
-    if (pred != null && act != null && act > 0) {
-      pctErr = ((pred - act).abs() / act) * 100.0;
-    }
-
     return Scaffold(
-      appBar: AppBar(title: Text('Prediction vs Live • ${widget.roomName}')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (_error != null)
-            Card(
-              color: theme.colorScheme.errorContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(_error!, style: TextStyle(color: theme.colorScheme.onErrorContainer)),
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Energy Forecast • ${widget.roomName}'),
+            if (_lastUpdateTime != null)
+              Text(
+                'Updated: ${_formatTime(_lastUpdateTime)}',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade300),
               ),
-            ),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+          ],
+        ),
+      ),
+      body: RefreshIndicator(
+        onRefresh: _fetchPrediction5Min,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (_error != null)
+              Card(
+                color: theme.colorScheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
                     children: [
-                      Text('Step 1: Get 5‑minute prediction', style: theme.textTheme.titleMedium),
-                      const SizedBox(width: 8),
-                      if (_isLiveDataBased)
-                        Chip(
-                          label: const Text('📡 Live Data', style: TextStyle(fontSize: 11)),
-                          backgroundColor: Colors.green.shade100,
-                        )
-                      else
-                        Chip(
-                          label: const Text('📊 Historical', style: TextStyle(fontSize: 11)),
-                          backgroundColor: Colors.blue.shade100,
-                        ),
+                      const Icon(Icons.warning_rounded),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(_error!, style: TextStyle(color: theme.colorScheme.onErrorContainer))),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  FilledButton.icon(
-                    onPressed: _loading ? null : _fetchPrediction5Min,
-                    icon: const Icon(Icons.insights),
-                    label: const Text('Fetch Prediction'),
-                  ),
-                  const SizedBox(height: 10),
-                  Text('Predicted for: ${_predictedForLocal?.toString() ?? '—'}'),
-                  Text('Predicted power: ${pred != null ? '${pred.toStringAsFixed(2)} W' : '—'}'),
-                  if (_isLiveDataBased)
-                    Text(
-                      'ℹ️ Based on latest live sensor data (24h history)',
-                      style: TextStyle(fontSize: 12, color: Colors.green.shade700),
-                    )
-                  else if (_predictedForLocal != null)
-                    Text(
-                      'ℹ️ Based on historical training data',
-                      style: TextStyle(fontSize: 12, color: Colors.blue.shade700),
-                    ),
-                ],
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Step 2: Compare with live sensor reading', style: theme.textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  FilledButton.icon(
-                    onPressed: (_loading || _predictedForLocal == null) ? null : _fetchActualForPredictedTime,
-                    icon: const Icon(Icons.sensors),
-                    label: const Text('Fetch Actual Near Predicted Time'),
-                  ),
-                  const SizedBox(height: 10),
-                  Text('Actual power: ${act != null ? '${act.toStringAsFixed(2)} W' : '—'}'),
-                  Text('Absolute error: ${(pred != null && act != null) ? '${(pred - act).abs().toStringAsFixed(2)} W' : '—'}'),
-                  Text('Percent error: ${pctErr != null ? '${pctErr.toStringAsFixed(2)}%' : '—'}'),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (pred != null)
+            const SizedBox(height: 12),
+
+            // ===== LIVE POWER READING =====
             Card(
+              elevation: 2,
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Power Comparison (Watts)',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+                    Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Current Power Usage', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: cardTextPrimary)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text('🔴 Live', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Predicted vs Actual • Live Sensor Data',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 240,
-                      child: BarChart(
-                        BarChartData(
-                          borderData: FlBorderData(show: false),
-                          gridData: FlGridData(show: false),
-                          titlesData: FlTitlesData(
-                            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 42)),
-                            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                            bottomTitles: AxisTitles(
-                              sideTitles: SideTitles(
-                                showTitles: true,
-                                getTitlesWidget: (v, meta) {
-                                  final label = v.toInt() == 0 ? 'Predicted' : 'Actual';
-                                  return Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: Text(label),
-                                  );
-                                },
-                              ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _latestLivePowerW?.toStringAsFixed(1) ?? '—',
+                              style: TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: _getStatusColor(_latestLivePowerW ?? 0, 100)),
                             ),
-                          ),
-                          barGroups: [
-                            BarChartGroupData(x: 0, barRods: [BarChartRodData(toY: pred, color: theme.colorScheme.primary)]),
-                            BarChartGroupData(
-                              x: 1,
-                              barRods: [
-                                BarChartRodData(
-                                  toY: act ?? 0,
-                                  color: act == null ? theme.colorScheme.outline : theme.colorScheme.secondary,
+                            Text('Watts (W)', style: theme.textTheme.bodySmall?.copyWith(color: cardTextSecondary)),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (_trendDirection != null)
+                            Row(
+                              children: [
+                                Text(_getTrendIcon(_trendDirection), style: const TextStyle(fontSize: 24)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _trendDirection ?? '—',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: _getTrendColor(_trendDirection),
+                                  ),
                                 ),
                               ],
                             ),
-                          ],
-                          maxY: max(pred, act ?? 0) * 1.2 + 1,
+                          const SizedBox(height: 4),
+                          Text(
+                            _formatTime(_latestLiveTime),
+                            style: theme.textTheme.bodySmall?.copyWith(color: cardTextSecondary),
+                          ),
+                          Text(
+                            'Latest reading',
+                            style: theme.textTheme.bodySmall?.copyWith(color: cardTextSecondary),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatBox(
+                          label: 'Average (24h)',
+                          value: _avgPower24h?.toStringAsFixed(1) ?? '—',
+                          unit: 'W',
+                          icon: '📊',
                         ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _StatBox(
+                          label: 'Peak (24h)',
+                          value: _maxPower24h?.toStringAsFixed(1) ?? '—',
+                          unit: 'W',
+                          icon: '⬆️',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _StatBox(
+                          label: 'Low (24h)',
+                          value: _minPower24h?.toStringAsFixed(1) ?? '—',
+                          unit: 'W',
+                          icon: '⬇️',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            ),
+
+          const SizedBox(height: 16),
+
+          // ===== FETCH BUTTONS ROW =====
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _loading ? null : _fetchPrediction5Min,
+                  icon: const Icon(Icons.insights),
+                  label: const Text('Get Forecast'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.tonal(
+                  onPressed: (_loading || _predictedW == null) ? null : _fetchActualForPredictedTime,
+                  child: const Text('Compare'),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // ===== PREDICTION CARD =====
+          if (_predictedW != null)
+            Card(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Next 5 Minutes Forecast', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: cardTextPrimary)),
+                        if (_isLiveDataBased)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text('📡 Live Data', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green)),
+                          )
+                        else
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Text('📚 Historical', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.blue)),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _predictedW?.toStringAsFixed(1) ?? '—',
+                                style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: cardTextPrimary),
+                              ),
+                              Text('Expected Power', style: theme.textTheme.bodySmall?.copyWith(color: cardTextSecondary)),
+                            ],
+                          ),
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              _formatTime(_predictedForLocal),
+                              style: theme.textTheme.bodySmall?.copyWith(color: cardTextSecondary),
+                            ),
+                            Text(
+                              'Prediction time',
+                              style: theme.textTheme.bodySmall?.copyWith(color: cardTextSecondary),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    if (_predictedLower != null && _predictedUpper != null) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Confidence Range', style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600, color: Colors.black87)),
+                            Text(
+                              '${_predictedLower!.toStringAsFixed(1)}W - ${_predictedUpper!.toStringAsFixed(1)}W',
+                              style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.bold, color: Colors.black87),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 16),
+
+          // ===== COMPARISON CARD =====
+          if (_actualW != null)
+            Card(
+              elevation: 2,
+              color: _accuracyPercent != null && _accuracyPercent! > 80
+                  ? Colors.green.shade50
+                  : _accuracyPercent != null && _accuracyPercent! > 60
+                      ? Colors.orange.shade50
+                      : Colors.red.shade50,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Forecast Accuracy', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: Colors.black87)),
+                        if (_accuracyPercent != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: _accuracyPercent! > 80
+                                  ? Colors.green
+                                  : _accuracyPercent! > 60
+                                      ? Colors.orange
+                                      : Colors.red,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '${_accuracyPercent!.toStringAsFixed(0)}%',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Text('Predicted', style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700)),
+                              Text(
+                                _predictedW?.toStringAsFixed(1) ?? '—',
+                                style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
+                              Text('W', style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700)),
+                            ],
+                          ),
+                        ),
+                        Column(
+                          children: [
+                            Icon(Icons.compare_arrows, size: 28, color: Colors.grey.shade400),
+                          ],
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Text('Actual', style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700)),
+                              Text(
+                                _actualW?.toStringAsFixed(1) ?? '—',
+                                style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
+                              Text('W', style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.5),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          Column(
+                            children: [
+                              Text('Error', style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700)),
+                              Text(
+                                '${((_predictedW ?? 0) - (_actualW ?? 0)).abs().toStringAsFixed(1)}W',
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
+                            ],
+                          ),
+                          Column(
+                            children: [
+                              Text('Difference', style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700)),
+                              Text(
+                                '${(((_predictedW ?? 0) - (_actualW ?? 0)).abs() / (_actualW ?? 1) * 100).toStringAsFixed(1)}%',
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-          if (_loading) const Padding(padding: EdgeInsets.only(top: 12), child: Center(child: CircularProgressIndicator())),
-          const SizedBox(height: 12),
-          if (_actualSeriesW.isNotEmpty && _predSeriesW.isNotEmpty) _buildCompareChart(),
+
+          const SizedBox(height: 16),
+
+          // ===== INSIGHTS CARD =====
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('💡 Insights', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold, color: cardTextPrimary)),
+                  const SizedBox(height: 12),
+                  _InsightTile(
+                    icon: '⚡',
+                    title: 'Current Status',
+                    description: _latestLivePowerW != null
+                        ? 'Using ${_latestLivePowerW!.toStringAsFixed(1)}W (${((_latestLivePowerW! / (_avgPower24h ?? 1) * 100).toStringAsFixed(0))}% of daily average)'
+                        : 'Loading live data...',
+                  ),
+                  const SizedBox(height: 8),
+                  if (_trendDirection != null)
+                    _InsightTile(
+                      icon: _getTrendIcon(_trendDirection),
+                      title: 'Trend',
+                      description: _trendDirection == 'increasing'
+                          ? 'Power usage is increasing - consider reducing load'
+                          : _trendDirection == 'decreasing'
+                              ? 'Power usage is decreasing - good energy management'
+                              : 'Power usage is stable',
+                    ),
+                  const SizedBox(height: 8),
+                  if (_accuracyPercent != null)
+                    _InsightTile(
+                      icon: '🎯',
+                      title: 'Forecast Quality',
+                      description: _accuracyPercent! > 80
+                           ? 'Excellent forecast - highly reliable for planning'
+                          : _accuracyPercent! > 60
+                              ? 'Good forecast - useful for decision making'
+                              : 'Fair forecast - consider other factors',
+                    ),
+                ],
+              ),
+            ),
+          ),
+
+          if (_loading) ...[
+            const SizedBox(height: 16),
+            const Center(child: CircularProgressIndicator()),
+          ],
+
+          const SizedBox(height: 24),
         ],
       ),
-    );
-  }
-
-  // Neat standard chart: actual line + predicted dashed-like segment (simple flat segment)
-  Widget _buildCompareChart() {
-    final theme = Theme.of(context);
-    final maxY = [
-      ..._actualSeriesW.map((e) => e.y),
-      ..._predSeriesW.map((e) => e.y),
-      1.0
-    ].reduce(max) * 1.15;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Power Trend Over Time',
-              style: theme.textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Unit: Watts (W) • Live Data Comparison',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: Colors.grey.shade600,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                _LegendDot(color: theme.colorScheme.primary, label: 'Actual (sensor)'),
-                const SizedBox(width: 16),
-                _LegendDot(color: theme.colorScheme.secondary, label: 'Predicted (5 min)'),
-              ],
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 300,
-              child: LineChart(
-                LineChartData(
-                  minY: 0,
-                  maxY: maxY,
-                  gridData: FlGridData(show: true, drawVerticalLine: false),
-                  borderData: FlBorderData(show: false),
-                  titlesData: FlTitlesData(
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  ),
-                  lineBarsData: [
-                    LineChartBarData(
-                      spots: _actualSeriesW,
-                      isCurved: true,
-                      barWidth: 3,
-                      color: theme.colorScheme.primary,
-                      dotData: FlDotData(show: false),
-                    ),
-                    LineChartBarData(
-                      spots: _predSeriesW,
-                      isCurved: false,
-                      barWidth: 3,
-                      color: theme.colorScheme.secondary,
-                      dotData: FlDotData(show: true),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
 }
 
-class _LegendDot extends StatelessWidget {
-  final Color color;
+class _StatBox extends StatelessWidget {
   final String label;
-  const _LegendDot({required this.color, required this.label});
+  final String value;
+  final String unit;
+  final String icon;
+
+  const _StatBox({
+    required this.label,
+    required this.value,
+    required this.unit,
+    required this.icon,
+  });
 
   @override
   Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(icon, style: const TextStyle(fontSize: 20)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+          ),
+          Text(
+            unit,
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InsightTile extends StatelessWidget {
+  final String icon;
+  final String title;
+  final String description;
+
+  const _InsightTile({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 6),
-        Text(label),
+        Text(icon, style: const TextStyle(fontSize: 20)),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(fontWeight: FontWeight.bold, color: theme.colorScheme.onSurface),
+              ),
+              Text(
+                description,
+                style: TextStyle(fontSize: 13, color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
