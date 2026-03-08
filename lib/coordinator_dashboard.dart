@@ -1779,13 +1779,12 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                       },
                     ),
                   ),
-                  OutlinedButton.icon(
+                  OutlinedButton(
                     onPressed: () {
                       _loadRooms();
                       _fetchLiveDataForDepartment();
                     },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh'),
+                    child: const Text('Reload'),
                   ),
                   ElevatedButton.icon(
                     onPressed: () => showDialog(

@@ -56,6 +56,11 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
+  Future<void> _refreshCurrentPage() async {
+    // Refresh data for the current page
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -93,9 +98,12 @@ class _DashboardPageState extends State<DashboardPage> {
           label: 'Profile',
         ),
       ],
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 300),
-        child: _buildPage(_index, colorScheme),
+      body: RefreshIndicator(
+        onRefresh: _refreshCurrentPage,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: _buildPage(_index, colorScheme),
+        ),
       ),
     );
   }
@@ -810,6 +818,9 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   bool _liveDataAvailable = false;
   DateTime? _lastDataUpdate;
   Timer? _refreshTimer;
+  String? _preferredBaseUrl;
+
+  static const String _roomDeviceId = 'ESP32-CS-C201';
 
   // Getter for power in kW
   double get _currentPowerKw => _currentPowerW / 1000.0;
@@ -829,32 +840,64 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
 
   Future<void> _loadLiveData() async {
     try {
-      final List<String> apiCandidates = [
-        'http://10.0.2.2:5000',
-        'http://192.168.160.1:5000',
+      final List<String> defaultCandidates = [
+        // Desktop/local first for fastest startup.
         'http://localhost:5000',
         'http://127.0.0.1:5000',
+        'http://192.168.160.1:5000',
+        'http://10.0.2.2:5000',
+      ];
+
+      // Try last successful backend first to avoid repeated timeout chains.
+      final List<String> apiCandidates = [
+        if (_preferredBaseUrl != null) _preferredBaseUrl!,
+        ...defaultCandidates.where((u) => u != _preferredBaseUrl),
       ];
 
       for (final baseUrl in apiCandidates) {
         try {
-          // Fetch latest 60 readings directly from sensor_data table
+          // Fetch room-specific readings first for faster and relevant data.
+          final roomUri = Uri.parse(
+            '$baseUrl/sensor-data?limit=36&device_id=${Uri.encodeComponent(_roomDeviceId)}',
+          );
+
+          // Fallback endpoint when room-specific query yields nothing.
+          final fallbackUri = Uri.parse('$baseUrl/sensor-data?limit=36');
+
+          // Use a smaller timeout to keep UI responsive even when a host is down.
           final response = await http
               .get(
-                Uri.parse('$baseUrl/sensor-data?limit=60'),
+                roomUri,
                 headers: {'Content-Type': 'application/json'},
               )
-              .timeout(const Duration(seconds: 5));
+              .timeout(const Duration(seconds: 4), onTimeout: () {
+                throw TimeoutException('Request timed out');
+              });
 
-          if (response.statusCode != 200) continue;
+          http.Response finalResponse = response;
+          if (response.statusCode != 200) {
+            finalResponse = await http
+                .get(
+                  fallbackUri,
+                  headers: {'Content-Type': 'application/json'},
+                )
+                .timeout(const Duration(seconds: 4), onTimeout: () {
+              throw TimeoutException('Request timed out');
+            });
+          }
 
-          final data = jsonDecode(response.body);
+          if (finalResponse.statusCode != 200) continue;
+
+          final data = jsonDecode(finalResponse.body);
           final readings = (data['data'] as List?) ?? [];
           
           if (readings.isEmpty) {
             // No sensor data in database
             continue;
           }
+
+          // Cache fastest working backend.
+          _preferredBaseUrl = baseUrl;
 
           // API returns latest-first; reverse so chart goes oldest->newest (left to right)
           final ordered = readings.reversed.toList();
@@ -1223,10 +1266,9 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                ElevatedButton.icon(
+                ElevatedButton(
                   onPressed: _loadLiveData,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Retry'),
+                  child: const Text('Retry'),
                 ),
               ],
             ),
@@ -1276,10 +1318,9 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 12),
-                      ElevatedButton.icon(
+                      ElevatedButton(
                         onPressed: _loadLiveData,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Retry'),
+                        child: const Text('Retry'),
                       ),
                     ],
                   ),

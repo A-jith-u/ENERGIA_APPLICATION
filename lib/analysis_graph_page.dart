@@ -95,29 +95,33 @@ class _AnalysisGraphPageState extends State<AnalysisGraphPage> with SingleTicker
           ],
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Consumption Profile (CS-201)',
-              style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              widget.type == 'Monthly'
-                  ? 'Historical consumption data over 12 months'
-                  : 'Hourly consumption breakdown for today',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: Colors.grey.shade600,
+      body: RefreshIndicator(
+        onRefresh: () async => setState(() {}),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Consumption Profile (CS-201)',
+                style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
-            ),
-            const SizedBox(height: 30),
-            
-            // Tab View
-            _buildTabContent(_currentTab, spots, yMax, yUnit, theme),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                widget.type == 'Monthly'
+                    ? 'Historical consumption data over 12 months'
+                    : 'Hourly consumption breakdown for today',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 30),
+              
+              // Tab View
+              _buildTabContent(_currentTab, spots, yMax, yUnit, theme),
+            ],
+          ),
         ),
       ),
     );

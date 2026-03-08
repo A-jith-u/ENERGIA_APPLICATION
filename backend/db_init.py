@@ -201,7 +201,7 @@ activity_logs_table = Table(
     Column("id", BigInteger, primary_key=True),
     Column("user_id", String, nullable=True),  # username or ID of the user performing action
     Column("user_name", String, nullable=True),  # Full name for display
-    Column("user_role", String, nullable=True),  # admin, coordinator, student
+    Column("user_role", String, nullable=True),  # admin, coordinator, student, sergeant
     Column("action_type", String, nullable=False),  # login, logout, data_submission, report_generation, etc.
     Column("action_description", String, nullable=False),  # detailed description of the action
     Column("resource_type", String, nullable=True),  # what type of resource was affected (sensor, report, etc)
@@ -211,6 +211,67 @@ activity_logs_table = Table(
     Column("status", String, nullable=False, default="success"),  # success, failure, warning
     Column("created_at", DateTime, server_default=func.now()),
     Column("timestamp", DateTime, nullable=False, server_default=func.now()),
+)
+
+# Sergeants table - standalone store for sergeant users (campus security/maintenance)
+sergeants_table = Table(
+    "sergeants",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("sergeant_id", String, unique=True, nullable=False),  # Auto-generated SGT001, SGT002
+    Column("email", String, unique=True, nullable=False),
+    Column("password_hash", String, nullable=False),
+    Column("name", String, nullable=False),
+    Column("phone", String, nullable=False),  # Contact phone number
+    Column("is_active", Integer, default=1),  # 0=inactive, 1=active
+    Column("last_login", DateTime, nullable=True),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
+)
+
+# Relay Control Logs table - tracks all power relay actions
+relay_control_logs_table = Table(
+    "relay_control_logs",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("room_id", String, nullable=False),  # Room whose power was controlled
+    Column("relay_channel", Integer, nullable=False),  # 1 or 2 for two-channel relay
+    Column("action", String, nullable=False),  # 'ON' or 'OFF'
+    Column("trigger_type", String, nullable=False),  # 'manual' (sergeant), 'auto' (anomaly system)
+    Column("triggered_by_user_id", String, nullable=True),  # User who triggered (if manual)
+    Column("triggered_by_user_name", String, nullable=True),
+    Column("reason", String, nullable=True),  # Reason for action (e.g., "No occupancy detected")
+    Column("timestamp", DateTime, nullable=False, server_default=func.now()),
+)
+
+# Anomaly Alert Tracking table - tracks anomaly alert progression
+anomaly_alert_tracking_table = Table(
+    "anomaly_alert_tracking",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("room_id", String, nullable=False),
+    Column("anomaly_log_id", Integer, nullable=True),  # Reference to anomaly_logs table
+    Column("first_detected_at", DateTime, nullable=False),
+    Column("last_alert_sent_at", DateTime, nullable=True),
+    Column("alert_count", Integer, default=0),  # Number of alerts sent
+    Column("current_interval_minutes", Integer, default=0),  # Current alert interval (0, 3, 5, 7)
+    Column("status", String, default="active"),  # 'active', 'acknowledged', 'auto_resolved', 'power_cut'
+    Column("resolved_at", DateTime, nullable=True),
+    Column("resolved_by_user_id", String, nullable=True),
+    Column("power_cut_at", DateTime, nullable=True),  # When automatic power cut occurred
+)
+
+# Room Relay Mapping table - maps rooms to relay channels and device IDs
+room_relay_mapping_table = Table(
+    "room_relay_mapping",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("room_id", String, unique=True, nullable=False),  # Unique room identifier
+    Column("relay_device_id", String, nullable=False),  # ESP32/Relay device ID
+    Column("relay_channel", Integer, nullable=False),  # 1 or 2 for two-channel relay
+    Column("relay_pin", Integer, nullable=True),  # GPIO pin number on ESP32
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now()),
 )
 
 metadata.create_all(engine)
