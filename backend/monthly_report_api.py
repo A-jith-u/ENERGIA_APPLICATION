@@ -8,13 +8,20 @@ from sqlalchemy import create_engine, text, func
 from typing import Dict, List, Any
 import json
 from decimal import Decimal
-
-from .config import get_db_url
 from fastapi import FastAPI
 
+try:
+    # Package mode: started via `python -m backend.app_main` or start_server.py
+    from . import config  # type: ignore
+except Exception:
+    # Script mode: started via `python app_main.py` from backend folder
+    import config  # type: ignore
+
 app = FastAPI() # Make sure this line exists!
+
+DB_URL = config.get_db_url()
 router = APIRouter()
-engine = create_engine(get_db_url())
+engine = create_engine(DB_URL)
 
 
 def _decimal_default(obj):

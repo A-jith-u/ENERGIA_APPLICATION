@@ -360,10 +360,9 @@ class ResponsiveLineChart extends StatelessWidget {
                     ),
                   ),
                 if (onRefresh != null)
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
+                  TextButton(
                     onPressed: onRefresh,
-                    tooltip: 'Refresh data',
+                    child: const Text('Reload'),
                   ),
               ],
             ),

@@ -17,6 +17,7 @@ import 'dart:convert'; // Fixes 'jsonEncode' error
 import 'dart:async'; // For Timer
 import 'package:http/http.dart' as http; // Fixes 'http' error
 import 'services/api.dart' as api; // Import API functions
+import 'package:shared_preferences/shared_preferences.dart';
 import 'services/user_counts.dart';
 import 'services/user_lists.dart';
 import 'services/validators.dart'; // Import validation functions
@@ -489,19 +490,27 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
     UserCountsStore.instance.counts.addListener(_onCountsChanged);
     // Initialize from current store
     _userCounts = UserCountsStore.instance.counts.value;
-    // Refresh in background
-    _loadUserCounts();
-    _loadCampusOverview();
+    
+    // Parallel data loading for faster UI response
+    _loadDataInParallel();
     
     // Auto-refresh every 30 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      _loadCampusOverview();
+      _loadDataInParallel();
     });
+  }
+
+  Future<void> _loadDataInParallel() async {
+    // Load user counts and campus overview in parallel
+    await Future.wait([
+      _loadUserCounts(),
+      _loadCampusOverview(),
+    ], eagerError: false);
   }
 
   Future<void> _loadUserCounts() async {
     try {
-      final counts = await api.getUserCounts();
+      final counts = await api.getUserCounts().timeout(const Duration(seconds: 8));
       if (mounted) {
         setState(() {
           _userCounts = counts;
@@ -521,7 +530,7 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
 
   Future<void> _loadCampusOverview() async {
     try {
-      final data = await api.getCampusOverview(activeWindowMinutes: 5, usageWindowHours: 1);
+      final data = await api.getCampusOverview(activeWindowMinutes: 5, usageWindowHours: 1).timeout(const Duration(seconds: 8));
       if (!mounted) return;
       setState(() {
         _totalUsageKwh = (data['total_usage_kwh'] as num?)?.toDouble();
@@ -582,9 +591,12 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
     final theme = Theme.of(context);
     final totalUsers = _userCounts?['total_users'] ?? 0;
     
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
+    return RefreshIndicator(
+      onRefresh: _loadDataInParallel,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
         // Admin Welcome Card
         _AdminWelcomeCard(scheme: widget.scheme),
         const SizedBox(height: 24),
@@ -704,7 +716,8 @@ class _CampusOverviewSectionState extends State<_CampusOverviewSection> {
         }),
         _buildActionCard(context, 'Manage Thresholds', 'Adjust campus-level anomaly limits.', Icons.tune),
 
-      ],
+        ],
+      ),
     );
   }
 
@@ -887,9 +900,12 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
     final coordinatorCount = _userCounts?['coordinators'] ?? 0;
     final classRepCount = _userCounts?['class_representatives'] ?? 0;
     
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
+    return RefreshIndicator(
+      onRefresh: _loadUserCounts,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(20),
+        children: [
         Text(
           'User Management',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
@@ -995,7 +1011,8 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
         const SizedBox(height: 12),
         
         _ActivityLogWidget(),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1274,10 +1291,9 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
         foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
         elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
+          TextButton(
             onPressed: _loadCoordinators,
-            tooltip: 'Refresh',
+            child: const Text('Reload'),
           ),
         ],
       ),
@@ -1297,16 +1313,18 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
                               const SizedBox(height: 16),
                               Text(_errorMessage!, style: theme.textTheme.titleMedium),
                               const SizedBox(height: 16),
-                              ElevatedButton.icon(
+                              ElevatedButton(
                                 onPressed: _loadCoordinators,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('Retry'),
+                                child: const Text('Retry'),
                               ),
                             ],
                           ),
                         )
-                      : SingleChildScrollView(
-                        child: Column(
+                      : RefreshIndicator(
+                        onRefresh: _loadCoordinators,
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             // Header
@@ -1470,7 +1488,8 @@ class _CoordinatorsPageState extends State<CoordinatorsPage> {
                     ),
                   ),
                 ),
-              );
+              ),
+            );
   }
 }
 
@@ -1686,10 +1705,9 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
         foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
         elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
+          TextButton(
             onPressed: _loadClassRepresentatives,
-            tooltip: 'Refresh',
+            child: const Text('Reload'),
           ),
         ],
       ),
@@ -1709,16 +1727,18 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
                             const SizedBox(height: 16),
                             Text(_errorMessage!, style: theme.textTheme.titleMedium),
                             const SizedBox(height: 16),
-                            ElevatedButton.icon(
+                            ElevatedButton(
                               onPressed: _loadClassRepresentatives,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Retry'),
+                              child: const Text('Retry'),
                             ),
                           ],
                         ),
                       )
-                    : SingleChildScrollView(
-                      child: Column(
+                    : RefreshIndicator(
+                      onRefresh: _loadClassRepresentatives,
+                      child: SingleChildScrollView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           // Header
@@ -1924,7 +1944,8 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 }
 
@@ -1950,6 +1971,7 @@ class _AddUserPageState extends State<AddUserPage> {
   static const roles = [
     'Class Representative',
     'Coordinator',
+    'Sergeant',
   ];
   static const departments = ['CSE', 'ECE', 'ME', 'IT', 'RA','EEE'];
 
@@ -1983,52 +2005,95 @@ class _AddUserPageState extends State<AddUserPage> {
     Navigator.of(context).pop(user);
   }*/
 // Inside _AddUserPageState in admin_dashboard.dart
-void _submit() async {
+Future<void> _submit() async {
   if (!_formKey.currentState!.validate()) return;
-  
-  // Show loading dialog
-  showDialog(context: context, builder: (_) => const Center(child: CircularProgressIndicator()));
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const Center(child: CircularProgressIndicator()),
+  );
 
   try {
-    // Call your new invite API
-   /*final response = await http.post(
-  Uri.parse('http://localhost:5000/admin/invite-user'),
-  headers: {'Content-Type': 'application/json'},
-  body: jsonEncode({
-    'username': _emailCtl.text.trim(), // Backend expects 'username'
-    'role': _role.toLowerCase(),
-    'department': _department,
-    'ktu_id': _admissionCtl.text.trim(),
-    'year': _year,
-    // No password sent here; backend generates the OTP
-  }),
-);*/
-// Inside _submit() in admin_dashboard.dart
-final response = await http.post(
-  Uri.parse('http://localhost:5000/admin/invite-user'),
-  headers: {'Content-Type': 'application/json'},
-  body: jsonEncode({
-    'username': _emailCtl.text.trim(),
-    'name': _nameCtl.text.trim(), // Include the Name
-    'role': _role.toLowerCase(),
-      // Department required for both coordinator and class rep
-      'department': _department,
-      // Class rep–specific fields
-      if (_role == 'Class Representative') ...{
-        'ktu_id': _admissionCtl.text.trim(),
-        'year': _year,
-      },
-  }),
-);
-
-    Navigator.pop(context); // Close loading
-    if (response.statusCode == 200) {
-      AppNotifier.showSuccess(context, 'Invitation email sent!');
-      Navigator.pop(context);
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token') ?? '';
+    if (_role == 'Sergeant' && token.isEmpty) {
+      throw api.ApiError('Admin session expired. Please login again.');
     }
-  } catch (e) {
+
+    if (_role == 'Sergeant') {
+      final response = await api.createSergeantAsAdmin(
+        token: token,
+        name: _nameCtl.text.trim(),
+        email: _emailCtl.text.trim(),
+        phone: _phoneCtl.text.trim(),
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      final data = response['data'] as Map<String, dynamic>? ?? const {};
+      final credentials = response['credentials'] as Map<String, dynamic>? ?? const {};
+      final sergeantId = (data['sergeant_id'] ?? credentials['sergeant_id'] ?? '').toString();
+      final password = (credentials['password'] ?? '').toString();
+      final emailSent = (data['email_sent'] ?? false) == true;
+
+      AppNotifier.showSuccess(
+        context,
+        'Sergeant created: $sergeantId. Credentials ${emailSent ? 'sent by email' : 'generated'}.'
+      );
+
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Sergeant Credentials'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Sergeant ID: $sergeantId'),
+              Text('Password: $password'),
+              const SizedBox(height: 8),
+              Text(emailSent
+                  ? 'Credentials have also been sent to the provided email.'
+                  : 'Email could not be sent. Share these credentials securely.'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context, {'role': _role, 'name': _nameCtl.text.trim()});
+      return;
+    }
+
+    final response = await api.inviteUserAsAdmin(
+      username: _emailCtl.text.trim(),
+      role: _role,
+      name: _nameCtl.text.trim(),
+      department: _department,
+      year: _role == 'Class Representative' ? _year : null,
+      ktuId: _role == 'Class Representative' ? _admissionCtl.text.trim() : null,
+      email: _emailCtl.text.trim(),
+      token: token,
+    );
+
+    if (!mounted) return;
     Navigator.pop(context);
-    // Handle error...
+    final msg = (response['message'] ?? 'Invitation email sent!').toString();
+    AppNotifier.showSuccess(context, msg);
+    Navigator.pop(context, {'role': _role, 'name': _nameCtl.text.trim()});
+  } catch (e) {
+    if (!mounted) return;
+    Navigator.pop(context);
+    final message = e is api.ApiError ? e.message : 'Failed to create user: $e';
+    AppNotifier.showError(context, message);
   }
 }
   @override
@@ -2184,13 +2249,15 @@ class _ActivityLogWidget extends StatefulWidget {
 class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
   late Future<List<Map<String, dynamic>>> _activityLogsFuture;
   Timer? _refreshTimer;
+  List<Map<String, dynamic>> _cachedLogs = [];  // Cache last successful response
+  bool _hasLoadedOnce = false;  // Track if we've ever loaded successfully
 
   @override
   void initState() {
     super.initState();
     _activityLogsFuture = _fetchActivityLogs();
-    // Refresh logs every 30 seconds (reduced from 10 to avoid timeout issues)
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    // Refresh logs every 45 seconds (increased to reduce backend load)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       if (mounted) {
         setState(() {
           _activityLogsFuture = _fetchActivityLogs();
@@ -2205,14 +2272,47 @@ class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
     super.dispose();
   }
 
-  Future<List<Map<String, dynamic>>> _fetchActivityLogs() async {
-    try {
-      final logs = await api.getActivityLogs(limit: 10, days: 1);
-      return logs;
-    } catch (e) {
-      print('Error fetching activity logs: $e');
-      return [];
+  Future<List<Map<String, dynamic>>>_fetchActivityLogs() async {
+    int retries = 0;
+    const maxRetries = 1;  // API already retries across candidate backends
+    
+    while (retries < maxRetries) {
+      try {
+        final logs = await api.getActivityLogs(limit: 5, days: 1).timeout(
+          const Duration(seconds: 12),
+          onTimeout: () {
+            throw TimeoutException('Activity logs request timed out');
+          },
+        );
+        
+        // Cache successful response
+        if (logs.isNotEmpty) {
+          _cachedLogs = logs;
+          _hasLoadedOnce = true;
+        }
+        
+        return logs;
+      } catch (e) {
+        retries++;
+        if (retries >= maxRetries) {
+          print('[Admin Dashboard] Failed to fetch activity logs after $maxRetries attempts: $e');
+          
+          // Return cached logs if available, otherwise empty
+          if (_cachedLogs.isNotEmpty) {
+            print('[Admin Dashboard] Returning ${_cachedLogs.length} cached activity logs');
+            return _cachedLogs;
+          }
+          return [];
+        }
+        // Exponential backoff: 2s, 4s
+        final backoffSeconds = 2 * retries;
+        print('[Admin Dashboard] Retry $retries/$maxRetries after ${backoffSeconds}s...');
+        await Future.delayed(Duration(seconds: backoffSeconds));
+      }
     }
+    
+    // Fallback to cached logs
+    return _cachedLogs.isNotEmpty ? _cachedLogs : [];
   }
 
   String _getTimeAgo(String timestamp) {

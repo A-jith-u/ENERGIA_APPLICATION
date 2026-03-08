@@ -19,8 +19,11 @@ class ReportsPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: const Center(
-        child: Text('Reports Page'),
+      body: RefreshIndicator(
+        onRefresh: () async {},
+        child: const Center(
+          child: Text('Reports Page'),
+        ),
       ),
     );
   }

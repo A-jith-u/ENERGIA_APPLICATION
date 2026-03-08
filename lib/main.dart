@@ -11,6 +11,8 @@ import 'package:energia/registration_page.dart';
 import 'package:energia/admin_login.dart';
 import 'package:energia/admin_dashboard.dart';
 import 'package:energia/onboarding_page.dart';
+import 'package:energia/sergeant_login.dart';
+import 'package:energia/sergeant_dashboard.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -182,7 +184,7 @@ class MyApp extends StatelessWidget {
       ),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: const Color(0xFF162230),
-        indicatorColor: darkColorScheme.primary.withOpacity(.25),
+        indicatorColor: darkColorScheme.primary.withValues(alpha: 0.25),
         labelTextStyle: WidgetStatePropertyAll(
           TextStyle(fontWeight: FontWeight.w600, color: Colors.grey.shade200),
         ),
@@ -204,10 +206,12 @@ class MyApp extends StatelessWidget {
         '/student_login': (context) => const StudentLoginPage(),
         '/coordinator_login': (context) => const CoordinatorLoginPage(),
         '/admin_login': (context) => const AdminLoginPage(),
+        '/sergeant_login': (context) => const SergeantLoginPage(),
         '/register': (context) => const RegistrationPage(),
         '/dashboard': (context) => const DashboardPage(),
         '/coordinator_dashboard': (context) => const CoordinatorDashboardPage(),
         '/admin_dashboard': (context) => const AdminDashboardPage(),
+        '/sergeant_dashboard': (context) => const SergeantDashboardPage(),
       },
     );
   }

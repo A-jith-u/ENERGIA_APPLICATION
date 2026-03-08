@@ -14,50 +14,61 @@ class RoleSelectionPage extends StatelessWidget {
         backgroundColor: Colors.transparent,
         elevation: 0,
       ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(32.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Welcome to\nCampus Energy Saver',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.headlineLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
+      body: RefreshIndicator(
+        onRefresh: () async {},
+        child: Center(
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Welcome to\nCampus Energy Saver',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.primary,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Please select your role to continue',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
-              ),
-              const SizedBox(height: 48),
-              _RoleCard(
-                icon: Icons.school,
-                title: 'Class Representative',
-                subtitle: 'Monitor and manage classroom energy usage.',
-                onTap: () => Navigator.pushReplacementNamed(context, '/student_login'),
-              ),
-              const SizedBox(height: 20),
-              _RoleCard(
-                icon: Icons.engineering,
-                title: 'Technical Coordinator',
-                subtitle: 'Oversee building-wide energy systems.',
-                onTap: () => Navigator.pushReplacementNamed(context, '/coordinator_login'),
-              ),
-              const SizedBox(height: 20),
-              _RoleCard(
-                icon: Icons.admin_panel_settings,
-                title: 'Admin',
-                subtitle: 'Manage users and system settings.',
-                onTap: () => Navigator.pushReplacementNamed(context, '/admin_login'),
-                isSecondary: true,
-              ),
-            ],
+                const SizedBox(height: 16),
+                Text(
+                  'Please select your role to continue',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+                ),
+                const SizedBox(height: 48),
+                _RoleCard(
+                  icon: Icons.school,
+                  title: 'Class Representative',
+                  subtitle: 'Monitor and manage classroom energy usage.',
+                  onTap: () => Navigator.pushReplacementNamed(context, '/student_login'),
+                ),
+                const SizedBox(height: 20),
+                _RoleCard(
+                  icon: Icons.engineering,
+                  title: 'Technical Coordinator',
+                  subtitle: 'Oversee building-wide energy systems.',
+                  onTap: () => Navigator.pushReplacementNamed(context, '/coordinator_login'),
+                ),
+                const SizedBox(height: 20),
+                _RoleCard(
+                  icon: Icons.admin_panel_settings,
+                  title: 'Admin',
+                  subtitle: 'Manage users and system settings.',
+                  onTap: () => Navigator.pushReplacementNamed(context, '/admin_login'),
+                  isSecondary: true,
+                ),
+                const SizedBox(height: 20),
+                _RoleCard(
+                  icon: Icons.security,
+                  title: 'Sergeant',
+                  subtitle: 'Watch live campus usage and control room power.',
+                  onTap: () => Navigator.pushReplacementNamed(context, '/sergeant_login'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
