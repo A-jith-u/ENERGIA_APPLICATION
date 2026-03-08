@@ -13,23 +13,29 @@ class ClassroomsPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: ListView.builder(
-        itemCount: 10, // Example classroom count
-        itemBuilder: (context, index) {
-          return Card(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: ListTile(
-              leading: const Icon(Icons.class_outlined),
-              title: Text('Classroom CS-${100 + index}'),
-              subtitle: Text('Block A'),
-              trailing: const Icon(Icons.arrow_forward_ios_rounded),
-              onTap: () {
-                // Navigate to classroom details page
-              },
-            ),
-          );
-        },
+      body: RefreshIndicator(
+        onRefresh: () async {},
+        child: ListView.builder(
+          physics: const AlwaysScrollableScrollPhysics(),
+          itemCount: 10,
+          itemBuilder: (context, index) {
+            return Card(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: ListTile(
+                leading: const Icon(Icons.class_outlined),
+                title: Text('Classroom CS-${100 + index}'),
+                subtitle: Text('Block A'),
+                trailing: const Icon(Icons.arrow_forward_ios_rounded),
+                onTap: () {
+                  // Navigate to classroom details page
+                },
+              ),
+            );
+          },
+        ),
       ),
     );
+  }
+}
   }
 }

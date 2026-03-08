@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -62,7 +63,9 @@ class DepartmentAuthService {
             'password': password,
             if (department != null && department.isNotEmpty) 'department': department,
           }),
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(const Duration(seconds: 15), onTimeout: () {
+          throw TimeoutException('Login request timed out');
+        });
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -111,7 +114,9 @@ class DepartmentAuthService {
             'username': username,
             'password': password,
           }),
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(const Duration(seconds: 15), onTimeout: () {
+          throw TimeoutException('Login request timed out');
+        });
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -162,7 +167,9 @@ class DepartmentAuthService {
             'username': username,
             'password': password,
           }),
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(const Duration(seconds: 15), onTimeout: () {
+          throw TimeoutException('Login request timed out');
+        });
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -237,7 +244,9 @@ class DepartmentAuthService {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-        ).timeout(const Duration(seconds: 5));
+        ).timeout(const Duration(seconds: 15), onTimeout: () {
+          throw TimeoutException('Request timed out');
+        });
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:energia/services/api.dart' as api;
 import 'dart:convert';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 
 /// Full-page activity logs viewer
@@ -15,11 +16,13 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
   List<Map<String, dynamic>> _logs = [];
   bool _isLoading = false;
   int _currentPage = 0;
-  int _itemsPerPage = 20;
+  int _itemsPerPage = 15;  // Reduced from 20 to reduce payload and lag
   int _totalItems = 0;
   String _selectedFilter = 'all';
   String _selectedStatus = 'all';
   int _selectedDays = 7;
+  int _retryCount = 0;
+  final int _maxRetries = 1;
 
   late ScrollController _scrollController;
 
@@ -39,16 +42,20 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
   Future<void> _loadActivityLogs() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
+    _retryCount = 0;
+    await _loadActivityLogsWithRetry();
+  }
 
+  Future<void> _loadActivityLogsWithRetry() async {
     try {
-      String? statusFilter;
-      if (_selectedStatus != 'all') {
-        statusFilter = _selectedStatus;
-      }
-
       final logs = await api.getActivityLogs(
         limit: _itemsPerPage,
         days: _selectedDays,
+      ).timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          throw TimeoutException('Activity logs request timed out');
+        },
       );
 
       if (!mounted) return;
@@ -59,11 +66,30 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading logs: $e')),
-        );
+
+      // Retry logic with exponential backoff
+      if (_retryCount < _maxRetries && e is TimeoutException) {
+        _retryCount++;
+        final backoffSeconds = (2 * _retryCount);
+        print('[Activity Logs] Timeout retry $_retryCount/$_maxRetries after ${backoffSeconds}s...');
+        await Future.delayed(Duration(seconds: backoffSeconds));
+        if (mounted) {
+          await _loadActivityLogsWithRetry();
+        }
+      } else {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          String errorMsg = 'Error loading logs: $e';
+          if (e is TimeoutException && _retryCount >= _maxRetries) {
+            errorMsg = 'The activity logs server is not responding. Please try again in a few moments.';
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(errorMsg),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
       }
     }
   }
@@ -197,11 +223,10 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
                     },
                   ),
                   const SizedBox(width: 12),
-                  // Refresh button
-                  ElevatedButton.icon(
+                  // Pull down anywhere in the list to refresh
+                  ElevatedButton(
                     onPressed: _loadActivityLogs,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh'),
+                    child: const Text('Reload'),
                   ),
                 ],
               ),
@@ -209,48 +234,66 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
           ),
           // Logs list
           Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _logs.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
+            child: RefreshIndicator(
+              onRefresh: _loadActivityLogs,
+              child: _isLoading
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 240, child: Center(child: CircularProgressIndicator())),
+                      ],
+                    )
+                  : _logs.isEmpty
+                      ? ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
                           children: [
-                            Icon(Icons.history, size: 64, color: Colors.grey.shade400),
-                            const SizedBox(height: 16),
-                            Text('No activity logs found', style: theme.textTheme.bodyLarge),
-                          ],
-                        ),
-                      )
-                    : ListView.separated(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _logs.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final log = _logs[index];
-                          final userName = log['user_name'] ?? 'Unknown User';
-                          final action = log['action_description'] ?? 'Unknown action';
-                          final timestamp = log['timestamp'] ?? '';
-                          final actionType = log['action_type'] ?? 'activity';
-                          final status = log['status'] ?? 'success';
-                          final department = log['department'];
-
-                          return Card(
-                            elevation: 1,
-                            child: ListTile(
-                              leading: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: _getStatusColor(status).withOpacity(0.2),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Icon(
-                                  _getActionIcon(actionType),
-                                  color: _getStatusColor(status),
-                                  size: 20,
+                            SizedBox(
+                              height: 240,
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.history, size: 64, color: Colors.grey.shade400),
+                                    const SizedBox(height: 16),
+                                    Text('No activity logs found', style: theme.textTheme.bodyLarge),
+                                    const SizedBox(height: 8),
+                                    Text('Pull down to refresh', style: theme.textTheme.bodySmall),
+                                  ],
                                 ),
                               ),
+                            ),
+                          ],
+                        )
+                      : ListView.separated(
+                          controller: _scrollController,
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _logs.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final log = _logs[index];
+                            final userName = log['user_name'] ?? 'Unknown User';
+                            final action = log['action_description'] ?? 'Unknown action';
+                            final timestamp = log['timestamp'] ?? '';
+                            final actionType = log['action_type'] ?? 'activity';
+                            final status = log['status'] ?? 'success';
+                            final department = log['department'];
+
+                            return Card(
+                              elevation: 1,
+                              child: ListTile(
+                                leading: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: _getStatusColor(status).withOpacity(0.2),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    _getActionIcon(actionType),
+                                    color: _getStatusColor(status),
+                                    size: 20,
+                                  ),
+                                ),
                               title: Text(
                                 userName,
                                 style: theme.textTheme.titleSmall?.copyWith(
@@ -311,7 +354,8 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
                           );
                         },
                       ),
-          ),
+                    ),
+                  ),
         ],
       ),
     );

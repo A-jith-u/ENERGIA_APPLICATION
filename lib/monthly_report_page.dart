@@ -652,31 +652,44 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
               tooltip: 'Download PDF',
               onPressed: _generatePDF,
             ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
+          TextButton(
             onPressed: _loadReport,
+            child: const Text('Reload'),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+      body: RefreshIndicator(
+        onRefresh: _loadReport,
+        child: _isLoading
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [
+                  SizedBox(height: 260, child: Center(child: CircularProgressIndicator())),
+                ],
+              )
+            : _error != null
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
                     children: [
-                      Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
-                      const SizedBox(height: 16),
-                      Text(_error!, style: const TextStyle(color: Colors.red)),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: _loadReport,
-                        child: const Text('Retry'),
+                      SizedBox(
+                        height: 280,
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.error_outline, size: 64, color: Colors.red.shade300),
+                              const SizedBox(height: 16),
+                              Text(_error!, style: const TextStyle(color: Colors.red)),
+                              const SizedBox(height: 8),
+                              const Text('Pull down to refresh'),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
-                  ),
-                )
-              : _buildReportContent(),
+                  )
+                : _buildReportContent(),
+      ),
     );
   }
 

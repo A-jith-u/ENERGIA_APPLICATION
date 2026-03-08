@@ -16,8 +16,9 @@ from __future__ import annotations
 import os
 import sys
 import importlib
+import math
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple
 from enum import Enum
 import statistics
 
@@ -188,6 +189,15 @@ class AIRecommendationEngine:
         )
         return result.get("recommendations", [])
 
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Safely convert DB/JSON values to float."""
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
     def _get_predictions_with_recommendations(
         self, context: Optional[str]
     ) -> Optional[Dict]:
@@ -200,11 +210,22 @@ class AIRecommendationEngine:
                 latest_sensor = self._get_latest_sensor_reading()
                 if not latest_sensor:
                     return None
+                sensor_value = self._safe_float(latest_sensor.get("value"), 0.0)
+                if sensor_value <= 0:
+                    return None
+                prediction = {
+                    "predicted_energy": sensor_value,
+                    "lower_bound": max(0.0, sensor_value * 0.9),
+                    "upper_bound": sensor_value * 1.1,
+                    "timestamp": latest_sensor.get("timestamp"),
+                    "generated_at": datetime.now().isoformat(),
+                    "source": "sensor_fallback",
+                }
             
             # Analyze prediction and generate insights
-            pred_value = prediction.get("predicted_energy", 0)
-            lower = prediction.get("lower_bound", 0)
-            upper = prediction.get("upper_bound", 0)
+            pred_value = self._safe_float(prediction.get("predicted_energy"), 0.0)
+            lower = self._safe_float(prediction.get("lower_bound"), 0.0)
+            upper = self._safe_float(prediction.get("upper_bound"), 0.0)
             
             # Calculate confidence and trend
             confidence = ((upper - lower) / pred_value * 100) if pred_value > 0 else 0
@@ -280,9 +301,9 @@ class AIRecommendationEngine:
                     if device_id not in devices:
                         devices[device_id] = {
                             "device_id": device_id,
-                            "current_value": float(row[1]),
+                            "current_value": float(row[1]) if row[1] is not None else 0,
                             "last_update": row[2].isoformat() if row[2] else None,
-                            "status": "active" if row[1] > 0.1 else "idle",
+                            "status": "active" if (row[1] is not None and row[1] > 0.1) else "idle",
                         }
                 
                 context["devices"] = list(devices.values())
@@ -339,7 +360,10 @@ class AIRecommendationEngine:
                     device_id = row[0]
                     if device_id not in device_data:
                         device_data[device_id] = []
-                    device_data[device_id].append(float(row[1]))
+                    if row[1] is not None:
+                        value = self._safe_float(row[1], float("nan"))
+                        if not math.isnan(value):
+                            device_data[device_id].append(value)
                 
                 # Check for anomalies
                 for device_id, values in device_data.items():
@@ -474,8 +498,9 @@ class AIRecommendationEngine:
         """AI-generated recommendations for coordinators."""
         recs = []
         
-        # Anomaly alerts
-        dept_anomalies = [a for a in anomalies if department.lower() in a.get("device_id", "").lower()]
+        # Anomaly alerts - filter out None values
+        anomalies_filtered = [a for a in (anomalies or []) if a is not None]
+        dept_anomalies = [a for a in anomalies_filtered if department.lower() in a.get("device_id", "").lower()]
         if dept_anomalies:
             recs.append(
                 Recommendation(
@@ -680,13 +705,13 @@ class AIRecommendationEngine:
                 if result:
                     return {
                         "device_id": result[0],
-                        "value": float(result[1]) if result[1] else 0,
-                        "voltage": float(result[2]) if result[2] else None,
-                        "current": float(result[3]) if result[3] else None,
-                        "power": float(result[4]) if result[4] else None,
-                        "energy": float(result[5]) if result[5] else None,
-                        "frequency": float(result[6]) if result[6] else None,
-                        "power_factor": float(result[7]) if result[7] else None,
+                        "value": self._safe_float(result[1], 0.0),
+                        "voltage": self._safe_float(result[2], 0.0) if result[2] is not None else None,
+                        "current": self._safe_float(result[3], 0.0) if result[3] is not None else None,
+                        "power": self._safe_float(result[4], 0.0) if result[4] is not None else None,
+                        "energy": self._safe_float(result[5], 0.0) if result[5] is not None else None,
+                        "frequency": self._safe_float(result[6], 0.0) if result[6] is not None else None,
+                        "power_factor": self._safe_float(result[7], 0.0) if result[7] is not None else None,
                         "timestamp": result[8].isoformat() if result[8] else None,
                     }
         except Exception as e:
@@ -698,31 +723,55 @@ class AIRecommendationEngine:
         """Get latest energy prediction from Prophet model or database, using live ESP32 data."""
         try:
             with self.engine.begin() as conn:
-                # Check if predictions table exists and has data
-                result = conn.execute(
+                # Check if predictions table exists.
+                table_exists = conn.execute(
                     text("""
                         SELECT COUNT(*) FROM information_schema.tables 
                         WHERE table_name = 'prophet_predictions'
                     """)
                 ).fetchone()
-                
-                if result and result[0] > 0:
-                    # Get from stored predictions
-                    pred_result = conn.execute(
+
+                if table_exists and table_exists[0] > 0:
+                    # Detect actual schema because deployments may have either
+                    # legacy columns (predicted_energy, prediction_timestamp, ...)
+                    # or newer columns (yhat, ds, ...).
+                    cols = conn.execute(
                         text("""
-                            SELECT predicted_energy, lower_bound, upper_bound, 
-                                   prediction_timestamp, generated_at
-                            FROM prophet_predictions
-                            ORDER BY generated_at DESC
-                            LIMIT 1
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = 'prophet_predictions'
                         """)
-                    ).fetchone()
-                    
+                    ).fetchall()
+                    col_set = {row[0] for row in cols}
+
+                    if {"predicted_energy", "lower_bound", "upper_bound", "prediction_timestamp"}.issubset(col_set):
+                        pred_result = conn.execute(
+                            text("""
+                                SELECT predicted_energy, lower_bound, upper_bound,
+                                       prediction_timestamp, generated_at
+                                FROM prophet_predictions
+                                ORDER BY generated_at DESC
+                                LIMIT 1
+                            """)
+                        ).fetchone()
+                    elif {"yhat", "yhat_lower", "yhat_upper", "ds"}.issubset(col_set):
+                        pred_result = conn.execute(
+                            text("""
+                                SELECT yhat, yhat_lower, yhat_upper,
+                                       ds AS prediction_timestamp, generated_at
+                                FROM prophet_predictions
+                                ORDER BY generated_at DESC NULLS LAST, ds DESC
+                                LIMIT 1
+                            """)
+                        ).fetchone()
+                    else:
+                        pred_result = None
+
                     if pred_result:
                         return {
-                            "predicted_energy": float(pred_result[0]),
-                            "lower_bound": float(pred_result[1]),
-                            "upper_bound": float(pred_result[2]),
+                            "predicted_energy": self._safe_float(pred_result[0], 0.0),
+                            "lower_bound": self._safe_float(pred_result[1], 0.0),
+                            "upper_bound": self._safe_float(pred_result[2], 0.0),
                             "timestamp": pred_result[3].isoformat() if pred_result[3] else None,
                             "generated_at": pred_result[4].isoformat() if pred_result[4] else None,
                             "source": "prophet_model",
@@ -753,12 +802,14 @@ class AIRecommendationEngine:
                 ).fetchone()
                 
                 if latest_sensor and latest_sensor[0]:
-                    latest_value = float(latest_sensor[0])
-                    latest_power = float(latest_sensor[1]) if latest_sensor[1] else latest_value
+                    latest_value = self._safe_float(latest_sensor[0], 0.0)
+                    if latest_value <= 0:
+                        return None
+                    latest_power = self._safe_float(latest_sensor[1], latest_value)
                     
                     # Calculate trend and variability
-                    avg_val = float(avg_result[0]) if avg_result and avg_result[0] else latest_value
-                    stddev = float(avg_result[1]) if avg_result and avg_result[1] else avg_val * 0.2
+                    avg_val = self._safe_float(avg_result[0], latest_value) if avg_result else latest_value
+                    stddev = self._safe_float(avg_result[1], avg_val * 0.2) if avg_result else avg_val * 0.2
                     
                     # Prediction: next 15 minutes based on current trend
                     predicted_energy = latest_value * 1.05  # 5% increase for typical load pattern
