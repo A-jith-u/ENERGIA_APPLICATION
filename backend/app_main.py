@@ -69,6 +69,124 @@ app.include_router(auth_api_module.app.router)
 # Also include sensor-data routes with /api prefix (for ESP32 - /api/sensor-data)
 app.include_router(auth_api_module.app.router, prefix="/api", tags=["ESP32 API"])
 
+# Import activity_log_api module
+def _load_activity_log_api():
+    if __package__:
+        from . import activity_log_api
+        return activity_log_api
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("activity_log_api")
+
+activity_log_api_module = _load_activity_log_api()
+app.include_router(activity_log_api_module.app.router, prefix="/activity", tags=["Activity Logs"])
+
+# Import recommendation_api module
+def _load_recommendation_api():
+    if __package__:
+        from . import recommendation_api
+        return recommendation_api
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("recommendation_api")
+
+recommendation_api_module = _load_recommendation_api()
+app.include_router(recommendation_api_module.app.router, prefix="/recommendations", tags=["Recommendations"])
+
+# Import monthly_report_api module
+def _load_monthly_report_api():
+    if __package__:
+        from . import monthly_report_api
+        return monthly_report_api
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("monthly_report_api")
+
+monthly_report_api_module = _load_monthly_report_api()
+app.include_router(monthly_report_api_module.app.router, prefix="/reports", tags=["Reports"])
+
+# Import notify_api module
+def _load_notify_api():
+    if __package__:
+        from . import notify_api
+        return notify_api
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("notify_api")
+
+notify_api_module = _load_notify_api()
+app.include_router(notify_api_module.app.router, prefix="/notify", tags=["Notifications"])
+# Import sergeant_api module
+def _load_sergeant_api():
+    if __package__:
+        from . import sergeant_api
+        return sergeant_api
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("sergeant_api")
+
+sergeant_api_module = _load_sergeant_api()
+app.include_router(sergeant_api_module.app.router, prefix="/sergeant", tags=["Sergeant Management"])
+
+# Import relay_control_api module
+def _load_relay_control_api():
+    if __package__:
+        from . import relay_control_api
+        return relay_control_api
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("relay_control_api")
+
+relay_control_api_module = _load_relay_control_api()
+app.include_router(relay_control_api_module.app.router, prefix="/relay", tags=["Relay Control"])
+# Also include relay control routes with /api prefix (for ESP32 polling)
+app.include_router(relay_control_api_module.app.router, prefix="/api/relay", tags=["ESP32 Relay Control"])
+
+# Import anomaly_alert_service module
+def _load_anomaly_alert_service():
+    if __package__:
+        from . import anomaly_alert_service
+        return anomaly_alert_service
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("anomaly_alert_service")
+
+anomaly_alert_service_module = _load_anomaly_alert_service()
+app.include_router(anomaly_alert_service_module.app.router, prefix="/anomaly-alerts", tags=["Anomaly Alerts"])
+
+
+# Import mixed ensemble model service first; fall back to Prophet if unavailable.
+def _load_serve_ensemble_90_mixed():
+    if __package__:
+        from . import serve_ensemble_90_mixed
+        return serve_ensemble_90_mixed
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("serve_ensemble_90_mixed")
+
+
+def _load_serve_prophet():
+    if __package__:
+        from . import serve_prophet
+        return serve_prophet
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("serve_prophet")
+
+
+try:
+    serve_mixed_module = _load_serve_ensemble_90_mixed()
+    app.include_router(serve_mixed_module.app.router, prefix="/model", tags=["Predictions"])
+    print("Mixed ensemble model serving API mounted at /model")
+except Exception as mixed_error:
+    print(f"Warning: Could not load mixed ensemble model serving API: {mixed_error}")
+    try:
+        serve_prophet_module = _load_serve_prophet()
+        app.include_router(serve_prophet_module.app.router, prefix="/model", tags=["Predictions"])
+        print("Prophet model serving API mounted at /model (fallback)")
+    except Exception as prophet_error:
+        print(f"Warning: Could not load Prophet model serving API fallback: {prophet_error}")
+
 # --- START SERVER ---
 if __name__ == "__main__":
     import uvicorn

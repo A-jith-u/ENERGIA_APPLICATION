@@ -73,3 +73,7 @@ backend/*.sqlite3
 
 # Environment files
 .env
+
+# Large ML model files (>50MB) - use Git LFS if needed
+backend/models/energy_ensemble_80_plus.joblib
+backend/models/energy_ensemble_90_plus.joblib

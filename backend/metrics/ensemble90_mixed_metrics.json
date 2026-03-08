@@ -1,0 +1,52 @@
+{
+  "model_name": "energy_ensemble_90_mixed",
+  "dataset": {
+    "type": "mixed_real_plus_synthetic",
+    "real_count": 8782,
+    "synthetic_count": 2195,
+    "synthetic_ratio": 0.25,
+    "combined_csv": "metrics/ensemble90_mixed_training_data.csv"
+  },
+  "weights": {
+    "gb": 0.6,
+    "hgb": 0.4
+  },
+  "calibration": {
+    "alpha": 0.94,
+    "beta": 4.0
+  },
+  "metrics_overall": {
+    "mae": 1.2841301457935212,
+    "rmse": 1.887439289397075,
+    "r2": 0.9868433246976624,
+    "acc20_all": 93.36080586080587,
+    "acc15_all": 92.03296703296702
+  },
+  "metrics_gt30": {
+    "count": 1923,
+    "acc20": 100.0,
+    "acc15": 99.84399375975039,
+    "mae": 0.9262801249412823,
+    "r2": 0.9876906487914363
+  },
+  "metrics_gt50": {
+    "count": 1125,
+    "acc20": 100.0,
+    "acc15": 99.73333333333333,
+    "mae": 0.6925710355844996,
+    "r2": 0.9870059033053562
+  },
+  "metrics_gt100": {
+    "count": 16,
+    "acc20": 100.0,
+    "acc15": 100.0,
+    "mae": 3.4325638659795263,
+    "r2": 0.8159961489522161
+  },
+  "artifacts": {
+    "model": "models/energy_ensemble_90_mixed.joblib",
+    "metrics_json": "metrics/ensemble90_mixed_metrics.json",
+    "predictions_csv": "metrics/ensemble90_mixed_predictions.csv",
+    "accuracy_plot": "metrics/ensemble90_mixed_accuracy_plot.png"
+  }
+}

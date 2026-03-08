@@ -30,19 +30,8 @@ class _AnomalyViewerPageState extends State<AnomalyViewerPage> {
   Future<void> _fetchDepartmentAnomalies() async {
     final prefs = await SharedPreferences.getInstance();
     // Get the department saved during login
-    final department = prefs.getString('user_department') ?? ""; 
-  Future<void> _fetchDepartmentAnomalies() async {
-  // Your backend endpoint that queries: 
-  // SELECT * FROM sensor WHERE is_anomaly = 1 OR rule_anomaly = 1
-  final response = await http.get(Uri.parse('http://your-api:5000/anomalies'));
-  
-  if (response.statusCode == 200) {
-    setState(() {
-      _anomalies = json.decode(response.body);
-      _isLoading = false;
-    });
-  }
-}
+    final department = prefs.getString('user_department') ?? "";
+
     try {
       // Replace with your actual backend URL or use your Config class
       final response = await http.get(
@@ -75,43 +64,47 @@ class _AnomalyViewerPageState extends State<AnomalyViewerPage> {
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator())
-        : Column(
-        children: [
-          // Header Summary Card
-          Container(
-            padding: const EdgeInsets.all(20),
-            color: _headerColor,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        : RefreshIndicator(
+            onRefresh: _fetchDepartmentAnomalies,
+            child: Column(
               children: [
-                _buildStatItem('Total', _anomalies.length.toString(), Colors.white),
-                _buildStatItem('High', _countBySeverity('High'), Colors.redAccent),
-                _buildStatItem('Medium', _countBySeverity('Medium'), Colors.orangeAccent),
+                // Header Summary Card
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  color: _headerColor,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildStatItem('Total', _anomalies.length.toString(), Colors.white),
+                      _buildStatItem('High', _countBySeverity('High'), Colors.redAccent),
+                      _buildStatItem('Medium', _countBySeverity('Medium'), Colors.orangeAccent),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: _anomalies.isEmpty
+                      ? const Center(child: Text("No anomalies detected for your department"))
+                      : ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _anomalies.length,
+                          itemBuilder: (context, index) {
+                            final anomaly = _anomalies[index];
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              child: ListTile(
+                                leading: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                                title: Text(anomaly['description'] ?? 'Energy Anomaly'),
+                                subtitle: Text('Time: ${anomaly['timestamp']}'),
+                                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                              ),
+                            );
+                          },
+                        ),
+                ),
               ],
             ),
           ),
-          Expanded(
-            child: _anomalies.isEmpty 
-              ? const Center(child: Text("No anomalies detected for your department"))
-              : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _anomalies.length,
-              itemBuilder: (context, index) {
-                final anomaly = _anomalies[index];
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    leading: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
-                    title: Text(anomaly['description'] ?? 'Energy Anomaly'),
-                    subtitle: Text('Time: ${anomaly['timestamp']}'),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
     );
   }
 
