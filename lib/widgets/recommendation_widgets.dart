@@ -29,7 +29,9 @@ class Recommendation {
 
   factory Recommendation.fromJson(Map<String, dynamic> json) {
     return Recommendation(
-      id: (json['id'] as String?) ?? 'rec_${DateTime.now().millisecondsSinceEpoch}',
+      id:
+          (json['id'] as String?) ??
+          'rec_${DateTime.now().millisecondsSinceEpoch}',
       title: (json['title'] as String?) ?? 'Recommendation',
       message: (json['message'] as String?) ?? 'No details available',
       type: (json['type'] as String?) ?? 'informational',
@@ -37,7 +39,8 @@ class Recommendation {
       action: json['action'] as String?,
       data: (json['data'] as Map<String, dynamic>?) ?? {},
       icon: (json['icon'] as String?) ?? 'info',
-      timestamp: (json['timestamp'] as String?) ?? DateTime.now().toIso8601String(),
+      timestamp:
+          (json['timestamp'] as String?) ?? DateTime.now().toIso8601String(),
     );
   }
 
@@ -120,17 +123,17 @@ class RecommendationService {
   // Try multiple endpoints to support emulator/device/desktop
   static const List<String> baseUrls = [
     'http://10.0.2.2:5000',
-    'http://192.168.160.1:5000',
+    'http://localhost:5000',
     'http://localhost:5000',
     'http://127.0.0.1:5000',
   ];
 
-  static Future<List<Recommendation>> fetchRecommendations(String? token) async {
+  static Future<List<Recommendation>> fetchRecommendations(
+    String? token,
+  ) async {
     try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      
+      final headers = <String, String>{'Content-Type': 'application/json'};
+
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
       }
@@ -138,21 +141,30 @@ class RecommendationService {
       Exception? lastErr;
       for (final baseUrl in baseUrls) {
         try {
-          final response = await http.get(
-            Uri.parse('$baseUrl/recommendations/recommendations'),
-            headers: headers,
-          ).timeout(const Duration(seconds: 15), onTimeout: () {
-            throw TimeoutException('Request timed out');
-          });
+          final response = await http
+              .get(
+                Uri.parse('$baseUrl/recommendations/recommendations'),
+                headers: headers,
+              )
+              .timeout(
+                const Duration(seconds: 15),
+                onTimeout: () {
+                  throw TimeoutException('Request timed out');
+                },
+              );
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
             final List recList = data['recommendations'] as List? ?? [];
-            return recList.map((json) => Recommendation.fromJson(json)).toList();
+            return recList
+                .map((json) => Recommendation.fromJson(json))
+                .toList();
           }
           if (response.statusCode == 401) {
             // token invalid/expired - return generic recommendations
-            print('Token expired or missing, returning generic recommendations');
+            print(
+              'Token expired or missing, returning generic recommendations',
+            );
             return _getGenericRecommendations();
           }
           lastErr = Exception('Status ${response.statusCode}');
@@ -204,24 +216,29 @@ class RecommendationService {
     ];
   }
 
-  static Future<Map<String, int>> fetchRecommendationCount(String? token) async {
+  static Future<Map<String, int>> fetchRecommendationCount(
+    String? token,
+  ) async {
     try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      
+      final headers = <String, String>{'Content-Type': 'application/json'};
+
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
       }
 
       for (final baseUrl in baseUrls) {
         try {
-          final response = await http.get(
-            Uri.parse('$baseUrl/recommendations/recommendations/count'),
-            headers: headers,
-          ).timeout(const Duration(seconds: 15), onTimeout: () {
-            throw TimeoutException('Request timed out');
-          });
+          final response = await http
+              .get(
+                Uri.parse('$baseUrl/recommendations/recommendations/count'),
+                headers: headers,
+              )
+              .timeout(
+                const Duration(seconds: 15),
+                onTimeout: () {
+                  throw TimeoutException('Request timed out');
+                },
+              );
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
@@ -235,7 +252,13 @@ class RecommendationService {
           }
           if (response.statusCode == 401) {
             // Return generic count for unauth users
-            return {'total': 3, 'critical': 0, 'high': 0, 'medium': 1, 'low': 2};
+            return {
+              'total': 3,
+              'critical': 0,
+              'high': 0,
+              'medium': 1,
+              'low': 2,
+            };
           }
         } catch (e) {
           continue;
@@ -298,7 +321,7 @@ class RecommendationCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 14),
-                
+
                 // Content
                 Expanded(
                   child: Column(
@@ -435,7 +458,7 @@ class _RecommendationsListState extends State<RecommendationsList> {
       final recommendations = await RecommendationService.fetchRecommendations(
         widget.userToken,
       );
-      
+
       if (mounted) {
         setState(() {
           _recommendations = recommendations;
@@ -455,9 +478,10 @@ class _RecommendationsListState extends State<RecommendationsList> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final displayRecs = widget.maxItems != null
-        ? _recommendations.take(widget.maxItems!).toList()
-        : _recommendations;
+    final displayRecs =
+        widget.maxItems != null
+            ? _recommendations.take(widget.maxItems!).toList()
+            : _recommendations;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -508,7 +532,7 @@ class _RecommendationsListState extends State<RecommendationsList> {
           ),
           const SizedBox(height: 16),
         ],
-        
+
         if (_isLoading && _recommendations.isEmpty)
           const Center(
             child: Padding(
@@ -522,7 +546,11 @@ class _RecommendationsListState extends State<RecommendationsList> {
               padding: const EdgeInsets.all(20),
               child: Column(
                 children: [
-                  Icon(Icons.error_outline, size: 48, color: Colors.grey.shade400),
+                  Icon(
+                    Icons.error_outline,
+                    size: 48,
+                    color: Colors.grey.shade400,
+                  ),
                   const SizedBox(height: 12),
                   Text(_errorMessage!, style: theme.textTheme.bodyMedium),
                   const SizedBox(height: 12),
@@ -540,7 +568,11 @@ class _RecommendationsListState extends State<RecommendationsList> {
               padding: const EdgeInsets.all(20),
               child: Column(
                 children: [
-                  Icon(Icons.check_circle, size: 48, color: Colors.green.shade400),
+                  Icon(
+                    Icons.check_circle,
+                    size: 48,
+                    color: Colors.green.shade400,
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     'All good!',
@@ -560,10 +592,12 @@ class _RecommendationsListState extends State<RecommendationsList> {
             ),
           )
         else
-          ...displayRecs.map((rec) => RecommendationCard(
-                recommendation: rec,
-                onTap: () => _showRecommendationDetails(context, rec),
-              )),
+          ...displayRecs.map(
+            (rec) => RecommendationCard(
+              recommendation: rec,
+              onTap: () => _showRecommendationDetails(context, rec),
+            ),
+          ),
       ],
     );
   }
@@ -575,135 +609,137 @@ class _RecommendationsListState extends State<RecommendationsList> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.4,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => SingleChildScrollView(
-          controller: scrollController,
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: rec.priorityColor.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(
-                      rec.iconData,
-                      color: rec.priorityColor,
-                      size: 32,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          rec.title,
-                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                        ),
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
+      builder:
+          (context) => DraggableScrollableSheet(
+            initialChildSize: 0.6,
+            minChildSize: 0.4,
+            maxChildSize: 0.9,
+            expand: false,
+            builder:
+                (context, scrollController) => SingleChildScrollView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
                           decoration: BoxDecoration(
-                            color: rec.priorityColor,
-                            borderRadius: BorderRadius.circular(4),
+                            color: Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(2),
                           ),
-                          child: Text(
-                            rec.priority.toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: rec.priorityColor.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              rec.iconData,
+                              color: rec.priorityColor,
+                              size: 32,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  rec.title,
+                                  style: Theme.of(context).textTheme.titleLarge
+                                      ?.copyWith(fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: rec.priorityColor,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    rec.priority.toUpperCase(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        rec.message,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                      if (rec.action != null) ...[
+                        const SizedBox(height: 24),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            // Handle action
+                          },
+                          icon: const Icon(Icons.touch_app),
+                          label: Text(rec.action!),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: rec.priorityColor,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 12,
                             ),
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Text(
-                rec.message,
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-              if (rec.action != null) ...[
-                const SizedBox(height: 24),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    // Handle action
-                  },
-                  icon: const Icon(Icons.touch_app),
-                  label: Text(rec.action!),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: rec.priorityColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                  ),
-                ),
-              ],
-              if (rec.data.isNotEmpty) ...[
-                const SizedBox(height: 24),
-                const Divider(),
-                const SizedBox(height: 16),
-                Text(
-                  'Additional Details',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
-                const SizedBox(height: 12),
-                ...rec.data.entries.map(
-                  (entry) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
+                      if (rec.data.isNotEmpty) ...[
+                        const SizedBox(height: 24),
+                        const Divider(),
+                        const SizedBox(height: 16),
                         Text(
-                          entry.key,
-                          style: TextStyle(color: Colors.grey.shade600),
+                          'Additional Details',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold),
                         ),
-                        Text(
-                          entry.value.toString(),
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        const SizedBox(height: 12),
+                        ...rec.data.entries.map(
+                          (entry) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  entry.key,
+                                  style: TextStyle(color: Colors.grey.shade600),
+                                ),
+                                Text(
+                                  entry.value.toString(),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
-              ],
-            ],
           ),
-        ),
-      ),
     );
   }
 }

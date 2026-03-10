@@ -11,3 +11,4 @@ passlib[bcrypt]==1.7.4
 PyJWT==2.8.0
 python-dotenv==1.0.0
 fastapi-mail==1.4.1
+firebase-admin==6.2.0

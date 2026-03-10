@@ -128,6 +128,11 @@ class _SergeantLoginPageState extends State<SergeantLoginPage> {
                             const SizedBox(height: 24),
                             TextFormField(
                               controller: _idController,
+                              enabled: true,
+                              enableInteractiveSelection: true,
+                              autocorrect: false,
+                              keyboardType: TextInputType.text,
+                              textInputAction: TextInputAction.next,
                               decoration: const InputDecoration(
                                 labelText: 'Sergeant ID',
                                 prefixIcon: Icon(Icons.badge_outlined),
@@ -142,7 +147,12 @@ class _SergeantLoginPageState extends State<SergeantLoginPage> {
                             const SizedBox(height: 12),
                             TextFormField(
                               controller: _passwordController,
+                              enabled: true,
+                              enableInteractiveSelection: true,
                               obscureText: !_isPasswordVisible,
+                              autocorrect: false,
+                              keyboardType: TextInputType.visiblePassword,
+                              textInputAction: TextInputAction.done,
                               decoration: InputDecoration(
                                 labelText: 'Password',
                                 prefixIcon: const Icon(Icons.lock_outline),
