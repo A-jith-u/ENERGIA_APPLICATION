@@ -1,3 +1,4 @@
+
 """Simple DB initializer for Energia DB.
 Run from repo root (`python -m backend.db_init`) or from backend folder (`python db_init.py`).
 Targets PostgreSQL by default; override DB_URL via env or .env.
