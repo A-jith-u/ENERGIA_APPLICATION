@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     Float,
+    Boolean,
     func,
     select,
     inspect,
@@ -273,6 +274,87 @@ room_relay_mapping_table = Table(
     Column("relay_pin", Integer, nullable=True),  # GPIO pin number on ESP32
     Column("created_at", DateTime, server_default=func.now()),
     Column("updated_at", DateTime, server_default=func.now()),
+)
+
+# Legacy users table - kept for compatibility with existing auth flows
+users_table = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("username", String, unique=True, nullable=False),
+    Column("password_hash", String, nullable=False),
+    Column("role", String, nullable=False),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("name", String, nullable=True),
+    Column("department", String, nullable=True),
+)
+
+# In-app notifications table (used by anomaly alert service)
+notifications_table = Table(
+    "notifications",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("recipient_email", Text, nullable=False),
+    Column("recipient_type", Text, nullable=False),
+    Column("department", Text, nullable=True),
+    Column("room_id", Text, nullable=True),
+    Column("room_name", Text, nullable=True),
+    Column("title", Text, nullable=False),
+    Column("message", Text, nullable=False),
+    Column("anomaly_log_id", Integer, nullable=True),
+    Column("power", Float, nullable=True),
+    Column("anomaly_score", Float, nullable=True),
+    Column("is_read", Boolean, nullable=False, default=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+# Password reset OTP store
+password_resets_table = Table(
+    "password_resets",
+    metadata,
+    Column("username", Text, primary_key=True),
+    Column("otp_hash", Text, nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+)
+
+# Forecast output tables used by Prophet services
+prophet_predictions_table = Table(
+    "prophet_predictions",
+    metadata,
+    Column("ds", DateTime, nullable=True),
+    Column("yhat", Float, nullable=True),
+    Column("yhat_lower", Float, nullable=True),
+    Column("yhat_upper", Float, nullable=True),
+    Column("generated_at", DateTime(timezone=True), nullable=True),
+)
+
+prophet_preprocessed_table = Table(
+    "prophet_preprocessed",
+    metadata,
+    Column("ds", DateTime, nullable=True),
+    Column("y", Float, nullable=True),
+)
+
+# Relay command queue and current relay state cache
+relay_commands_table = Table(
+    "relay_commands",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("device_id", String, nullable=False),
+    Column("command", String, nullable=False),
+    Column("sergeant_id", String, nullable=True),
+    Column("reason", Text, nullable=True),
+    Column("status", String, nullable=True),
+    Column("created_at", DateTime, nullable=True, server_default=func.now()),
+    Column("executed_at", DateTime, nullable=True),
+)
+
+relay_states_table = Table(
+    "relay_states",
+    metadata,
+    Column("device_id", String, primary_key=True),
+    Column("state", String, nullable=False),
+    Column("last_updated", DateTime, nullable=True, server_default=func.now()),
 )
 
 metadata.create_all(engine)
