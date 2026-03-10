@@ -9,7 +9,6 @@ import 'package:energia/widgets/energy_visualization_widgets.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
-import 'anomaly_reminder_service.dart';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,7 +43,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       DepartmentCustomizationService();
   List<String> _accessibleRooms = [];
   List<Map<String, dynamic>> _anomalies = [];
-  final AnomalyReminderService _reminders = AnomalyReminderService();
+  int _badgeCount = 0;  // badge counter managed by _DepartmentAlertsSection
 
 // 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
@@ -71,24 +70,8 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       _fetchAnomalyAlerts();
     });
 
-    // Wire reminder service
-    _reminders.mount();
-    _reminders.onShowPopup = (alert, reminderNum) {
-      if (!mounted) return;
-      AnomalyReminderPopup.show(
-        context,
-        alert: alert,
-        reminderNumber: reminderNum,
-        onViewAlerts: () => setState(() => _currentIndex = 3),
-        onResolve: (a) async {
-          _reminders.onAlertResolved(a);
-          await _resolveAlertFromPopup(a['id'] ?? a['_id']);
-        },
-      );
-    };
-    _reminders.onBadgeUpdate = (count) {
-      if (mounted) setState(() {});  // rebuild nav badge
-    };
+    // Badge updates from _DepartmentAlertsSection via callback
+    // (no Firebase needed — badge is incremented when new alerts arrive)
   }
   
   Future<void> _loadUserDepartmentFromPrefs() async {
@@ -157,7 +140,6 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   void dispose() {
     _dataRefreshTimer?.cancel();
     _liveTimer?.cancel();
-    _reminders.dispose();
     super.dispose();
   }
 
@@ -179,8 +161,15 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
 
 Widget _buildAnomalyTab() {
   return _DepartmentAlertsSection(
-    anomalies: _anomalies, 
+    anomalies: _anomalies,
     onRefresh: _fetchAnomalyAlerts,
+    department: _userDepartment,
+    baseUrls: const [
+      'http://127.0.0.1:5000',
+      'http://localhost:5000',
+      'http://10.0.2.2:5000',
+      'http://192.168.160.1:5000',
+    ],
   );
 }
   Future<void> _loadLiveData() async {
@@ -299,8 +288,12 @@ Widget _buildAnomalyTab() {
               final fetched = List<Map<String, dynamic>>.from(
                 anomalies.whereType<Map<String, dynamic>>(),
               );
+              final prevCount = _anomalies.length;
               setState(() { _anomalies = fetched; });
-              _reminders.onAnomaliesUpdated(fetched);
+              // Increment badge if new alerts arrived and user not on alerts tab
+              if (fetched.length > prevCount && _currentIndex != 3) {
+                setState(() => _badgeCount += fetched.length - prevCount);
+              }
             }
             return;
           }
@@ -367,28 +360,29 @@ Widget _buildAnomalyTab() {
           });
           if (index == 3) {
             _fetchAnomalyAlerts();
+            setState(() => _badgeCount = 0);
           }
         }
       },
-      bottomNavItems: const [
-        BottomNavigationBarItem(
+      bottomNavItems: [
+        const BottomNavigationBarItem(
           icon: Icon(Icons.dashboard_outlined),
           activeIcon: Icon(Icons.dashboard),
           label: 'Overview',
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.room_outlined),
           activeIcon: Icon(Icons.room),
           label: 'Rooms',
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.analytics_outlined),
           activeIcon: Icon(Icons.analytics),
           label: 'Analytics',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.notifications_outlined),
-          activeIcon: Icon(Icons.notifications),
+          icon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications_outlined)),
+          activeIcon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications)),
           label: 'Alerts',
         ),
       ],
@@ -458,31 +452,31 @@ Widget _buildAnomalyTab() {
            setState(() {
              _currentIndex = index;
            });
-           // --- NEW: Auto-refresh data when the user enters the Alerts tab ---
            if (index == 3) {
              _fetchAnomalyAlerts();
+             setState(() => _badgeCount = 0);
            }
         }
       },
-      bottomNavItems: const [
-        BottomNavigationBarItem(
+      bottomNavItems: [
+        const BottomNavigationBarItem(
           icon: Icon(Icons.dashboard_outlined),
           activeIcon: Icon(Icons.dashboard),
           label: 'Overview',
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.room_outlined),
           activeIcon: Icon(Icons.room),
           label: 'Rooms',
         ),
-        BottomNavigationBarItem(
+        const BottomNavigationBarItem(
           icon: Icon(Icons.analytics_outlined),
           activeIcon: Icon(Icons.analytics),
           label: 'Analytics',
         ),
         BottomNavigationBarItem(
-          icon: Icon(Icons.notifications_outlined),
-          activeIcon: Icon(Icons.notifications),
+          icon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications_outlined)),
+          activeIcon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications)),
           label: 'Alerts',
         ),
       ],
@@ -521,11 +515,16 @@ Widget _buildPage(int index, ColorScheme scheme) {
           department: _userDepartment,
         );
       case 3:
-        // --- UPDATED: Pass the AI anomalies and refresh logic here ---
         return _DepartmentAlertsSection(
-          anomalies: _anomalies, 
+          anomalies: _anomalies,
           onRefresh: _fetchAnomalyAlerts,
           department: _userDepartment,
+          baseUrls: const [
+            'http://127.0.0.1:5000',
+            'http://localhost:5000',
+            'http://10.0.2.2:5000',
+            'http://192.168.160.1:5000',
+          ],
         );
       default:
         return const SizedBox.shrink();
@@ -2347,103 +2346,407 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
   }
 }
 
-class _DepartmentAlertsSection extends StatelessWidget {
+class _DepartmentAlertsSection extends StatefulWidget {
   final List<dynamic> anomalies;
-  final VoidCallback onRefresh;
+  final Future<void> Function() onRefresh;
   final String? department;
+  final List<String> baseUrls;
 
   const _DepartmentAlertsSection({
-    super.key, 
-    required this.anomalies, 
+    super.key,
+    required this.anomalies,
     required this.onRefresh,
+    required this.baseUrls,
     this.department,
   });
 
   @override
+  State<_DepartmentAlertsSection> createState() =>
+      _DepartmentAlertsSectionState();
+}
+
+class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
+  late List<Map<String, dynamic>> _localAnomalies;
+  final Set<dynamic> _resolvingIds = {};
+  Timer? _selfRefreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _localAnomalies = _cast(widget.anomalies);
+    // Auto-refresh every 6 seconds — no manual refresh needed
+    _selfRefreshTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      _selfFetch();
+    });
+  }
+
+  @override
+  void dispose() {
+    _selfRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(_DepartmentAlertsSection old) {
+    super.didUpdateWidget(old);
+    if (old.anomalies != widget.anomalies) {
+      setState(() {
+        _localAnomalies = _cast(widget.anomalies)
+            .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+            .toList();
+      });
+    }
+  }
+
+  List<Map<String, dynamic>> _cast(List<dynamic> raw) =>
+      raw.whereType<Map<String, dynamic>>().toList();
+
+  // Self-contained fetch — identical to CR page
+  Future<void> _selfFetch() async {
+    for (final base in widget.baseUrls) {
+      try {
+        var url = '$base/anomalies';
+        if (widget.department != null && widget.department!.isNotEmpty) {
+          url += '?department=${Uri.encodeComponent(widget.department!)}';
+        }
+        final resp = await http
+            .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 6));
+        if (resp.statusCode == 200) {
+          final body = jsonDecode(resp.body);
+          final raw = body is List ? body : (body['anomalies'] as List? ?? []);
+          final fetched = raw.whereType<Map<String, dynamic>>().toList();
+          if (!mounted) return;
+          setState(() {
+            _localAnomalies = fetched
+                .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+                .toList();
+          });
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
+  Future<void> _resolveAlert(int index) async {
+    final alert = _localAnomalies[index];
+    final alertId = alert['id'] ?? alert['_id'];
+
+    if (alertId == null) {
+      setState(() => _localAnomalies.removeAt(index));
+      return;
+    }
+
+    setState(() => _resolvingIds.add(alertId));
+    bool success = false;
+
+    for (final base in widget.baseUrls) {
+      try {
+        final put = await http
+            .put(
+              Uri.parse('$base/anomalies/$alertId/resolve'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'status': 'resolved'}),
+            )
+            .timeout(const Duration(seconds: 8));
+        if (put.statusCode == 200 || put.statusCode == 204) {
+          success = true;
+          break;
+        }
+        // Fallback DELETE
+        final del = await http
+            .delete(Uri.parse('$base/anomalies/$alertId'),
+                headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 8));
+        if (del.statusCode == 200 || del.statusCode == 204 || del.statusCode == 404) {
+          success = true;
+          break;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        _resolvingIds.remove(alertId);
+        _localAnomalies.removeWhere((a) => (a['id'] ?? a['_id']) == alertId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Row(children: [
+          Icon(Icons.check_circle, color: Colors.white, size: 18),
+          SizedBox(width: 8),
+          Text('Alert resolved successfully.'),
+        ]),
+        backgroundColor: Colors.green.shade700,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ));
+    } else {
+      setState(() => _resolvingIds.remove(alertId));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Row(children: [
+          Icon(Icons.error_outline, color: Colors.white, size: 18),
+          SizedBox(width: 8),
+          Expanded(child: Text('Could not reach server. Try again.')),
+        ]),
+        backgroundColor: Colors.red.shade700,
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Retry',
+          textColor: Colors.white,
+          onPressed: () {
+            final retryIndex = _localAnomalies
+                .indexWhere((a) => (a['id'] ?? a['_id']) == alertId);
+            if (retryIndex >= 0) _resolveAlert(retryIndex);
+          },
+        ),
+      ));
+    }
+  }
+
+  // Severity helpers
+  Color _severityColor(dynamic power) {
+    final p = (power as num?)?.toDouble() ?? 0;
+    if (p > 5000) return const Color(0xFFB71C1C);
+    if (p > 3000) return Colors.orange.shade700;
+    return Colors.amber.shade700;
+  }
+
+  String _severityLabel(dynamic power) {
+    final p = (power as num?)?.toDouble() ?? 0;
+    if (p > 5000) return 'CRITICAL';
+    if (p > 3000) return 'HIGH';
+    return 'MEDIUM';
+  }
+
+  String _formatTime(dynamic ts) {
+    if (ts == null) return '—';
+    try {
+      final dt = DateTime.parse(ts.toString()).toLocal();
+      return '${dt.day}/${dt.month}  ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+    } catch (_) {
+      return ts.toString();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final dept = widget.department ?? 'Department';
 
     return RefreshIndicator(
-      onRefresh: () async => onRefresh(),
+      onRefresh: widget.onRefresh,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
         children: [
+          // ── Header ───────────────────────────────────────────────────────
           Text(
-            department != null ? '$department Anomaly Alerts' : 'Anomaly Alerts',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+            '$dept Anomaly Alerts',
+            style: theme.textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 6),
-          Text(
-            'Live anomaly detections from department sensors',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 16),
-          if (anomalies.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 40),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.check_circle, size: 48, color: Colors.green.withOpacity(0.5)),
-                    const SizedBox(height: 12),
-                    Text("No anomaly alerts detected", style: theme.textTheme.titleMedium),
-                    const SizedBox(height: 6),
-                    Text("All sensors are operating normally", style: theme.textTheme.bodySmall),
-                  ],
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Live anomaly detections · auto-refreshes every 6 s',
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: Colors.grey.shade600),
                 ),
               ),
+              if (_localAnomalies.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Text(
+                    '${_localAnomalies.length} active',
+                    style: TextStyle(
+                      color: Colors.red.shade700,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // ── Empty state ───────────────────────────────────────────────────
+          if (_localAnomalies.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 60),
+              child: Center(
+                child: Column(children: [
+                  Icon(Icons.check_circle_outline,
+                      size: 56, color: Colors.green.withOpacity(0.55)),
+                  const SizedBox(height: 14),
+                  Text('No anomaly alerts detected',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  Text('All sensors operating normally',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: Colors.grey.shade500)),
+                ]),
+              ),
             )
+
+          // ── Alert cards — identical layout to CR page ─────────────────────
           else
             ListView.builder(
-              padding: EdgeInsets.zero,
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: anomalies.length,
-              itemBuilder: (context, index) {
-                final alert = anomalies[index];
+              itemCount: _localAnomalies.length,
+              itemBuilder: (context, i) {
+                final alert = _localAnomalies[i];
+                final alertId = alert['id'] ?? alert['_id'];
+                final isResolving = _resolvingIds.contains(alertId);
+                final sevColor = _severityColor(alert['power']);
+                final sevLabel = _severityLabel(alert['power']);
+
                 return Card(
                   elevation: 2,
-                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.red.withOpacity(0.1),
-                      child: const Icon(Icons.warning_amber_rounded, color: Colors.red),
-                    ),
-                    title: Text(
-                      "Anomaly in ${alert['device_id']}",
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      "Power: ${alert['power']}W | Occupancy: ${alert['occupancy']}\nScore: ${alert['score']}",
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      // Logic to show alert details or navigate
-                      _showAlertDialog(context, alert);
-                    },
+                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Severity bar at top of card
+                      Container(
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: sevColor,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(12)),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 10, horizontal: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // ── Icon ────────────────────────────────────────
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 10),
+                              child: CircleAvatar(
+                                backgroundColor: sevColor.withOpacity(0.12),
+                                child: Icon(Icons.warning_amber_rounded,
+                                    color: sevColor),
+                              ),
+                            ),
+
+                            // ── Text info ────────────────────────────────────
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          'Anomaly in ${alert['device_id']}',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 7, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: sevColor.withOpacity(0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          sevLabel,
+                                          style: TextStyle(
+                                            color: sevColor,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                  Text(
+                                    'Score: ${alert['score']}  |  ${_formatTime(alert['timestamp'])}',
+                                    style: theme.textTheme.bodySmall
+                                        ?.copyWith(color: Colors.grey.shade500),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            // ── Resolve button — always visible ───────────────
+                            Padding(
+                              padding:
+                                  const EdgeInsets.only(left: 6, right: 8),
+                              child: ElevatedButton.icon(
+                                onPressed: isResolving
+                                    ? null
+                                    : () => _resolveAlert(i),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: isResolving
+                                      ? Colors.green.withOpacity(0.5)
+                                      : Colors.green,
+                                  foregroundColor: Colors.white,
+                                  disabledBackgroundColor:
+                                      Colors.green.withOpacity(0.5),
+                                  disabledForegroundColor: Colors.white70,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14, vertical: 10),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(8)),
+                                  elevation: 0,
+                                ),
+                                icon: isResolving
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                  Colors.white),
+                                        ),
+                                      )
+                                    : const Icon(Icons.check, size: 16),
+                                label: Text(
+                                  isResolving ? 'Resolving...' : 'Resolve',
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 );
               },
             ),
-        ],
-      ),
-    );
-  }
-
-  void _showAlertDialog(BuildContext context, dynamic alert) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text("Alert Detail: ${alert['device_id']}"),
-        content: Text("An unusual power consumption of ${alert['power']}W was detected when occupancy was ${alert['occupancy']}.\n\nTimestamp: ${alert['timestamp']}"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Dismiss")),
         ],
       ),
     );
@@ -2965,6 +3268,42 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Badge widget for coordinator nav bar ─────────────────────────────────────
+class _CoordAlertsBadge extends StatelessWidget {
+  final int count;
+  final Widget child;
+  const _CoordAlertsBadge({required this.count, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 0) return child;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        child,
+        Positioned(
+          right: -6, top: -4,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.red,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+            child: Text(
+              count > 99 ? '99+' : '$count',
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 10,
+                  fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
