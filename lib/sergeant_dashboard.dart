@@ -628,10 +628,15 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                               ),
                               const SizedBox(height: 10),
                               FilledButton.icon(
-                                onPressed: riskRooms.isEmpty ? null : () => _cutOffRiskRooms(riskRooms),
+                                onPressed: () => _cutOffRiskRooms(riskRooms),
                                 icon: const Icon(Icons.power_settings_new),
                                 label: const Text('Cut OFF All Risk Rooms'),
-                                style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: riskRooms.isNotEmpty
+                                      ? Colors.red.shade700
+                                      : Colors.blueGrey.shade700,
+                                  foregroundColor: Colors.white,
+                                ),
                               ),
                             ],
                           ),

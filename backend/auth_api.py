@@ -1503,30 +1503,53 @@ async def receive_sensor_data(request: Request):
         # 1. Identify what data we just received
         has_power = "power" in payload and payload.get("power") is not None
         has_occ = "human_present" in payload and payload.get("human_present") is not None
+        has_relay_state = "relay_state" in payload and payload.get("relay_state") is not None
+        relay_state = str(payload.get("relay_state", "")).strip().upper()
 
         with engine.begin() as conn:
-            # 2. LOOKUP: Check for a row from this device created in the last 60 seconds
-            # This window bridges the asynchronous nature of your two ESP32s
+            # Keep relay heartbeat fresh whenever ESP32 includes relay state in sensor payload.
+            if has_relay_state and relay_state in {"ON", "OFF", "UNKNOWN"}:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO relay_states (device_id, state, last_updated)
+                        VALUES (:device_id, :state, NOW())
+                        ON CONFLICT (device_id)
+                        DO UPDATE SET state = :state, last_updated = NOW()
+                        """
+                    ),
+                    {"device_id": device_id, "state": relay_state},
+                )
+
+            # 2. LOOKUP: Check for a row from this device created in the last 5 minutes
+            # Extended window to allow camera and power sensor data to merge
             existing = conn.execute(
                 text("""SELECT id, occupancy, power, current, voltage, energy, power_factor 
                         FROM sensor_data 
                         WHERE device_id = :id 
                         AND ds > :window 
                         ORDER BY ds DESC LIMIT 1"""),
-                {"id": device_id, "window": timestamp - timedelta(seconds=60)}
+                {"id": device_id, "window": timestamp - timedelta(minutes=5)}
             ).fetchone()
 
             if existing:
                 row_id = existing[0]
-                # 3. UPDATE: Fill the gaps in the existing 1-minute row
+                # 3. UPDATE: Fill the gaps in the existing row
                 if has_occ:
                     occupancy = payload.get("human_present")
                     conn.execute(
                         text("UPDATE sensor_data SET occupancy = :occ WHERE id = :rid"),
                         {"occ": occupancy, "rid": row_id}
                     )
-                    # Use existing electrical data for AI processing
-                    p, c, pf, v, e = existing[2], existing[3], existing[5], existing[4], existing[6]
+                    # Use existing electrical data for AI processing (FIXED indices)
+                    # SELECT: id[0], occupancy[1], power[2], current[3], voltage[4], energy[5], power_factor[6]
+                    p, c, v, e, pf = existing[2], existing[3], existing[4], existing[5], existing[6]
+                    # Use 0 if values are None
+                    p = p if p is not None else 0.0
+                    c = c if c is not None else 0.0
+                    v = v if v is not None else 0.0
+                    e = e if e is not None else 0.0
+                    pf = pf if pf is not None else 0.0
                 
                 if has_power:
                     p = float(payload.get("power", 0))
@@ -1545,27 +1568,43 @@ async def receive_sensor_data(request: Request):
                     occupancy = existing[1] if existing[1] is not None else 0
             else:
                 # 4. INSERT: Create a fresh row if no recent entry exists
-                p = float(payload.get("power", 0)) if has_power else 0.0
-                c = float(payload.get("current", 0)) if has_power else 0.0
-                pf = float(payload.get("power_factor", 0)) if has_power else 0.0
-                v = float(payload.get("voltage", 0)) if has_power else 0.0
-                e = float(payload.get("energy", 0)) if has_power else 0.0
-                occupancy = payload.get("human_present") if has_occ else 0
-                
-                # If this is power data without occupancy, perform a quick history lookup
-                if has_power and not has_occ:
-                    occ_q = conn.execute(
-                        text("SELECT occupancy FROM sensor_data WHERE device_id = :id AND occupancy IS NOT NULL ORDER BY ds DESC LIMIT 1"),
-                        {"id": device_id}
-                    ).fetchone()
-                    occupancy = occ_q[0] if occ_q else 0
-
-                conn.execute(
-                    text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, power_factor, occupancy) 
-                            VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
-                    {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
-                )
-                print(f"[DEBUG] INSERT sensor_data: device_id={device_id}, power={p}, ts={timestamp}")
+                if has_power:
+                    # Power sensor data - insert with actual values
+                    p = float(payload.get("power", 0))
+                    c = float(payload.get("current", 0))
+                    pf = float(payload.get("power_factor", 0))
+                    v = float(payload.get("voltage", 0))
+                    e = float(payload.get("energy", 0))
+                    occupancy = payload.get("human_present") if has_occ else 0
+                    
+                    # If no occupancy in payload, lookup most recent
+                    if not has_occ:
+                        occ_q = conn.execute(
+                            text("SELECT occupancy FROM sensor_data WHERE device_id = :id AND occupancy IS NOT NULL ORDER BY ds DESC LIMIT 1"),
+                            {"id": device_id}
+                        ).fetchone()
+                        occupancy = occ_q[0] if occ_q else 0
+                    
+                    conn.execute(
+                        text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, power_factor, occupancy) 
+                                VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
+                        {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
+                    )
+                    print(f"[DEBUG] INSERT sensor_data with power: device_id={device_id}, power={p}, occupancy={occupancy}")
+                elif has_occ:
+                    # Camera-only data - insert with NULL power values (not 0) to distinguish from actual zero readings
+                    occupancy = payload.get("human_present")
+                    conn.execute(
+                        text("""INSERT INTO sensor_data (ds, device_id, occupancy) 
+                                VALUES (:ds, :id, :occ)"""),
+                        {"ds": timestamp, "id": device_id, "occ": occupancy}
+                    )
+                    print(f"[DEBUG] INSERT sensor_data with occupancy only: device_id={device_id}, occupancy={occupancy}")
+                    # Use NULL power values for AI processing (will be handled as 0 in calculations)
+                    p, c, v, e, pf = 0.0, 0.0, 0.0, 0.0, 0.0
+                else:
+                    # No valid data
+                    return {"status": "error", "message": "No valid sensor data in payload"}
 
             # 5. Fetch history for rolling AI features
             hist_res = conn.execute(

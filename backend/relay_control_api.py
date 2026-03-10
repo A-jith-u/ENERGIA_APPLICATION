@@ -23,6 +23,7 @@ app = FastAPI(title="Relay Control API")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key")
 ALGORITHM = "HS256"
+RELAY_ONLINE_TIMEOUT_SECONDS = 180
 
 
 class RelayControlRequest(BaseModel):
@@ -613,7 +614,7 @@ async def get_device_status(device_id: str, authorization: Optional[str] = Heade
             if result:
                 device_id, state, last_updated = result
                 age = datetime.now() - last_updated
-                is_stale = age.total_seconds() > 30
+                is_stale = age.total_seconds() > RELAY_ONLINE_TIMEOUT_SECONDS
                 
                 return {
                     "device_id": device_id,
@@ -663,7 +664,7 @@ async def get_all_device_status(authorization: Optional[str] = Header(None)):
                     "device_id": device_id,
                     "state": state,
                     "last_updated": last_updated.isoformat(),
-                    "is_online": age < 30
+                    "is_online": age < RELAY_ONLINE_TIMEOUT_SECONDS
                 })
             
             online_count = sum(1 for d in devices if d["is_online"])
