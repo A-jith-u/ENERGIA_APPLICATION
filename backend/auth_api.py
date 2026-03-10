@@ -1092,6 +1092,50 @@ def get_user_profile(request: Request):
         raise HTTPException(status_code=500, detail="Failed to retrieve profile")
 
 
+@app.get("/admin/profile")
+def get_admin_profile(request: Request):
+    """Get admin profile from JWT token."""
+    try:
+        # Extract token from Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+        
+        token = auth_header.split(" ")[1]
+        
+        # Decode JWT token
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Verify admin role
+        if payload.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        # Return admin data from token payload wrapped in 'data' key
+        user_data = {
+            "id": payload.get("sub"),
+            "username": payload.get("username"),
+            "name": payload.get("name"),
+            "email": payload.get("username"),
+            "role": payload.get("role"),
+            "department": payload.get("department"),
+            "ktu_id": payload.get("ktu_id"),
+            "year": payload.get("year"),
+        }
+        
+        return {"data": user_data}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Get admin profile error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve admin profile")
+
+
 @app.get("/users/coordinators")
 def get_coordinators():
     """Fetch all coordinators from the database."""
@@ -1149,14 +1193,16 @@ def get_user_counts():
     with engine.begin() as conn:
         coordinator_count = conn.execute(text("SELECT COUNT(*) FROM coordinators")).scalar()
         class_rep_count = conn.execute(text("SELECT COUNT(*) FROM class_representatives")).scalar()
+        sergeant_count = conn.execute(text("SELECT COUNT(*) FROM sergeants")).scalar()
         
         # Total users (excluding admins)
-        total_users = coordinator_count + class_rep_count
+        total_users = coordinator_count + class_rep_count + sergeant_count
         
         return {
             "total_users": total_users,
             "coordinators": coordinator_count,
-            "class_representatives": class_rep_count
+            "class_representatives": class_rep_count,
+            "sergeants": sergeant_count
         }
 
 

@@ -77,6 +77,12 @@ class SergeantProfile(BaseModel):
     password: Optional[str] = None
 
 
+class ChangePasswordRequest(BaseModel):
+    """Model for password change request."""
+    current_password: str
+    new_password: str
+
+
 def generate_password(length: int = 6) -> str:
     """Generate a random 6-character alphanumeric password."""
     characters = string.ascii_letters + string.digits
@@ -350,7 +356,7 @@ async def get_sergeant_profile(authorization: Optional[str] = Header(None)):
 
         with engine.connect() as conn:
             result = conn.execute(text("""
-                SELECT sergeant_id, email, name, phone, last_login, created_at
+                SELECT sergeant_id, email, name, phone, is_active, last_login, created_at
                 FROM sergeants
                 WHERE sergeant_id = :sergeant_id AND is_active = 1
             """), {"sergeant_id": sergeant_id}).fetchone()
@@ -365,8 +371,9 @@ async def get_sergeant_profile(authorization: Optional[str] = Header(None)):
                     "email": result[1],
                     "name": result[2],
                     "phone": result[3],
-                    "last_login": result[4].isoformat() if result[4] else None,
-                    "created_at": result[5].isoformat() if result[5] else None,
+                    "is_active": bool(result[4]),
+                    "last_login": result[5].isoformat() if result[5] else None,
+                    "created_at": result[6].isoformat() if result[6] else None,
                 }
             }
 
@@ -378,7 +385,7 @@ async def get_sergeant_profile(authorization: Optional[str] = Header(None)):
 
 @app.put("/profile")
 async def update_sergeant_profile(profile: SergeantProfile, authorization: Optional[str] = Header(None)):
-    """Update sergeant profile."""
+    """Update sergeant profile (name, phone, email only - NOT password)."""
     try:
         if not authorization:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -403,11 +410,8 @@ async def update_sergeant_profile(profile: SergeantProfile, authorization: Optio
             updates.append("phone = :phone")
             params["phone"] = cleaned_phone
 
-        if profile.password:
-            if len(profile.password) < 6:
-                raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-            updates.append("password_hash = :password_hash")
-            params["password_hash"] = pwd_context.hash(profile.password)
+        # Note: email update removed as it's not in the SergeantProfile model
+        # Password change is handled via separate endpoint
 
         if not updates:
             raise HTTPException(status_code=400, detail="No fields to update")
@@ -424,6 +428,57 @@ async def update_sergeant_profile(profile: SergeantProfile, authorization: Optio
         return {
             "status": "success",
             "message": "Profile updated successfully"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/change-password")
+async def change_sergeant_password(request: ChangePasswordRequest, authorization: Optional[str] = Header(None)):
+    """Change sergeant password after verifying current password."""
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        token = authorization.replace("Bearer ", "")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
+        sergeant_id = payload.get("sergeant_id")
+
+        if len(request.new_password) < 6:
+            raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+
+        with engine.begin() as conn:
+            # Get current password hash
+            result = conn.execute(text("""
+                SELECT password_hash FROM sergeants
+                WHERE sergeant_id = :sergeant_id AND is_active = true
+            """), {"sergeant_id": sergeant_id})
+            
+            row = result.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Sergeant not found")
+
+            # Verify current password
+            if not pwd_context.verify(request.current_password, row[0]):
+                raise HTTPException(status_code=401, detail="Incorrect current password")
+
+            # Update to new password
+            new_hash = pwd_context.hash(request.new_password)
+            conn.execute(text("""
+                UPDATE sergeants 
+                SET password_hash = :new_hash, updated_at = NOW()
+                WHERE sergeant_id = :sergeant_id
+            """), {
+                "new_hash": new_hash,
+                "sergeant_id": sergeant_id
+            })
+
+        return {
+            "status": "success",
+            "message": "Password changed successfully"
         }
 
     except HTTPException:

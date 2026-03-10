@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'role_selection_page.dart';
+import 'sergeant_profile_page.dart';
 import 'services/notifier.dart';
 import 'services/sergeant_api.dart';
 
@@ -24,6 +25,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
   List<Map<String, dynamic>> _recentAnomalies = [];
   Map<String, String> _lastActionsByRoom = {};
   Set<String> _onlineRelayDeviceIds = <String>{};
+  Map<String, bool> _relayOnlineById = <String, bool>{};
   Map<String, String> _relayDeviceStateById = {};
   Timer? _refreshTimer;
 
@@ -32,6 +34,20 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     final hour = now.hour;
     // Campus normal hours: 08:00 to 17:59
     return hour < 8 || hour >= 18;
+  }
+
+  bool get _hasSensorData {
+    final activeRooms = _overview['active_rooms'] as int? ?? 0;
+    return activeRooms > 0;
+  }
+
+  bool get _hasRelayConnection {
+    // Strict live status from backend only.
+    return _onlineRelayDeviceIds.isNotEmpty;
+  }
+
+  bool get _hasLiveData {
+    return _hasSensorData || _hasRelayConnection;
   }
 
   String _normalizeRoomId(String input) {
@@ -122,6 +138,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
   List<Map<String, dynamic>> _activeMappedRooms() {
     final inactiveRoomIds = _inactiveRoomIdsFromOverview();
     final onlineDeviceIds = _onlineRelayDeviceIds;
+    final onlineStateById = _relayOnlineById;
     final deviceStates = _relayDeviceStateById;
 
     return _mappings.where((room) {
@@ -130,7 +147,11 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       }
 
       final deviceId = (room['relay_device_id'] ?? '').toString().trim().toUpperCase();
+      final isOnline = onlineStateById[deviceId] == true;
       final state = (deviceStates[deviceId] ?? '').toUpperCase();
+      if (!isOnline) {
+        return false;
+      }
       if (state.isEmpty || state == 'UNKNOWN') {
         return false;
       }
@@ -231,13 +252,16 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       ]);
 
       Set<String> onlineRelayDeviceIds = <String>{};
+      var relayOnlineById = <String, bool>{};
       final relayDeviceStateById = <String, String>{};
       try {
         final deviceStatus = await getAllRelayDeviceStatus(token).timeout(const Duration(seconds: 5));
         for (final device in deviceStatus) {
           final deviceId = (device['device_id'] ?? '').toString().trim().toUpperCase();
+          final isOnline = device['is_online'] == true;
           final state = (device['state'] ?? 'UNKNOWN').toString().trim().toUpperCase();
           if (deviceId.isNotEmpty) {
+            relayOnlineById[deviceId] = isOnline;
             relayDeviceStateById[deviceId] = state;
           }
         }
@@ -251,13 +275,15 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       } catch (_) {
         // Device status is best-effort and should not block rendering.
         onlineRelayDeviceIds = <String>{};
+        relayOnlineById = <String, bool>{};
       }
 
       List<Map<String, dynamic>> alerts = [];
       try {
-        alerts = await getActiveAnomalyAlerts().timeout(const Duration(seconds: 5));
-      } catch (_) {
+        alerts = await getActiveAnomalyAlerts().timeout(const Duration(seconds: 10));
+      } catch (e) {
         // Alerts should not block dashboard rendering.
+        debugPrint('Failed to load active anomaly alerts: $e');
         alerts = [];
       }
 
@@ -291,6 +317,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
         _recentAnomalies = anomalies;
         _lastActionsByRoom = latestByRoom;
         _onlineRelayDeviceIds = onlineRelayDeviceIds;
+        _relayOnlineById = relayOnlineById;
         _relayDeviceStateById = relayDeviceStateById;
         _isLoading = false;
         _errorMessage = null;
@@ -426,6 +453,24 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
         title: const Text('Sergeant Dashboard'),
         actions: [
           IconButton(
+            tooltip: 'Profile',
+            onPressed: () async {
+              final navigator = Navigator.of(context);
+              final token = await _readToken();
+              if (token == null || token.isEmpty) return;
+              if (!mounted) return;
+              navigator.push(
+                MaterialPageRoute(
+                  builder: (_) => SergeantProfilePage(
+                    profile: _profile,
+                    token: token,
+                  ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.account_circle),
+          ),
+          IconButton(
             tooltip: 'Logout',
             onPressed: _logout,
             icon: const Icon(Icons.logout),
@@ -489,6 +534,45 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                         ),
                       ),
                       const SizedBox(height: 10),
+                      if (!_hasLiveData)
+                        Card(
+                          color: Colors.orange.shade50,
+                          child: Padding(
+                            padding: const EdgeInsets.all(14),
+                            child: Row(
+                              children: [
+                                Icon(Icons.sensors_off, color: Colors.orange.shade800),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'No Live Data Connection',
+                                        style: theme.textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.orange.shade900,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        !_hasSensorData && !_hasRelayConnection
+                                            ? 'Sensors and relay devices are offline. Waiting for connection...'
+                                            : !_hasSensorData
+                                                ? 'ESP32 sensors are not sending data. Check sensor connections.'
+                                                : 'Relay devices are offline. Check relay connections.',
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: Colors.orange.shade800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      if (!_hasLiveData) const SizedBox(height: 10),
                       _buildOverviewGrid(theme, activeMappedRooms.length),
                       const SizedBox(height: 10),
                       Card(
@@ -523,7 +607,12 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                                       _isAfterHoursNow
                                           ? 'After-Hours Duty Monitoring'
                                           : 'Normal-Hours Monitoring',
-                                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                                      style: theme.textTheme.titleMedium?.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        color: _isAfterHoursNow
+                                            ? Colors.orange.shade900
+                                            : scheme.onSurface,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -531,7 +620,11 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                               const SizedBox(height: 8),
                               Text(
                                 'Risk rooms (power usage with zero occupancy): ${riskRooms.length}',
-                                style: theme.textTheme.bodyMedium,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: _isAfterHoursNow
+                                      ? Colors.orange.shade900
+                                      : scheme.onSurface.withValues(alpha: 0.9),
+                                ),
                               ),
                               const SizedBox(height: 10),
                               FilledButton.icon(
@@ -666,30 +759,41 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     final totalRooms = _overview['total_rooms']?.toString() ?? '0';
     final efficiency = _overview['efficiency_percent']?.toString() ?? '0';
 
+    // Show only live mapped rooms (online + known state).
+    final hasRelayMappings = mappedRelayCount > 0;
+    final relayDisplayValue = '$mappedRelayCount';
+    final relayIsConnected = _hasRelayConnection;
+
     final cards = [
       _MetricCard(
         title: 'Live Campus Usage',
-        value: '$totalUsage kWh',
+        value: _hasSensorData ? '$totalUsage kWh' : 'No Data',
         icon: Icons.bolt,
-        color: Colors.amber.shade700,
+        color: _hasSensorData ? Colors.amber.shade700 : Colors.grey.shade600,
+        isDisconnected: !_hasSensorData,
       ),
       _MetricCard(
         title: 'Active Rooms',
-        value: '$activeRooms/$totalRooms',
+        value: _hasSensorData ? '$activeRooms/$totalRooms' : 'Disconnected',
         icon: Icons.meeting_room_outlined,
-        color: Colors.blue.shade700,
+        color: _hasSensorData ? Colors.blue.shade700 : Colors.grey.shade600,
+        isDisconnected: !_hasSensorData,
       ),
       _MetricCard(
         title: 'Efficiency',
-        value: '$efficiency%',
+        value: _hasSensorData ? '$efficiency%' : '--',
         icon: Icons.insights_outlined,
-        color: Colors.green.shade700,
+        color: _hasSensorData ? Colors.green.shade700 : Colors.grey.shade600,
+        isDisconnected: !_hasSensorData,
       ),
       _MetricCard(
         title: 'Mapped Relay Rooms',
-        value: '$mappedRelayCount',
+        value: relayDisplayValue,
         icon: Icons.settings_remote_outlined,
-        color: Colors.deepPurple.shade700,
+        color: (hasRelayMappings && relayIsConnected)
+            ? Colors.deepPurple.shade700
+            : Colors.grey.shade600,
+        isDisconnected: !hasRelayMappings || !relayIsConnected,
       ),
     ];
 
@@ -729,17 +833,20 @@ class _MetricCard extends StatelessWidget {
   final String value;
   final IconData icon;
   final Color color;
+  final bool isDisconnected;
 
   const _MetricCard({
     required this.title,
     required this.value,
     required this.icon,
     required this.color,
+    this.isDisconnected = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Card(
+      color: isDisconnected ? Colors.grey.shade100 : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
@@ -759,12 +866,16 @@ class _MetricCard extends StatelessWidget {
                     title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: isDisconnected ? Colors.grey.shade600 : null,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.w700,
+                          color: isDisconnected ? Colors.grey.shade700 : null,
                         ),
                   ),
                 ],
