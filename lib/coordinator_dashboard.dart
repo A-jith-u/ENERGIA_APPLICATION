@@ -9,6 +9,7 @@ import 'package:energia/widgets/energy_visualization_widgets.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'anomaly_reminder_service.dart';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,6 +44,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       DepartmentCustomizationService();
   List<String> _accessibleRooms = [];
   List<Map<String, dynamic>> _anomalies = [];
+  final AnomalyReminderService _reminders = AnomalyReminderService();
 
 // 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
@@ -68,6 +70,25 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       _loadDepartmentAnalyticsData(); // Update analytics data regularly
       _fetchAnomalyAlerts();
     });
+
+    // Wire reminder service
+    _reminders.mount();
+    _reminders.onShowPopup = (alert, reminderNum) {
+      if (!mounted) return;
+      AnomalyReminderPopup.show(
+        context,
+        alert: alert,
+        reminderNumber: reminderNum,
+        onViewAlerts: () => setState(() => _currentIndex = 3),
+        onResolve: (a) async {
+          _reminders.onAlertResolved(a);
+          await _resolveAlertFromPopup(a['id'] ?? a['_id']);
+        },
+      );
+    };
+    _reminders.onBadgeUpdate = (count) {
+      if (mounted) setState(() {});  // rebuild nav badge
+    };
   }
   
   Future<void> _loadUserDepartmentFromPrefs() async {
@@ -136,6 +157,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   void dispose() {
     _dataRefreshTimer?.cancel();
     _liveTimer?.cancel();
+    _reminders.dispose();
     super.dispose();
   }
 
@@ -274,11 +296,11 @@ Widget _buildAnomalyTab() {
             final data = jsonDecode(resp.body);
             final anomalies = data is List ? data : (data['anomalies'] as List? ?? []);
             if (mounted) {
-              setState(() {
-                _anomalies = List<Map<String, dynamic>>.from(
-                  anomalies.whereType<Map<String, dynamic>>(),
-                );
-              });
+              final fetched = List<Map<String, dynamic>>.from(
+                anomalies.whereType<Map<String, dynamic>>(),
+              );
+              setState(() { _anomalies = fetched; });
+              _reminders.onAnomaliesUpdated(fetched);
             }
             return;
           }
@@ -371,6 +393,28 @@ Widget _buildAnomalyTab() {
         ),
       ],
     );
+  }
+
+  Future<void> _resolveAlertFromPopup(dynamic alertId) async {
+    const candidates = [
+      'http://127.0.0.1:5000',
+      'http://localhost:5000',
+      'http://10.0.2.2:5000',
+      'http://192.168.160.1:5000',
+    ];
+    for (final base in candidates) {
+      try {
+        final r = await http.put(
+          Uri.parse('$base/anomalies/$alertId/resolve'),
+          headers: {'Content-Type': 'application/json'},
+          body: '{"status":"resolved"}',
+        ).timeout(const Duration(seconds: 8));
+        if (r.statusCode == 200 || r.statusCode == 204) {
+          await _fetchAnomalyAlerts();
+          return;
+        }
+      } catch (_) { continue; }
+    }
   }
 
   void _performLogout() {

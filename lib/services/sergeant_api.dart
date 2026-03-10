@@ -10,7 +10,7 @@ final List<String> _candidates = [
   'http://localhost:5000',
   'http://127.0.0.1:5000',
   'http://10.0.2.2:5000',
-  'http://192.168.160.1:5000',
+  'http://localhost:5000',
 ];
 
 String? _lastHealthyBase;
@@ -46,7 +46,9 @@ void _markBaseHealthy(String base) {
 }
 
 void _markBaseFailed(String base, Object error) {
-  if (error is TimeoutException || error is SocketException || error is http.ClientException) {
+  if (error is TimeoutException ||
+      error is SocketException ||
+      error is http.ClientException) {
     _baseCooldownUntil[base] = DateTime.now().add(_baseCooldown);
   }
 }
@@ -60,9 +62,7 @@ class SergeantApiError implements Exception {
 }
 
 Map<String, String> _headers({String? token}) {
-  final headers = <String, String>{
-    'Content-Type': 'application/json',
-  };
+  final headers = <String, String>{'Content-Type': 'application/json'};
   if (token != null && token.isNotEmpty) {
     headers['Authorization'] = 'Bearer $token';
   }
@@ -168,11 +168,7 @@ Future<Map<String, dynamic>> _postJson(
     final uri = Uri.parse('$base$path');
     try {
       final response = await http
-          .post(
-            uri,
-            headers: _headers(token: token),
-            body: jsonEncode(payload),
-          )
+          .post(uri, headers: _headers(token: token), body: jsonEncode(payload))
           .timeout(_requestTimeout);
 
       if (response.statusCode == 200) {
@@ -267,7 +263,9 @@ Future<Map<String, dynamic>> getSergeantProfile(String token) async {
 }
 
 Future<Map<String, dynamic>> getCampusOverview() async {
-  return _getJson('/dashboard/overview?active_window_minutes=5&usage_window_hours=1');
+  return _getJson(
+    '/dashboard/overview?active_window_minutes=5&usage_window_hours=1',
+  );
 }
 
 Future<List<Map<String, dynamic>>> getRelayMappings(String token) async {
@@ -276,7 +274,10 @@ Future<List<Map<String, dynamic>>> getRelayMappings(String token) async {
   return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
 }
 
-Future<List<Map<String, dynamic>>> getRelayLogs(String token, {int limit = 200}) async {
+Future<List<Map<String, dynamic>>> getRelayLogs(
+  String token, {
+  int limit = 200,
+}) async {
   final response = await _getJson('/relay/logs?limit=$limit', token: token);
   final raw = response['data'] as List<dynamic>? ?? const [];
   return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
@@ -288,15 +289,11 @@ Future<Map<String, dynamic>> controlRelay(
   required String action,
   String? reason,
 }) async {
-  return _postJson(
-    '/relay/control',
-    {
-      'room_id': roomId,
-      'action': action,
-      if (reason != null && reason.isNotEmpty) 'reason': reason,
-    },
-    token: token,
-  );
+  return _postJson('/relay/control', {
+    'room_id': roomId,
+    'action': action,
+    if (reason != null && reason.isNotEmpty) 'reason': reason,
+  }, token: token);
 }
 
 Future<List<Map<String, dynamic>>> getActiveAnomalyAlerts() async {

@@ -9,6 +9,7 @@ This uses SQLAlchemy to talk to Postgres (DB_URL env var) and PyJWT for tokens.
 import os
 import sys
 import importlib
+import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
@@ -76,6 +77,25 @@ JWT_ALG = "HS256"
 PWD_CTX = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 engine = create_engine(DB_URL)
+
+# ── Load anomaly alert service for in-app notifications ───────────────────────
+def _load_anomaly_alert_service():
+    """Direct file-based load — bypasses __init__.py completely."""
+    import importlib.util as _ilu
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _fp   = os.path.join(_here, "anomaly_alert_service.py")
+    _spec = _ilu.spec_from_file_location("anomaly_alert_service", _fp)
+    _mod  = _ilu.module_from_spec(_spec)
+    sys.modules.setdefault("anomaly_alert_service", _mod)
+    _spec.loader.exec_module(_mod)
+    return _mod
+
+try:
+    _alert_svc = _load_anomaly_alert_service()
+    print("[auth_api] anomaly_alert_service loaded ✅")
+except Exception as _e:
+    _alert_svc = None
+    print(f"[auth_api] anomaly_alert_service not available: {_e}")
 
 
 # Ensure password reset table exists (idempotent)
@@ -701,8 +721,11 @@ async def invite_user(req: InviteUserRequest):
             subtype="html"
         )
         fm = FastMail(conf)
-        await fm.send_message(message)
+        await asyncio.wait_for(fm.send_message(message), timeout=30.0)  # 10 second timeout
         email_status = "sent"
+    except asyncio.TimeoutError:
+        print(f"Warning: Email send timed out for {req.username}")
+        email_status = "failed"
     except Exception as e:
         # Log error but don't fail the invite if email fails
         print(f"Warning: Failed to send email to {req.username}: {e}")
@@ -716,54 +739,115 @@ async def invite_user(req: InviteUserRequest):
         "message": f"Invitation {'sent' if email_status == 'sent' else 'created but email sending failed'}"
     }
 @app.get("/anomalies")
-def get_anomalies(limit: int = 10, department: str = None):
-    """Fetch recent anomalies from the anomaly_logs table.
-    Optional: filter by department if provided."""
+def get_anomalies(limit: int = 50, department: str = None):
+    """Fetch active anomalies from anomaly_logs.
+    is_anomaly IN (1, -1) catches both storage conventions.
+    Returns field names matching Flutter: timestamp, score."""
     try:
         with engine.connect() as conn:
             if department and not _is_admin_department(department):
-                # Filter by department - join with rooms table
                 result = conn.execute(
                     text("""
-                        SELECT al.id, al.ds, al.device_id, al.power, al.occupancy, al.anomaly_score, al.energy_accumulated
+                        SELECT al.id, al.ds, al.device_id, al.power, al.occupancy,
+                               al.anomaly_score, al.energy_accumulated
                         FROM anomaly_logs al
                         LEFT JOIN rooms r ON al.device_id = r.room_id
-                        WHERE al.is_anomaly = -1 
+                        WHERE al.is_anomaly IN (1, -1)
                         AND r.department = :department
-                        ORDER BY al.ds DESC 
+                        ORDER BY al.ds DESC
                         LIMIT :limit
                     """),
                     {"department": department, "limit": limit}
                 )
             else:
-                # No department filter
                 result = conn.execute(
                     text("""
-                        SELECT id, ds, device_id, power, occupancy, anomaly_score, energy_accumulated
-                        FROM anomaly_logs 
-                        WHERE is_anomaly = -1
-                        ORDER BY ds DESC 
+                        SELECT id, ds, device_id, power, occupancy,
+                               anomaly_score, energy_accumulated
+                        FROM anomaly_logs
+                        WHERE is_anomaly IN (1, -1)
+                        ORDER BY ds DESC
                         LIMIT :limit
                     """),
                     {"limit": limit}
                 )
-            
             rows = result.fetchall()
+            # Join with anomaly_alert_tracking to get reminder metadata
+            tracking_map = {}
+            try:
+                with engine.connect() as tc:
+                    t_rows = tc.execute(text("""
+                        SELECT anomaly_log_id, reminder_count, last_reminder_time,
+                               first_detected_at, status
+                        FROM anomaly_alert_tracking
+                        WHERE status = 'active'
+                    """)).fetchall()
+                    for tr in t_rows:
+                        if tr[0]:
+                            tracking_map[tr[0]] = {
+                                "reminder_count":    tr[1] or 0,
+                                "last_reminder_time": tr[2].isoformat() if tr[2] else None,
+                                "first_detected_at": tr[3].isoformat() if tr[3] else None,
+                                "alert_status":      tr[4],
+                            }
+            except Exception:
+                pass
+
             return [
                 {
-                    "id": row[0],
-                    "timestamp": row[1].isoformat() if row[1] else None,
-                    "device_id": row[2],
-                    "power": row[3],
-                    "occupancy": row[4],
-                    "score": round(row[5], 4) if row[5] else 0,
-                    "energy": row[6]
+                    "id":                row[0],
+                    "timestamp":         row[1].isoformat() if row[1] else None,
+                    "device_id":         row[2],
+                    "power":             row[3],
+                    "occupancy":         row[4],
+                    "score":             round(row[5], 4) if row[5] is not None else 0,
+                    "energy_accumulated": row[6],
+                    "status":            "active",
+                    "reminder_count":    tracking_map.get(row[0], {}).get("reminder_count", 0),
+                    "last_reminder_time": tracking_map.get(row[0], {}).get("last_reminder_time"),
+                    "first_detected_at": tracking_map.get(row[0], {}).get("first_detected_at"),
                 }
                 for row in rows
             ]
     except Exception as e:
         print(f"Error fetching anomalies: {e}")
         raise HTTPException(status_code=500, detail="Internal server error fetching alerts")
+
+@app.delete("/anomalies/{anomaly_id}")
+def resolve_anomaly(anomaly_id: int):
+    """Delete/resolve an anomaly alert by ID."""
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(
+                text("DELETE FROM anomaly_logs WHERE id = :id RETURNING id"),
+                {"id": anomaly_id}
+            ).fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Anomaly not found")
+        return {"status": "success", "message": "Anomaly resolved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error resolving anomaly: {e}")
+        raise HTTPException(status_code=500, detail="Error resolving anomaly")
+
+@app.put("/anomalies/{anomaly_id}/resolve")
+def resolve_anomaly_put(anomaly_id: int):
+    """Soft-resolve: sets is_anomaly=0 so it disappears from active alerts list."""
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(
+                text("UPDATE anomaly_logs SET is_anomaly = 0 WHERE id = :id RETURNING id"),
+                {"id": anomaly_id}
+            ).fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Anomaly not found")
+        return {"status": "success", "message": f"Anomaly {anomaly_id} resolved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error resolving anomaly")
+
 @app.post("/register")
 def register(req: RegisterRequest):
     # For student registration, verify KTU ID, Department, and Year against authorized list
@@ -1502,31 +1586,81 @@ async def receive_sensor_data(request: Request):
             'rolling_std_power': rolling_std, 'is_holiday': is_holiday
         }
         
-        # Isolation Forest Prediction
+        # ── Anomaly Detection ─────────────────────────────────────────────────────────
+        # Isolation Forest: predict() returns -1 (anomaly) or +1 (normal).
+        # When sklearn is missing we use a dual-rule fallback:
+        #   1. Absolute: power > room threshold (kW) * 1000
+        #   2. Relative: power > 2.5x the rolling average (catches spikes)
+        # Final flag: is_anomaly_flag = 1 (anomaly) | 0 (normal)
         if p < 10.0:
-            prediction, score = 1, 0.5
+            raw_prediction = -1
+            score = 0.5
+        elif model is not None and model_features is not None:
+            input_df = pd.DataFrame([input_data])[model_features]
+            raw_prediction = int(model.predict(input_df)[0])
+            score = float(model.decision_function(input_df)[0])
         else:
-            if model is not None and model_features is not None:
-                input_df = pd.DataFrame([input_data])[model_features]
-                prediction = model.predict(input_df)[0]
-                score = model.decision_function(input_df)[0]
-            else:
-                prediction, score = 1, 0.0
+            # Fetch room threshold from DB (stored in kW, compare in W)
+            room_threshold_w = 5000.0  # safe default 5 kW
+            try:
+                with engine.connect() as _tc:
+                    _tr = _tc.execute(
+                        text("SELECT threshold FROM rooms WHERE room_id = :rid"),
+                        {"rid": device_id}
+                    ).fetchone()
+                    if _tr and _tr[0]:
+                        room_threshold_w = float(_tr[0]) * 1000.0
+            except Exception:
+                pass
 
-        # Log to Anomaly Table for Flutter
+            # Relative spike: >2.5x rolling avg (avoids the "avg is already high" problem)
+            relative_threshold = rolling_avg * 2.5 if rolling_avg > 50 else float("inf")
+
+            is_above_absolute = p > room_threshold_w
+            is_spike = p > relative_threshold and (p - rolling_avg) > 500
+
+            raw_prediction = -1 if (is_above_absolute or is_spike) else 1
+            score = round((p - rolling_avg) / max(rolling_avg, 1.0), 4)
+
+        is_anomaly_flag = 1 if raw_prediction == -1 else 0
+
+        # Log to anomaly_logs using the normalised flag
         with engine.begin() as conn:
             conn.execute(
-                text("""INSERT INTO anomaly_logs (ds, device_id, power, occupancy, is_anomaly, anomaly_score, energy_accumulated)
-                        VALUES (:ds, :id, :p, :o, :ia, :as, :e)"""),
-                {"ds": timestamp, "id": device_id, "p": p, "o": occupancy, 
-                 "ia": int(prediction), "as": float(score), "e": e}
+                text("""INSERT INTO anomaly_logs
+                            (ds, device_id, power, occupancy, is_anomaly, anomaly_score, energy_accumulated)
+                        VALUES (:ds, :id, :p, :o, :ia, :sc, :e)"""),
+                {"ds": timestamp, "id": device_id, "p": p, "o": occupancy,
+                 "ia": is_anomaly_flag, "sc": score, "e": e}
             )
 
         # Invalidate overview cache so admin widgets update immediately on new sensor data
         _overview_cache["data"] = None
         _overview_cache["timestamp"] = None
 
-        return {"status": "success", "is_anomaly": int(prediction), "score": round(score, 4)}
+        # ── Trigger in-app notification to coordinator & class rep ────────────────────
+        if is_anomaly_flag == 1 and _alert_svc:
+            try:
+                with engine.connect() as _conn:
+                    _log_row = _conn.execute(
+                        text("SELECT id FROM anomaly_logs WHERE device_id = :d ORDER BY ds DESC LIMIT 1"),
+                        {"d": device_id}
+                    ).fetchone()
+                    _log_id = _log_row[0] if _log_row else None
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        _alert_svc.anomaly_alert_service.create_anomaly_alert(device_id, _log_id)
+                    )
+                except RuntimeError:
+                    asyncio.run(
+                        _alert_svc.anomaly_alert_service.create_anomaly_alert(device_id, _log_id)
+                    )
+            except Exception as _ae:
+                print(f"[auth_api] Alert notification error: {_ae}")
+
+        return {"status": "success", "is_anomaly": is_anomaly_flag, "score": round(score, 4)}
 
     except Exception as err:
         return {"status": "error", "message": str(err)}
@@ -1776,6 +1910,50 @@ def update_room_threshold(room_id: str, threshold: float = None):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error updating threshold: {str(e)}")
+
+
+@app.put("/rooms/assign-departments")
+def assign_room_departments(assignments: dict):
+    """
+    Bulk-assign departments to rooms.
+    Body: {"ROOM_302": "CS", "ROOM_101": "CS", "ROOM_405": "EC", ...}
+    Also call with {} to auto-assign based on floor if departments are all null.
+    """
+    try:
+        with engine.begin() as conn:
+            updated = 0
+            for room_id, dept in assignments.items():
+                conn.execute(
+                    text("UPDATE rooms SET department = :dept WHERE room_id = :rid"),
+                    {"dept": dept, "rid": room_id}
+                )
+                updated += 1
+
+            # If no explicit assignments given, auto-fill nulls by floor convention
+            if not assignments:
+                conn.execute(text("""
+                    UPDATE rooms SET department = 'CS'
+                    WHERE department IS NULL OR department = ''
+                """))
+                updated = -1  # signal: auto-filled
+
+        return {"status": "success", "updated": updated,
+                "message": "Departments assigned. Re-run GET /rooms to verify."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/rooms/departments")
+def get_room_departments():
+    """Show each room's current department value — for debugging."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT room_id, room_name, department FROM rooms ORDER BY room_id"
+            )).fetchall()
+        return [{"room_id": r[0], "room_name": r[1], "department": r[2]} for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
