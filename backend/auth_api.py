@@ -833,7 +833,11 @@ def resolve_anomaly(anomaly_id: int):
 
 @app.put("/anomalies/{anomaly_id}/resolve")
 def resolve_anomaly_put(anomaly_id: int):
-    """Soft-resolve: sets is_anomaly=0 so it disappears from active alerts list."""
+    """
+    Soft-resolve: sets is_anomaly=0 so it disappears from active alerts list
+    for ALL departments (shared resolution — both coordinator and CR see it gone).
+    Also marks the anomaly_alert_tracking row as 'acknowledged'.
+    """
     try:
         with engine.begin() as conn:
             result = conn.execute(
@@ -842,7 +846,21 @@ def resolve_anomaly_put(anomaly_id: int):
             ).fetchone()
             if not result:
                 raise HTTPException(status_code=404, detail="Anomaly not found")
-        return {"status": "success", "message": f"Anomaly {anomaly_id} resolved"}
+
+            # Mark tracking row as resolved too (stops backend reminders)
+            try:
+                conn.execute(text("""
+                    UPDATE anomaly_alert_tracking
+                    SET status       = 'acknowledged',
+                        resolved_at  = NOW()
+                    WHERE anomaly_log_id = :id
+                      AND status = 'active'
+                """), {"id": anomaly_id})
+            except Exception:
+                pass  # tracking table may not exist yet — non-fatal
+
+        return {"status": "success", "message": f"Anomaly {anomaly_id} resolved",
+                "id": anomaly_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -1908,6 +1926,53 @@ def get_room_departments():
         return [{"room_id": r[0], "room_name": r[1], "department": r[2]} for r in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ── FCM Token Registration ────────────────────────────────────────────────────
+class FCMTokenRequest(BaseModel):
+    user_email: str
+    user_role:  str          # 'coordinator', 'student', 'admin'
+    department: str = None
+    fcm_token:  str
+    device_info: str = ""
+
+@app.post("/fcm/register-token")
+def register_fcm_token(req: FCMTokenRequest):
+    """
+    Called by Flutter immediately after login to register the device FCM token.
+    Stores token in fcm_tokens table so the backend can push alerts.
+    """
+    try:
+        import importlib.util as _ilu
+        _here = os.path.dirname(os.path.abspath(__file__))
+        _spec = _ilu.spec_from_file_location("fcm_service",
+                    os.path.join(_here, "fcm_service.py"))
+        _fcm  = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_fcm)
+        ok = _fcm.register_token(
+            user_email  = req.user_email,
+            user_role   = req.user_role,
+            department  = req.department,
+            fcm_token   = req.fcm_token,
+            device_info = req.device_info,
+        )
+        return {"status": "ok" if ok else "error"}
+    except Exception as e:
+        print(f"[FCM register] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/fcm/remove-token")
+def remove_fcm_token(fcm_token: str):
+    """Called on logout to deregister the device token."""
+    try:
+        from sqlalchemy import text as _text
+        with engine.begin() as conn:
+            conn.execute(_text("DELETE FROM fcm_tokens WHERE fcm_token = :t"),
+                         {"t": fcm_token})
+        return {"status": "removed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/health")
