@@ -2,7 +2,7 @@ import 'services/notifier.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
-import 'analysis_graph_page.dart'; 
+import 'analysis_graph_page.dart';
 import 'anomaly_viewer_page.dart';
 import 'role_selection_page.dart';
 import 'dashboard_scaffold.dart'; // Ensure this is imported
@@ -16,7 +16,9 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
 import 'package:http/http.dart' as http; // Fixes 'http'
 import 'dart:async';
+import 'anomaly_reminder_service.dart';
 import 'dart:math';
+
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -27,10 +29,24 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
   String? _authToken;
+  String? _department; // decoded from JWT, used to filter anomaly alerts
 
-  // Dynamic titles based on the selected tab
+  // ── Badge notification state ───────────────────────────────────────────────
+  final Set<String> _seenAnomalyIds = {};
+  int _unseenAnomalyCount = 0;
+  List<Map<String, dynamic>> _anomalies = [];
+  Timer? _badgePollingTimer;
+  final AnomalyReminderService _reminders = AnomalyReminderService();
+
+  static const List<String> _baseUrls = [
+    'http://127.0.0.1:5000',   // Windows desktop app
+    'http://localhost:5000',    // fallback
+    'http://10.0.2.2:5000',    // Android emulator
+    'http://192.168.160.1:5000', // physical device (update to your machine IP)
+  ];
+
   final List<String> _titles = [
-    'CR Dashboard - CS-201',
+    'CR Dashboard',
     'Consumption Analysis',
     'Recent Alerts',
     'My Profile',
@@ -40,13 +56,192 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     _loadAuthToken();
+    // Badge polling every 8 seconds
+    _badgePollingTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => _pollForNewAnomalies(),
+    );
+    // Wire reminder service
+    _reminders.mount();
+    _reminders.onShowPopup = (alert, reminderNum) {
+      if (!mounted) return;
+      AnomalyReminderPopup.show(
+        context,
+        alert: alert,
+        reminderNumber: reminderNum,
+        onViewAlerts: () {
+          setState(() => _index = 2);
+          _fetchAnomalies();
+          _clearAlertBadge();
+        },
+        onResolve: (a) async {
+          _reminders.onAlertResolved(a);
+          await _resolveAlertById(a['id'] ?? a['_id']);
+        },
+      );
+    };
+    _reminders.onBadgeUpdate = (count) {
+      if (mounted) setState(() => _unseenAnomalyCount = count);
+    };
+  }
+
+  @override
+  void dispose() {
+    _badgePollingTimer?.cancel();
+    _reminders.dispose();
+    super.dispose();
   }
 
   Future<void> _loadAuthToken() async {
     final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token != null) {
+      try {
+        final decoded = JwtDecoder.decode(token);
+        setState(() {
+          _authToken = token;
+          _department = decoded['department'] as String?;
+        });
+      } catch (_) {
+        setState(() => _authToken = token);
+      }
+    }
+    // Seed seen IDs so pre-existing alerts don't fire badge on first open
+    await _fetchAnomalies(seedSeen: true);
+  }
+
+  String _anomalyKey(Map<String, dynamic> a) {
+    final id = a['id'] ?? a['_id'];
+    if (id != null) return id.toString();
+    return '${a['device_id']}_${a['timestamp']}';
+  }
+
+  Future<void> _fetchAnomalies({bool seedSeen = false}) async {
+    for (final base in _baseUrls) {
+      try {
+        var url = '$base/anomalies';
+        if (_department != null && _department!.isNotEmpty) {
+          url += '?department=${Uri.encodeComponent(_department!)}';
+        }
+        final resp = await http
+            .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 6));
+        if (resp.statusCode == 200) {
+          final body = jsonDecode(resp.body);
+          final raw = body is List ? body : (body['anomalies'] as List? ?? []);
+          final fetched = List<Map<String, dynamic>>.from(
+              raw.whereType<Map<String, dynamic>>());
+          if (!mounted) return;
+          setState(() {
+            _anomalies = fetched;
+            if (seedSeen && _seenAnomalyIds.isEmpty) {
+              _seenAnomalyIds.addAll(fetched.map(_anomalyKey));
+            }
+          });
+          if (!seedSeen) _reminders.onAnomaliesUpdated(fetched);
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
+  Future<void> _pollForNewAnomalies() async {
+    for (final base in _baseUrls) {
+      try {
+        var url = '$base/anomalies';
+        if (_department != null && _department!.isNotEmpty) {
+          url += '?department=${Uri.encodeComponent(_department!)}';
+        }
+        final resp = await http
+            .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 6));
+        if (resp.statusCode == 200) {
+          final body = jsonDecode(resp.body);
+          final raw = body is List ? body : (body['anomalies'] as List? ?? []);
+          final fetched = List<Map<String, dynamic>>.from(
+              raw.whereType<Map<String, dynamic>>());
+          if (!mounted) return;
+          if (_index == 2) {
+            // User is already on Alerts tab — refresh silently, clear badge
+            setState(() {
+              _anomalies = fetched;
+              _unseenAnomalyCount = 0;
+              _seenAnomalyIds.addAll(fetched.map(_anomalyKey));
+            });
+            _reminders.onAnomaliesUpdated(fetched);
+          } else {
+            final newOnes = fetched
+                .where((a) => !_seenAnomalyIds.contains(_anomalyKey(a)))
+                .length;
+            setState(() {
+              _anomalies = fetched;
+              _unseenAnomalyCount = newOnes;
+            });
+          }
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
+  void _clearAlertBadge() {
+    if (!mounted) return;
     setState(() {
-      _authToken = prefs.getString('auth_token');
+      _unseenAnomalyCount = 0;
+      _seenAnomalyIds.addAll(_anomalies.map(_anomalyKey));
     });
+  }
+
+  List<BottomNavigationBarItem> _buildNavItems() {
+    return [
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.dashboard_outlined),
+        activeIcon: Icon(Icons.dashboard),
+        label: 'Home',
+      ),
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.analytics_outlined),
+        activeIcon: Icon(Icons.analytics),
+        label: 'Analysis',
+      ),
+      BottomNavigationBarItem(
+        icon: _CRBadgeIcon(
+          icon: Icons.notifications_outlined,
+          count: _unseenAnomalyCount,
+        ),
+        activeIcon: _CRBadgeIcon(
+          icon: Icons.notifications,
+          count: _unseenAnomalyCount,
+        ),
+        label: 'Alerts',
+      ),
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.person_outline),
+        activeIcon: Icon(Icons.person),
+        label: 'Profile',
+      ),
+    ];
+  }
+
+  Future<void> _resolveAlertById(dynamic alertId) async {
+    for (final base in _baseUrls) {
+      try {
+        final r = await http.put(
+          Uri.parse('$base/anomalies/$alertId/resolve'),
+          headers: {'Content-Type': 'application/json'},
+          body: '{"status":"resolved"}',
+        ).timeout(const Duration(seconds: 8));
+        if (r.statusCode == 200 || r.statusCode == 204) {
+          await _fetchAnomalies();
+          _clearAlertBadge();
+          return;
+        }
+      } catch (_) { continue; }
+    }
   }
 
   void _performLogout() {
@@ -57,18 +252,27 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _refreshCurrentPage() async {
-    // Refresh data for the current page
+    if (_index == 2) {
+      await _fetchAnomalies();
+      _clearAlertBadge();
+    }
     setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    
+
     return DashboardScaffold(
       title: _titles[_index],
       currentIndex: _index,
-      onBottomNavTapped: (index) => setState(() => _index = index),
+      onBottomNavTapped: (index) {
+        setState(() => _index = index);
+        if (index == 2) {
+          _fetchAnomalies();
+          _clearAlertBadge();
+        }
+      },
       actions: [
         IconButton(
           icon: const Icon(Icons.logout),
@@ -76,28 +280,7 @@ class _DashboardPageState extends State<DashboardPage> {
           onPressed: _performLogout,
         ),
       ],
-      bottomNavItems: const [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.dashboard_outlined),
-          activeIcon: Icon(Icons.dashboard),
-          label: 'Home', 
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.analytics_outlined),
-          activeIcon: Icon(Icons.analytics),
-          label: 'Analysis',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.notifications_outlined),
-          activeIcon: Icon(Icons.notifications),
-          label: 'Alerts',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.person_outline),
-          activeIcon: Icon(Icons.person),
-          label: 'Profile',
-        ),
-      ],
+      bottomNavItems: _buildNavItems(),
       body: RefreshIndicator(
         onRefresh: _refreshCurrentPage,
         child: AnimatedSwitcher(
@@ -115,7 +298,15 @@ class _DashboardPageState extends State<DashboardPage> {
       case 1:
         return _ReportsSection(scheme: scheme, userToken: _authToken);
       case 2:
-        return _AlertsSection(scheme: scheme);
+        return _CRAlertsSection(
+          anomalies: _anomalies,
+          department: _department,
+          baseUrls: _baseUrls,
+          onRefresh: () async {
+            await _fetchAnomalies();
+            _clearAlertBadge();
+          },
+        );
       case 3:
         return _ProfileSection(scheme: scheme);
       default:
@@ -361,85 +552,85 @@ class _ProfileSectionState extends State<_ProfileSection> {
   }
 
   Future<void> _loadUserData() async {
-  final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString('auth_token');
-  
-  if (token != null && !JwtDecoder.isExpired(token)) {
-    Map<String, dynamic> data = JwtDecoder.decode(token);
-    setState(() {
-      _nameController.text = data['name'] ?? 'Not Set'; // Real name from JWT
-      _emailController.text = data['username'] ?? '';   // Actual email address
-      _ktuIdController.text = data['ktu_id'] ?? '';
-      _yearController.text = data['year']?.toString() ?? '';
-      _deptController.text = data['department'] ?? '';
-    });
-  }
-}
-
-// Ensure these imports are at the top of the file!
-// import 'dart:convert';
-// import 'package:http/http.dart' as http;
-
-Future<void> _saveProfile() async {
-  try {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('auth_token');
-    
-    // Call the update-profile API
-    final response = await http.post(
-      Uri.parse('http://localhost:5000/update-profile'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        'ktu_id': _ktuIdController.text,
-        'name': _nameController.text,
-        'department': _deptController.text,
-        'year': _yearController.text,
-      }),
-    );
 
-    if (response.statusCode == 200) {
-      final Map<String, dynamic> resp = jsonDecode(response.body);
-      final String? newToken = resp['access_token'];
-      if (newToken != null && newToken.isNotEmpty) {
-        await prefs.setString('auth_token', newToken);
-        // Reload controllers from refreshed JWT so UI reflects immediately
-        await _loadUserData();
+    if (token != null && !JwtDecoder.isExpired(token)) {
+      Map<String, dynamic> data = JwtDecoder.decode(token);
+      setState(() {
+        _nameController.text = data['name'] ?? 'Not Set'; // Real name from JWT
+        _emailController.text = data['username'] ?? ''; // Actual email address
+        _ktuIdController.text = data['ktu_id'] ?? '';
+        _yearController.text = data['year']?.toString() ?? '';
+        _deptController.text = data['department'] ?? '';
+      });
+    }
+  }
+
+  // Ensure these imports are at the top of the file!
+  // import 'dart:convert';
+  // import 'package:http/http.dart' as http;
+
+  Future<void> _saveProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
+
+      // Call the update-profile API
+      final response = await http.post(
+        Uri.parse('http://localhost:5000/update-profile'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'ktu_id': _ktuIdController.text,
+          'name': _nameController.text,
+          'department': _deptController.text,
+          'year': _yearController.text,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> resp = jsonDecode(response.body);
+        final String? newToken = resp['access_token'];
+        if (newToken != null && newToken.isNotEmpty) {
+          await prefs.setString('auth_token', newToken);
+          // Reload controllers from refreshed JWT so UI reflects immediately
+          await _loadUserData();
+        }
+        AppNotifier.showSuccess(context, "Profile updated!");
+        setState(() => _isEditing = false);
+      } else {
+        throw Exception("Update failed");
       }
-      AppNotifier.showSuccess(context, "Profile updated!");
-      setState(() => _isEditing = false);
-    } else {
-      throw Exception("Update failed");
+    } catch (e) {
+      AppNotifier.showError(context, "Error: $e");
     }
-  } catch (e) {
-    AppNotifier.showError(context, "Error: $e");
   }
-}
 
-Future<void> _updatePassword(String currentP, String newP) async {
-  try {
-    final response = await http.post(
-      Uri.parse('http://localhost:5000/change-password'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'username': _ktuIdController.text,
-        'current_password': currentP,
-        'new_password': newP,
-      }),
-    );
+  Future<void> _updatePassword(String currentP, String newP) async {
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:5000/change-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': _ktuIdController.text,
+          'current_password': currentP,
+          'new_password': newP,
+        }),
+      );
 
-    if (response.statusCode == 200) {
-      Navigator.pop(context);
-      AppNotifier.showSuccess(context, "Password updated successfully!");
-    } else {
-      AppNotifier.showError(context, "Incorrect current password");
+      if (response.statusCode == 200) {
+        Navigator.pop(context);
+        AppNotifier.showSuccess(context, "Password updated successfully!");
+      } else {
+        AppNotifier.showError(context, "Incorrect current password");
+      }
+    } catch (e) {
+      AppNotifier.showError(context, "Server error");
     }
-  } catch (e) {
-    AppNotifier.showError(context, "Server error");
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -448,14 +639,22 @@ Future<void> _updatePassword(String currentP, String newP) async {
       padding: const EdgeInsets.all(24),
       children: [
         Center(
-          child: CircleAvatar(radius: 50, backgroundColor: widget.scheme.primaryContainer, 
-               child: Icon(Icons.person, size: 50, color: widget.scheme.primary)),
+          child: CircleAvatar(
+            radius: 50,
+            backgroundColor: widget.scheme.primaryContainer,
+            child: Icon(Icons.person, size: 50, color: widget.scheme.primary),
+          ),
         ),
         const SizedBox(height: 24),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('Personal Details', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            Text(
+              'Personal Details',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             TextButton.icon(
               onPressed: () {
                 if (_isEditing) {
@@ -470,11 +669,21 @@ Future<void> _updatePassword(String currentP, String newP) async {
           ],
         ),
         _buildProfileField(Icons.person, 'Full Name', _nameController),
-        _buildProfileField(Icons.email, 'Email', _emailController, enabled: false), // Email usually fixed
-        _buildProfileField(Icons.badge, 'KTU ID', _ktuIdController, enabled: false),
+        _buildProfileField(
+          Icons.email,
+          'Email',
+          _emailController,
+          enabled: false,
+        ), // Email usually fixed
+        _buildProfileField(
+          Icons.badge,
+          'KTU ID',
+          _ktuIdController,
+          enabled: false,
+        ),
         _buildProfileField(Icons.business, 'Department', _deptController),
         _buildProfileField(Icons.calendar_month, 'Year', _yearController),
-        
+
         const SizedBox(height: 20),
         const Divider(),
         ListTile(
@@ -489,260 +698,341 @@ Future<void> _updatePassword(String currentP, String newP) async {
 
   // Inside _ProfileSectionState
 
-final _currentPasswordController = TextEditingController();
-final _newPasswordController = TextEditingController();
-final _confirmPasswordController = TextEditingController();
+  final _currentPasswordController = TextEditingController();
+  final _newPasswordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
 
-Future<void> _handleChangePassword() async {
-  if (_newPasswordController.text != _confirmPasswordController.text) {
-    AppNotifier.showError(context, "New passwords do not match");
-    return;
+  Future<void> _handleChangePassword() async {
+    if (_newPasswordController.text != _confirmPasswordController.text) {
+      AppNotifier.showError(context, "New passwords do not match");
+      return;
+    }
+
+    try {
+      // Logic to call /change-password
+      // Pass _ktuIdController.text as 'username' to the backend
+      AppNotifier.showSuccess(context, "Password updated!");
+      Navigator.pop(context); // Close dialog
+    } catch (e) {
+      AppNotifier.showError(context, "Incorrect current password");
+    }
   }
 
-  try {
-    // Logic to call /change-password
-    // Pass _ktuIdController.text as 'username' to the backend
-    AppNotifier.showSuccess(context, "Password updated!");
-    Navigator.pop(context); // Close dialog
-  } catch (e) {
-    AppNotifier.showError(context, "Incorrect current password");
-  }
-}
+  void _showPasswordDialog() {
+    final currentPassController = TextEditingController();
+    final newPassController = TextEditingController();
+    final confirmPassController = TextEditingController();
 
-void _showPasswordDialog() {
-  final currentPassController = TextEditingController();
-  final newPassController = TextEditingController();
-  final confirmPassController = TextEditingController();
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        bool showCurrent = false;
+        bool showNew = false;
+        bool showConfirm = false;
+        bool isLoading = false;
 
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) {
-      bool showCurrent = false;
-      bool showNew = false;
-      bool showConfirm = false;
-      bool isLoading = false;
-      
-      return StatefulBuilder(
-        builder: (ctx, setState) => Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 500),
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: widget.scheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.lock_reset,
-                            color: widget.scheme.onPrimaryContainer,
-                            size: 28,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+        return StatefulBuilder(
+          builder:
+              (ctx, setState) => Dialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 500),
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Header
+                          Row(
                             children: [
-                              Text(
-                                'Change Password',
-                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.bold,
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: widget.scheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  Icons.lock_reset,
+                                  color: widget.scheme.onPrimaryContainer,
+                                  size: 28,
                                 ),
                               ),
-                              Text(
-                                'Update your account password',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: Colors.grey.shade600,
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Change Password',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleLarge?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Update your account password',
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.bodyMedium?.copyWith(
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close),
+                                onPressed: () => Navigator.pop(context),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          const Divider(),
+                          const SizedBox(height: 24),
+
+                          // Form Fields
+                          TextFormField(
+                            controller: currentPassController,
+                            obscureText: !showCurrent,
+                            decoration: InputDecoration(
+                              labelText: 'Current Password',
+                              hintText: 'Enter your current password',
+                              prefixIcon: const Icon(Icons.lock_outline),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  showCurrent
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                ),
+                                onPressed:
+                                    () => setState(
+                                      () => showCurrent = !showCurrent,
+                                    ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+
+                          TextFormField(
+                            controller: newPassController,
+                            obscureText: !showNew,
+                            decoration: InputDecoration(
+                              labelText: 'New Password',
+                              hintText: 'Enter your new password',
+                              prefixIcon: const Icon(Icons.lock),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  showNew
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                ),
+                                onPressed:
+                                    () => setState(() => showNew = !showNew),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+
+                          TextFormField(
+                            controller: confirmPassController,
+                            obscureText: !showConfirm,
+                            decoration: InputDecoration(
+                              labelText: 'Confirm New Password',
+                              hintText: 'Re-enter your new password',
+                              prefixIcon: const Icon(Icons.lock_clock),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  showConfirm
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                ),
+                                onPressed:
+                                    () => setState(
+                                      () => showConfirm = !showConfirm,
+                                    ),
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          // Info Card
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.blue.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  color: Colors.blue.shade700,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Password must be at least 8 characters long',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.blue.shade700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 24),
+                          const Divider(),
+                          const SizedBox(height: 16),
+
+                          // Action Buttons
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              TextButton(
+                                onPressed:
+                                    isLoading
+                                        ? null
+                                        : () => Navigator.pop(context),
+                                child: const Text('Cancel'),
+                              ),
+                              const SizedBox(width: 12),
+                              FilledButton.icon(
+                                onPressed:
+                                    isLoading
+                                        ? null
+                                        : () async {
+                                          // Validate inputs locally first
+                                          if (currentPassController
+                                              .text
+                                              .isEmpty) {
+                                            AppNotifier.showError(
+                                              context,
+                                              "Please enter current password",
+                                            );
+                                            return;
+                                          }
+                                          if (newPassController.text.isEmpty) {
+                                            AppNotifier.showError(
+                                              context,
+                                              "Please enter new password",
+                                            );
+                                            return;
+                                          }
+                                          if (newPassController.text.length <
+                                              8) {
+                                            AppNotifier.showError(
+                                              context,
+                                              "Password must be at least 8 characters",
+                                            );
+                                            return;
+                                          }
+                                          if (newPassController.text !=
+                                              confirmPassController.text) {
+                                            AppNotifier.showError(
+                                              context,
+                                              "New passwords do not match",
+                                            );
+                                            return;
+                                          }
+
+                                          setState(() => isLoading = true);
+
+                                          try {
+                                            // Perform API Call to /change-password
+                                            final response = await http.post(
+                                              Uri.parse(
+                                                'http://localhost:5000/change-password',
+                                              ),
+                                              headers: {
+                                                'Content-Type':
+                                                    'application/json',
+                                              },
+                                              body: jsonEncode({
+                                                'username':
+                                                    _ktuIdController
+                                                        .text, // Using KTU ID as identifier
+                                                'current_password':
+                                                    currentPassController.text,
+                                                'new_password':
+                                                    newPassController.text,
+                                              }),
+                                            );
+
+                                            if (response.statusCode == 200) {
+                                              Navigator.pop(context);
+                                              AppNotifier.showSuccess(
+                                                context,
+                                                "Password changed successfully!",
+                                              );
+                                            } else {
+                                              setState(() => isLoading = false);
+                                              AppNotifier.showError(
+                                                context,
+                                                "Incorrect current password",
+                                              );
+                                            }
+                                          } catch (e) {
+                                            setState(() => isLoading = false);
+                                            AppNotifier.showError(
+                                              context,
+                                              "Failed to change password. Please try again.",
+                                            );
+                                          }
+                                        },
+                                icon:
+                                    isLoading
+                                        ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                        : const Icon(Icons.check),
+                                label: Text(
+                                  isLoading ? 'Updating...' : 'Update Password',
                                 ),
                               ),
                             ],
                           ),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    const Divider(),
-                    const SizedBox(height: 24),
-                    
-                    // Form Fields
-                    TextFormField(
-                      controller: currentPassController,
-                      obscureText: !showCurrent,
-                      decoration: InputDecoration(
-                        labelText: 'Current Password',
-                        hintText: 'Enter your current password',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(showCurrent ? Icons.visibility_off : Icons.visibility),
-                          onPressed: () => setState(() => showCurrent = !showCurrent),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    
-                    TextFormField(
-                      controller: newPassController,
-                      obscureText: !showNew,
-                      decoration: InputDecoration(
-                        labelText: 'New Password',
-                        hintText: 'Enter your new password',
-                        prefixIcon: const Icon(Icons.lock),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(showNew ? Icons.visibility_off : Icons.visibility),
-                          onPressed: () => setState(() => showNew = !showNew),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    
-                    TextFormField(
-                      controller: confirmPassController,
-                      obscureText: !showConfirm,
-                      decoration: InputDecoration(
-                        labelText: 'Confirm New Password',
-                        hintText: 'Re-enter your new password',
-                        prefixIcon: const Icon(Icons.lock_clock),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(showConfirm ? Icons.visibility_off : Icons.visibility),
-                          onPressed: () => setState(() => showConfirm = !showConfirm),
-                        ),
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Info Card
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.blue.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Password must be at least 8 characters long',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.blue.shade700,
-                              ),
-                            ),
-                          ),
                         ],
                       ),
                     ),
-                    
-                    const SizedBox(height: 24),
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    
-                    // Action Buttons
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: isLoading ? null : () => Navigator.pop(context),
-                          child: const Text('Cancel'),
-                        ),
-                        const SizedBox(width: 12),
-                        FilledButton.icon(
-                          onPressed: isLoading ? null : () async {
-                            // Validate inputs locally first
-                            if (currentPassController.text.isEmpty) {
-                              AppNotifier.showError(context, "Please enter current password");
-                              return;
-                            }
-                            if (newPassController.text.isEmpty) {
-                              AppNotifier.showError(context, "Please enter new password");
-                              return;
-                            }
-                            if (newPassController.text.length < 8) {
-                              AppNotifier.showError(context, "Password must be at least 8 characters");
-                              return;
-                            }
-                            if (newPassController.text != confirmPassController.text) {
-                              AppNotifier.showError(context, "New passwords do not match");
-                              return;
-                            }
-                            
-                            setState(() => isLoading = true);
-                            
-                            try {
-                              // Perform API Call to /change-password
-                              final response = await http.post(
-                                Uri.parse('http://localhost:5000/change-password'),
-                                headers: {'Content-Type': 'application/json'},
-                                body: jsonEncode({
-                                  'username': _ktuIdController.text, // Using KTU ID as identifier
-                                  'current_password': currentPassController.text,
-                                  'new_password': newPassController.text,
-                                }),
-                              );
-
-                              if (response.statusCode == 200) {
-                                Navigator.pop(context);
-                                AppNotifier.showSuccess(context, "Password changed successfully!");
-                              } else {
-                                setState(() => isLoading = false);
-                                AppNotifier.showError(context, "Incorrect current password");
-                              }
-                            } catch (e) {
-                              setState(() => isLoading = false);
-                              AppNotifier.showError(context, "Failed to change password. Please try again.");
-                            }
-                          },
-                          icon: isLoading 
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.check),
-                          label: Text(isLoading ? 'Updating...' : 'Update Password'),
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
-          ),
-        ),
-      );
-    },
-  );
-}
+        );
+      },
+    );
+  }
 
-  Widget _buildProfileField(IconData icon, String label, TextEditingController controller, {bool enabled = true}) {
+  Widget _buildProfileField(
+    IconData icon,
+    String label,
+    TextEditingController controller, {
+    bool enabled = true,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: TextFormField(
@@ -756,14 +1046,18 @@ void _showPasswordDialog() {
       ),
     );
   }
-  
 }
+
 class _ProfileInfoTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
 
-  const _ProfileInfoTile({required this.icon, required this.label, required this.value});
+  const _ProfileInfoTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -776,8 +1070,17 @@ class _ProfileInfoTile extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+              Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ],
           ),
         ],
@@ -829,7 +1132,10 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   void initState() {
     super.initState();
     _loadLiveData();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (_) => _loadLiveData());
+    _refreshTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) => _loadLiveData(),
+    );
   }
 
   @override
@@ -844,7 +1150,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
         // Desktop/local first for fastest startup.
         'http://localhost:5000',
         'http://127.0.0.1:5000',
-        'http://192.168.160.1:5000',
+        'http://localhost:5000',
         'http://10.0.2.2:5000',
       ];
 
@@ -866,31 +1172,31 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
 
           // Use a smaller timeout to keep UI responsive even when a host is down.
           final response = await http
-              .get(
-                roomUri,
-                headers: {'Content-Type': 'application/json'},
-              )
-              .timeout(const Duration(seconds: 4), onTimeout: () {
-                throw TimeoutException('Request timed out');
-              });
+              .get(roomUri, headers: {'Content-Type': 'application/json'})
+              .timeout(
+                const Duration(seconds: 4),
+                onTimeout: () {
+                  throw TimeoutException('Request timed out');
+                },
+              );
 
           http.Response finalResponse = response;
           if (response.statusCode != 200) {
             finalResponse = await http
-                .get(
-                  fallbackUri,
-                  headers: {'Content-Type': 'application/json'},
-                )
-                .timeout(const Duration(seconds: 4), onTimeout: () {
-              throw TimeoutException('Request timed out');
-            });
+                .get(fallbackUri, headers: {'Content-Type': 'application/json'})
+                .timeout(
+                  const Duration(seconds: 4),
+                  onTimeout: () {
+                    throw TimeoutException('Request timed out');
+                  },
+                );
           }
 
           if (finalResponse.statusCode != 200) continue;
 
           final data = jsonDecode(finalResponse.body);
           final readings = (data['data'] as List?) ?? [];
-          
+
           if (readings.isEmpty) {
             // No sensor data in database
             continue;
@@ -910,9 +1216,10 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
           // Process all readings for chart with anomaly filtering
           for (int i = 0; i < ordered.length; i++) {
             final r = ordered[i] as Map<String, dynamic>;
-            
+
             // Get power value from sensor reading
-            final powerW = (r['power'] as num?)?.toDouble() ??
+            final powerW =
+                (r['power'] as num?)?.toDouble() ??
                 (r['value'] as num?)?.toDouble() ??
                 0.0;
 
@@ -926,7 +1233,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             peakW = max(peakW, powerW);
             totalKwh += (powerW / 1000.0) * (1.0 / 60.0);
             spotsKw.add(FlSpot(spotsKw.length.toDouble(), powerW / 1000.0));
-            
+
             // Extract timestamp for this reading
             DateTime readingTime = DateTime.now();
             try {
@@ -942,7 +1249,8 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
 
           // Get latest reading (first item since API returns latest-first)
           final latest = readings.first as Map<String, dynamic>;
-          final latestW = (latest['power'] as num?)?.toDouble() ??
+          final latestW =
+              (latest['power'] as num?)?.toDouble() ??
               (latest['value'] as num?)?.toDouble() ??
               0.0;
 
@@ -959,17 +1267,20 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
           }
 
           // Check if data is fresh (within last 5 minutes)
-          final dataAge = latestTime != null 
-              ? DateTime.now().difference(latestTime).inMinutes 
-              : 999;
+          final dataAge =
+              latestTime != null
+                  ? DateTime.now().difference(latestTime).inMinutes
+                  : 999;
           final isDataFresh = dataAge < 5;
 
           // Extract all sensor fields from latest reading
           final latestEnergy = (latest['energy'] as num?)?.toDouble() ?? 0.0;
           final latestVoltage = (latest['voltage'] as num?)?.toDouble() ?? 0.0;
           final latestCurrent = (latest['current'] as num?)?.toDouble() ?? 0.0;
-          final latestFrequency = (latest['frequency'] as num?)?.toDouble() ?? 0.0;
-          final latestPowerFactor = (latest['power_factor'] as num?)?.toDouble() ?? 0.0;
+          final latestFrequency =
+              (latest['frequency'] as num?)?.toDouble() ?? 0.0;
+          final latestPowerFactor =
+              (latest['power_factor'] as num?)?.toDouble() ?? 0.0;
 
           // Determine status based on freshness and power level
           String statusMsg;
@@ -995,7 +1306,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             _liveDataAvailable = isDataFresh; // Only show as live if fresh
             _lastDataUpdate = latestTime ?? DateTime.now();
             _status = statusMsg;
-            
+
             // Update sensor readings
             _currentEnergyWh = latestEnergy;
             _currentVoltageV = latestVoltage;
@@ -1003,7 +1314,9 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             _currentFrequencyHz = latestFrequency;
             _currentPowerFactorPf = latestPowerFactor;
           });
-          print('✅ Latest sensor data loaded - Power: ${latestW.toStringAsFixed(1)}W, Energy: ${latestEnergy.toStringAsFixed(2)}Wh');
+          print(
+            '✅ Latest sensor data loaded - Power: ${latestW.toStringAsFixed(1)}W, Energy: ${latestEnergy.toStringAsFixed(2)}Wh',
+          );
           return;
         } catch (e) {
           print('Error with backend: $e');
@@ -1046,10 +1359,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              color.withOpacity(0.1),
-              color.withOpacity(0.05),
-            ],
+            colors: [color.withOpacity(0.1), color.withOpacity(0.05)],
           ),
         ),
         child: Column(
@@ -1140,9 +1450,15 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
-                            color: _liveDataAvailable ? Colors.greenAccent.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+                            color:
+                                _liveDataAvailable
+                                    ? Colors.greenAccent.withOpacity(0.3)
+                                    : Colors.red.withOpacity(0.3),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Row(
@@ -1151,13 +1467,21 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                               Icon(
                                 Icons.radio_button_on,
                                 size: 10,
-                                color: _liveDataAvailable ? Colors.greenAccent : Colors.red,
+                                color:
+                                    _liveDataAvailable
+                                        ? Colors.greenAccent
+                                        : Colors.red,
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                _liveDataAvailable ? '📡 Live' : '⚠️ No Live Data',
+                                _liveDataAvailable
+                                    ? '📡 Live'
+                                    : '⚠️ No Live Data',
                                 style: TextStyle(
-                                  color: _liveDataAvailable ? Colors.greenAccent : Colors.red,
+                                  color:
+                                      _liveDataAvailable
+                                          ? Colors.greenAccent
+                                          : Colors.red,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -1180,20 +1504,24 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                       _isLoading
                           ? 'Loading live data...'
                           : _liveDataAvailable
-                              ? _currentPowerW < 1.0
-                                  ? 'ESP32 Connected • No Load Detected (${_currentPowerW.toStringAsFixed(1)} W)'
-                                  : 'Live power: ${currentKw.toStringAsFixed(3)} kW (${_currentPowerW.toStringAsFixed(0)} W)'
-                              : _status.contains('Stale')
-                                  ? 'Last reading: ${_currentPowerW.toStringAsFixed(0)} W ($_status)'
-                                  : 'No live readings available',
-                      style: theme.textTheme.bodyLarge?.copyWith(color: Colors.white70),
+                          ? _currentPowerW < 1.0
+                              ? 'ESP32 Connected • No Load Detected (${_currentPowerW.toStringAsFixed(1)} W)'
+                              : 'Live power: ${currentKw.toStringAsFixed(3)} kW (${_currentPowerW.toStringAsFixed(0)} W)'
+                          : _status.contains('Stale')
+                          ? 'Last reading: ${_currentPowerW.toStringAsFixed(0)} W ($_status)'
+                          : 'No live readings available',
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        color: Colors.white70,
+                      ),
                     ),
                     if (_lastDataUpdate != null && _liveDataAvailable)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
                           'Updated: ${_lastDataUpdate!.hour}:${_lastDataUpdate!.minute.toString().padLeft(2, '0')}',
-                          style: theme.textTheme.labelSmall?.copyWith(color: Colors.white54),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: Colors.white54,
+                          ),
                         ),
                       ),
                   ],
@@ -1202,16 +1530,18 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             );
           },
         ),
-        
+
         const SizedBox(height: 30),
 
         // 2. Live Energy Meters for Room
         Text(
           'Live Usage Data',
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
         ),
         const SizedBox(height: 16),
-        
+
         // Real-time sensor readings in card format
         if (_liveDataAvailable)
           Row(
@@ -1249,7 +1579,11 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             ),
             child: Column(
               children: [
-                Icon(Icons.signal_wifi_off, size: 48, color: Colors.red.shade400),
+                Icon(
+                  Icons.signal_wifi_off,
+                  size: 48,
+                  color: Colors.red.shade400,
+                ),
                 const SizedBox(height: 12),
                 Text(
                   'No Live Sensor Data',
@@ -1273,57 +1607,88 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
               ],
             ),
           ),
-        
+
         const SizedBox(height: 20),
-        
+
         // Quick stats (use correct units)
         Card(
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           child: Container(
             padding: const EdgeInsets.all(16),
-            child: _liveDataAvailable
-                ? Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _statTile(theme, 'Peak Today', '${peakKw.toStringAsFixed(2)} kW', Icons.trending_up, EnergyColorScheme.warningOrange),
-                      _statTile(theme, 'Daily Total', '${_dailyTotalKwh.toStringAsFixed(2)} kWh', Icons.bar_chart, EnergyColorScheme.primaryBlue),
-                      _statTile(theme, 'Status', _status, Icons.info, _statusColor),
-                    ],
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Icon(
-                        _status.contains('Stale') ? Icons.warning_amber_rounded : Icons.wifi_off_rounded, 
-                        size: 48, 
-                        color: _status.contains('Stale') ? Colors.orange.shade400 : Colors.red.shade400
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _status.contains('Stale') ? 'Stale Data Warning' : 'No Live Readings Available',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: _status.contains('Stale') ? Colors.orange.shade400 : Colors.red.shade400,
+            child:
+                _liveDataAvailable
+                    ? Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _statTile(
+                          theme,
+                          'Peak Today',
+                          '${peakKw.toStringAsFixed(2)} kW',
+                          Icons.trending_up,
+                          EnergyColorScheme.warningOrange,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _status.contains('Stale') 
-                            ? 'Sensor data is outdated - $_status'
-                            : 'Sensor not connected or offline',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: Colors.grey.shade600,
+                        _statTile(
+                          theme,
+                          'Daily Total',
+                          '${_dailyTotalKwh.toStringAsFixed(2)} kWh',
+                          Icons.bar_chart,
+                          EnergyColorScheme.primaryBlue,
                         ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        onPressed: _loadLiveData,
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
+                        _statTile(
+                          theme,
+                          'Status',
+                          _status,
+                          Icons.info,
+                          _statusColor,
+                        ),
+                      ],
+                    )
+                    : Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Icon(
+                          _status.contains('Stale')
+                              ? Icons.warning_amber_rounded
+                              : Icons.wifi_off_rounded,
+                          size: 48,
+                          color:
+                              _status.contains('Stale')
+                                  ? Colors.orange.shade400
+                                  : Colors.red.shade400,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _status.contains('Stale')
+                              ? 'Stale Data Warning'
+                              : 'No Live Readings Available',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color:
+                                _status.contains('Stale')
+                                    ? Colors.orange.shade400
+                                    : Colors.red.shade400,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _status.contains('Stale')
+                              ? 'Sensor data is outdated - $_status'
+                              : 'Sensor not connected or offline',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: Colors.grey.shade600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 12),
+                        ElevatedButton(
+                          onPressed: _loadLiveData,
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
           ),
         ),
         const SizedBox(height: 40),
@@ -1343,7 +1708,11 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.signal_wifi_off, size: 48, color: Colors.grey.shade400),
+                  Icon(
+                    Icons.signal_wifi_off,
+                    size: 48,
+                    color: Colors.grey.shade400,
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     'No Live Power Data',
@@ -1376,14 +1745,31 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
     }
   }
 
-  Widget _statTile(ThemeData theme, String label, String value, IconData icon, Color color) {
+  Widget _statTile(
+    ThemeData theme,
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
     return Column(
       children: [
         Icon(icon, color: color, size: 24),
         const SizedBox(height: 8),
-        Text(label, style: theme.textTheme.labelSmall?.copyWith(color: Colors.grey.shade600)),
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: Colors.grey.shade600,
+          ),
+        ),
         const SizedBox(height: 4),
-        Text(value, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold, color: color)),
+        Text(
+          value,
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
       ],
     );
   }
@@ -1396,25 +1782,26 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
     // Calculate chart dimensions
     final screenWidth = MediaQuery.of(context).size.width;
     final chartWidth = screenWidth - 40;
-    
+
     // Convert kW back to Watts for Y-axis display
-    List<FlSpot> powerSeriesW = _livePowerSeriesKw.map((spot) {
-      return FlSpot(spot.x, spot.y * 1000);
-    }).toList();
+    List<FlSpot> powerSeriesW =
+        _livePowerSeriesKw.map((spot) {
+          return FlSpot(spot.x, spot.y * 1000);
+        }).toList();
 
     // Fixed Y-axis scale: 0W, 40W, 80W, 120W, 160W
     const double yMax = 160.0;
     const double yInterval = 40.0;
-    
+
     // Get timestamps for X-axis
     List<DateTime> timestamps = [];
     if (_liveDataTimestamps.isNotEmpty) {
       timestamps = _liveDataTimestamps;
     }
-    
+
     // Calculate X-axis interval (show every Nth timestamp to avoid crowding)
     final xInterval = max(1, (powerSeriesW.length ~/ 6));
-    
+
     return Container(
       width: chartWidth,
       height: 380,
@@ -1445,147 +1832,158 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
               ),
             ),
           ),
-          
+
           // Chart - Horizontally scrollable
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: SizedBox(
-                width: max(screenWidth - 48, (powerSeriesW.length * 20).toDouble()),
+                width: max(
+                  screenWidth - 48,
+                  (powerSeriesW.length * 20).toDouble(),
+                ),
                 child: LineChart(
-              LineChartData(
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: yInterval,
-                  getDrawingHorizontalLine: (value) {
-                    return FlLine(
-                      color: const Color(0xFF2A3142),
-                      strokeWidth: 1,
-                      dashArray: [5, 5],
-                    );
-                  },
-                ),
-                titlesData: FlTitlesData(
-                  show: true,
-                  rightTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                  topTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 38,
-                      interval: max(1, (powerSeriesW.length ~/ 8)).toDouble(),
-                      getTitlesWidget: (value, meta) {
-                        final index = value.toInt();
-                        if (index < 0 || index >= timestamps.length) {
-                          return const SizedBox.shrink();
-                        }
-                        final time = timestamps[index];
-                        final formatted = DateFormat('h:mm:ss a').format(time);
-                        return Transform.translate(
-                          offset: const Offset(0, 8),
-                          child: Text(
-                            formatted,
-                            style: const TextStyle(
-                              color: Color(0xFF6B7280),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 45,
-                      interval: yInterval,
-                      getTitlesWidget: (value, meta) {
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: Text(
-                            '${value.toStringAsFixed(0)}W',
-                            style: const TextStyle(
-                              color: Color(0xFF6B7280),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w400,
-                            ),
-                            textAlign: TextAlign.right,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-                borderData: FlBorderData(
-                  show: false,
-                ),
-                minX: 0,
-                maxX: max(1, (powerSeriesW.length - 1).toDouble()),
-                minY: 0,
-                maxY: yMax,
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: powerSeriesW,
-                    isCurved: true,
-                    curveSmoothness: 0.35,
-                    barWidth: 2.5,
-                    isStrokeCapRound: true,
-                    dotData: FlDotData(
-                      show: false,
-                    ),
-                    belowBarData: BarAreaData(
+                  LineChartData(
+                    gridData: FlGridData(
                       show: true,
-                      gradient: LinearGradient(
-                        colors: [
-                          const Color(0xFF10B981).withOpacity(0.4),
-                          const Color(0xFF10B981).withOpacity(0.1),
-                          const Color(0xFF10B981).withOpacity(0.0),
-                        ],
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
+                      drawVerticalLine: false,
+                      horizontalInterval: yInterval,
+                      getDrawingHorizontalLine: (value) {
+                        return FlLine(
+                          color: const Color(0xFF2A3142),
+                          strokeWidth: 1,
+                          dashArray: [5, 5],
+                        );
+                      },
+                    ),
+                    titlesData: FlTitlesData(
+                      show: true,
+                      rightTitles: AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      topTitles: AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 38,
+                          interval:
+                              max(1, (powerSeriesW.length ~/ 8)).toDouble(),
+                          getTitlesWidget: (value, meta) {
+                            final index = value.toInt();
+                            if (index < 0 || index >= timestamps.length) {
+                              return const SizedBox.shrink();
+                            }
+                            final time = timestamps[index];
+                            final formatted = DateFormat(
+                              'h:mm:ss a',
+                            ).format(time);
+                            return Transform.translate(
+                              offset: const Offset(0, 8),
+                              child: Text(
+                                formatted,
+                                style: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      leftTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 45,
+                          interval: yInterval,
+                          getTitlesWidget: (value, meta) {
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: Text(
+                                '${value.toStringAsFixed(0)}W',
+                                style: const TextStyle(
+                                  color: Color(0xFF6B7280),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                                textAlign: TextAlign.right,
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
-                    color: const Color(0xFF10B981),
-                  ),
-                ],
-                lineTouchData: LineTouchData(
-                  enabled: true,
-                  touchTooltipData: LineTouchTooltipData(
-                    getTooltipColor: (touchedSpot) => const Color(0xFF1F2937),
-                    tooltipRoundedRadius: 8,
-                    tooltipPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    tooltipBorder: const BorderSide(color: Color(0xFF10B981), width: 1.5),
-                    getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
-                      return touchedBarSpots.map((barSpot) {
-                        final index = barSpot.x.toInt();
-                        final time = index >= 0 && index < timestamps.length
-                            ? DateFormat('h:mm:ss a').format(timestamps[index])
-                            : '';
-                        return LineTooltipItem(
-                          '${barSpot.y.toStringAsFixed(1)} W\n$time',
-                          const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
+                    borderData: FlBorderData(show: false),
+                    minX: 0,
+                    maxX: max(1, (powerSeriesW.length - 1).toDouble()),
+                    minY: 0,
+                    maxY: yMax,
+                    lineBarsData: [
+                      LineChartBarData(
+                        spots: powerSeriesW,
+                        isCurved: true,
+                        curveSmoothness: 0.35,
+                        barWidth: 2.5,
+                        isStrokeCapRound: true,
+                        dotData: FlDotData(show: false),
+                        belowBarData: BarAreaData(
+                          show: true,
+                          gradient: LinearGradient(
+                            colors: [
+                              const Color(0xFF10B981).withOpacity(0.4),
+                              const Color(0xFF10B981).withOpacity(0.1),
+                              const Color(0xFF10B981).withOpacity(0.0),
+                            ],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
                           ),
-                        );
-                      }).toList();
-                    },
-                  ),
-                  handleBuiltInTouches: true,
-                ),
-              ), // end LineChartData
-            ), // end LineChart
-          ), // end SizedBox
-        ), // end SingleChildScrollView
-      ), // end Expanded
-          
+                        ),
+                        color: const Color(0xFF10B981),
+                      ),
+                    ],
+                    lineTouchData: LineTouchData(
+                      enabled: true,
+                      touchTooltipData: LineTouchTooltipData(
+                        getTooltipColor:
+                            (touchedSpot) => const Color(0xFF1F2937),
+                        tooltipRoundedRadius: 8,
+                        tooltipPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        tooltipBorder: const BorderSide(
+                          color: Color(0xFF10B981),
+                          width: 1.5,
+                        ),
+                        getTooltipItems: (List<LineBarSpot> touchedBarSpots) {
+                          return touchedBarSpots.map((barSpot) {
+                            final index = barSpot.x.toInt();
+                            final time =
+                                index >= 0 && index < timestamps.length
+                                    ? DateFormat(
+                                      'h:mm:ss a',
+                                    ).format(timestamps[index])
+                                    : '';
+                            return LineTooltipItem(
+                              '${barSpot.y.toStringAsFixed(1)} W\n$time',
+                              const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            );
+                          }).toList();
+                        },
+                      ),
+                      handleBuiltInTouches: true,
+                    ),
+                  ), // end LineChartData
+                ), // end LineChart
+              ), // end SizedBox
+            ), // end SingleChildScrollView
+          ), // end Expanded
           // Legend/Info with current values
           Padding(
             padding: const EdgeInsets.only(top: 16),
@@ -1626,12 +2024,12 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   /// Calculate appropriate Y-axis interval for clean scale (in Watts) with equal spacing
   double _calculateWattAxisInterval(double maxY) {
     // Determine the order of magnitude
-    if (maxY <= 500) return 100;      // 100W intervals
-    if (maxY <= 1000) return 200;     // 200W intervals
-    if (maxY <= 2000) return 400;     // 400W intervals
-    if (maxY <= 5000) return 1000;    // 1000W (1kW) intervals
-    if (maxY <= 10000) return 2000;   // 2000W (2kW) intervals
-    return 5000;                      // 5000W (5kW) intervals
+    if (maxY <= 500) return 100; // 100W intervals
+    if (maxY <= 1000) return 200; // 200W intervals
+    if (maxY <= 2000) return 400; // 400W intervals
+    if (maxY <= 5000) return 1000; // 1000W (1kW) intervals
+    if (maxY <= 10000) return 2000; // 2000W (2kW) intervals
+    return 5000; // 5000W (5kW) intervals
   }
 
   Widget _buildConsumptionChart() {
@@ -1647,54 +2045,397 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   }
 }
 
-
 // --- Alerts Section (CR Receives Alerts) ---
 
-class _AlertsSection extends StatelessWidget {
-  final ColorScheme scheme;
-  const _AlertsSection({required this.scheme});
+// ─────────────────────────────────────────────────────────────────────────────
+// Live CR Alerts Section — mirrors coordinator_dashboard alert functionality
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CRAlertsSection extends StatefulWidget {
+  final List<Map<String, dynamic>> anomalies;
+  final String? department;
+  final List<String> baseUrls;
+  final Future<void> Function() onRefresh;
+
+  const _CRAlertsSection({
+    required this.anomalies,
+    required this.baseUrls,
+    required this.onRefresh,
+    this.department,
+  });
+
+  @override
+  State<_CRAlertsSection> createState() => _CRAlertsSectionState();
+}
+
+class _CRAlertsSectionState extends State<_CRAlertsSection> {
+  late List<Map<String, dynamic>> _localAnomalies;
+  final Set<dynamic> _resolvingIds = {};
+  Timer? _selfRefreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _localAnomalies = List<Map<String, dynamic>>.from(widget.anomalies);
+    // Independent 8-second self-refresh keeps list current even without polling
+    _selfRefreshTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      _selfFetch();
+    });
+  }
+
+  @override
+  void dispose() {
+    _selfRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(_CRAlertsSection old) {
+    super.didUpdateWidget(old);
+    if (old.anomalies != widget.anomalies) {
+      setState(() {
+        _localAnomalies = widget.anomalies
+            .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+            .toList();
+      });
+    }
+  }
+
+  Future<void> _selfFetch() async {
+    for (final base in widget.baseUrls) {
+      try {
+        var url = '$base/anomalies';
+        if (widget.department != null && widget.department!.isNotEmpty) {
+          url += '?department=${Uri.encodeComponent(widget.department!)}';
+        }
+        final resp = await http
+            .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 6));
+        if (resp.statusCode == 200) {
+          final body = jsonDecode(resp.body);
+          final raw = body is List ? body : (body['anomalies'] as List? ?? []);
+          final fetched = List<Map<String, dynamic>>.from(
+              raw.whereType<Map<String, dynamic>>());
+          if (!mounted) return;
+          setState(() {
+            _localAnomalies = fetched
+                .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+                .toList();
+          });
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
+  Future<void> _resolveAlert(int index) async {
+    final alert = _localAnomalies[index];
+    final alertId = alert['id'] ?? alert['_id'];
+
+    // No ID — just remove locally
+    if (alertId == null) {
+      setState(() => _localAnomalies.removeAt(index));
+      return;
+    }
+
+    setState(() => _resolvingIds.add(alertId));
+    bool success = false;
+
+    for (final base in widget.baseUrls) {
+      try {
+        // Try PUT resolve first
+        final put = await http
+            .put(
+              Uri.parse('$base/anomalies/$alertId/resolve'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'status': 'resolved'}),
+            )
+            .timeout(const Duration(seconds: 8));
+        if (put.statusCode == 200 || put.statusCode == 204) {
+          success = true;
+          break;
+        }
+        // Fallback to DELETE
+        final del = await http
+            .delete(Uri.parse('$base/anomalies/$alertId'),
+                headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 8));
+        if (del.statusCode == 200 ||
+            del.statusCode == 204 ||
+            del.statusCode == 404) {
+          success = true;
+          break;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (!mounted) return;
+
+    if (success) {
+      setState(() {
+        _resolvingIds.remove(alertId);
+        _localAnomalies
+            .removeWhere((a) => (a['id'] ?? a['_id']) == alertId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Row(children: [
+          Icon(Icons.check_circle, color: Colors.white, size: 18),
+          SizedBox(width: 8),
+          Text('Alert resolved successfully.'),
+        ]),
+        backgroundColor: Colors.green.shade700,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ));
+    } else {
+      setState(() => _resolvingIds.remove(alertId));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Row(children: [
+          Icon(Icons.error_outline, color: Colors.white, size: 18),
+          SizedBox(width: 8),
+          Expanded(child: Text('Could not reach server. Try again.')),
+        ]),
+        backgroundColor: Colors.red.shade700,
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Retry',
+          textColor: Colors.white,
+          onPressed: () {
+            final retryIndex = _localAnomalies
+                .indexWhere((a) => (a['id'] ?? a['_id']) == alertId);
+            if (retryIndex >= 0) _resolveAlert(retryIndex);
+          },
+        ),
+      ));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          'Recent Alerts (CS-201)',
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Notifications about unusual energy usage in your assigned classroom.',
-          style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
-        ),
-        const SizedBox(height: 24),
-        // Scoped alerts to CR's location (CS-201)
-        _buildAlertCard(context, 'High Usage Alert', 'CS-201: AC running after 6 PM. Usage: 5.2 kW.', Icons.power_outlined, Colors.red.shade400, '2h ago'),
-        _buildAlertCard(context, 'Anomaly Detected', 'CS-201: Projector left on overnight (Occupancy Mismatch).', Icons.lightbulb_outline, Colors.amber.shade600, '1d ago'),
-        _buildAlertCard(context, 'Sensor Offline', 'CS-201 PIR Sensor is not responding.', Icons.sensors_off_outlined, Colors.grey.shade500, '3d ago'),
-      ],
-    );
-  }
+    final dept = widget.department ?? 'Department';
 
-  Widget _buildAlertCard(BuildContext context, String title, String subtitle, IconData icon, Color color, String time) {
-    final theme = Theme.of(context);
-    return Card(
-      elevation: 2,
-      shadowColor: Colors.transparent,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: ListTile(
-        leading: Icon(icon, color: color, size: 32),
-        title: Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: color)),
-        subtitle: Text(subtitle),
-        trailing: Text(time, style: theme.textTheme.bodySmall),
-        onTap: () {
-          // Placeholder for alert details
-        },
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+        children: [
+          // ── Header ──────────────────────────────────────────────────────
+          Text(
+            '$dept Anomaly Alerts',
+            style: theme.textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Live anomaly detections from department sensors',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 20),
+
+          // ── Empty state ──────────────────────────────────────────────────
+          if (_localAnomalies.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 60),
+              child: Center(
+                child: Column(children: [
+                  Icon(Icons.check_circle_outline,
+                      size: 56,
+                      color: Colors.green.withOpacity(0.55)),
+                  const SizedBox(height: 14),
+                  Text('No anomaly alerts detected',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  Text('All sensors are operating normally',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: Colors.grey.shade500)),
+                ]),
+              ),
+            )
+
+          // ── Alert cards ──────────────────────────────────────────────────
+          else
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _localAnomalies.length,
+              itemBuilder: (context, i) {
+                final alert = _localAnomalies[i];
+                final alertId = alert['id'] ?? alert['_id'];
+                final isResolving = _resolvingIds.contains(alertId);
+
+                return Card(
+                  elevation: 2,
+                  margin:
+                      const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 10, horizontal: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        // ── Icon ──────────────────────────────────────────
+                        Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 10),
+                          child: CircleAvatar(
+                            backgroundColor:
+                                Colors.red.withOpacity(0.12),
+                            child: const Icon(
+                                Icons.warning_amber_rounded,
+                                color: Colors.red),
+                          ),
+                        ),
+
+                        // ── Text info ─────────────────────────────────────
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Anomaly in ${alert['device_id']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                              Text(
+                                'Score: ${alert['score']}',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // ── Resolve button ────────────────────────────────
+                        Padding(
+                          padding: const EdgeInsets.only(left: 6, right: 8),
+                          child: ElevatedButton.icon(
+                            onPressed:
+                                isResolving ? null : () => _resolveAlert(i),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: isResolving
+                                  ? Colors.green.withOpacity(0.5)
+                                  : Colors.green,
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor:
+                                  Colors.green.withOpacity(0.5),
+                              disabledForegroundColor: Colors.white70,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 14, vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                              elevation: 0,
+                            ),
+                            icon: isResolving
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor:
+                                          AlwaysStoppedAnimation<Color>(
+                                              Colors.white),
+                                    ),
+                                  )
+                                : const Icon(Icons.check, size: 16),
+                            label: Text(
+                              isResolving ? 'Resolving...' : 'Resolve',
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+        ],
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Red badge overlay for the Alerts nav item
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CRBadgeIcon extends StatelessWidget {
+  final IconData icon;
+  final int count;
+  const _CRBadgeIcon({required this.icon, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(icon),
+        if (count > 0)
+          Positioned(
+            top: -6,
+            right: -8,
+            child: AnimatedScale(
+              scale: count > 0 ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.elasticOut,
+              child: Container(
+                constraints:
+                    const BoxConstraints(minWidth: 18, minHeight: 18),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: Colors.white, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.red.withOpacity(0.45),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  count > 99 ? '99+' : count.toString(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    height: 1.2,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// ── Old static _AlertsSection (replaced by _CRAlertsSection above) ────────────
+class _AlertsSection extends StatelessWidget {
+  final ColorScheme scheme;
+  const _AlertsSection({required this.scheme});
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
 
 // --- Reports Section (CR Views Consumption Analysis/Graphs) ---
@@ -1743,17 +2484,22 @@ class _ReportsSection extends StatelessWidget {
         Card(
           elevation: 4,
           margin: const EdgeInsets.only(bottom: 16),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           child: ListTile(
             leading: Icon(Icons.compare_arrows, color: Colors.indigo.shade600),
             title: const Text('Compare Prediction vs Live (5 min)'),
-            subtitle: const Text('Check how accurate the 5-minute forecast is for CS-201.'),
+            subtitle: const Text(
+              'Check how accurate the 5-minute forecast is for CS-201.',
+            ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => const PredictionComparisonPage(roomName: 'CS-201'),
+                  builder:
+                      (_) => const PredictionComparisonPage(roomName: 'CS-201'),
                 ),
               );
             },
@@ -1764,12 +2510,16 @@ class _ReportsSection extends StatelessWidget {
 
         Text(
           'Consumption Analysis',
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
           'View detailed consumption graphs and anomaly reports for CS-201.',
-          style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: Colors.grey.shade600,
+          ),
         ),
         const SizedBox(height: 24),
 
@@ -1822,11 +2572,12 @@ class _ReportsSection extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => AnalysisGraphPage(
-                title: '$type Consumption Graph',
-                type: type,
-                color: color,
-              ),
+              builder:
+                  (context) => AnalysisGraphPage(
+                    title: '$type Consumption Graph',
+                    type: type,
+                    color: color,
+                  ),
             ),
           );
         },
@@ -1850,17 +2601,25 @@ class _ReportsSection extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.show_chart_outlined, size: 24, color: Colors.grey),
+              const Icon(
+                Icons.show_chart_outlined,
+                size: 24,
+                color: Colors.grey,
+              ),
             ],
           ),
         ),
@@ -1908,17 +2667,25 @@ class _ReportsSection extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.visibility_outlined, size: 24, color: Colors.grey),
+              const Icon(
+                Icons.visibility_outlined,
+                size: 24,
+                color: Colors.grey,
+              ),
             ],
           ),
         ),
@@ -1969,13 +2736,18 @@ class _ReportsSection extends StatelessWidget {
                         Expanded(
                           child: Text(
                             title,
-                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         const SizedBox(width: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.green.shade100,
                             borderRadius: BorderRadius.circular(4),
@@ -1994,7 +2766,9 @@ class _ReportsSection extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       subtitle,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
                     ),
                   ],
                 ),
@@ -2019,9 +2793,15 @@ class _EnergyUsageChart extends StatelessWidget {
       LineChartData(
         gridData: FlGridData(show: false),
         titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -2030,7 +2810,10 @@ class _EnergyUsageChart extends StatelessWidget {
               getTitlesWidget: (value, meta) {
                 return Padding(
                   padding: const EdgeInsets.only(top: 8.0),
-                  child: Text('${value.toInt()}h', style: theme.textTheme.bodySmall),
+                  child: Text(
+                    '${value.toInt()}h',
+                    style: theme.textTheme.bodySmall,
+                  ),
                 );
               },
             ),
@@ -2040,9 +2823,18 @@ class _EnergyUsageChart extends StatelessWidget {
         lineBarsData: [
           LineChartBarData(
             spots: const [
-              FlSpot(0, 1.5), FlSpot(2, 1.8), FlSpot(4, 1.4), FlSpot(6, 2.5),
-              FlSpot(8, 2.2), FlSpot(10, 3.5), FlSpot(12, 3.8), FlSpot(14, 3.0),
-              FlSpot(16, 2.5), FlSpot(18, 4.1), FlSpot(20, 3.2), FlSpot(22, 2.8),
+              FlSpot(0, 1.5),
+              FlSpot(2, 1.8),
+              FlSpot(4, 1.4),
+              FlSpot(6, 2.5),
+              FlSpot(8, 2.2),
+              FlSpot(10, 3.5),
+              FlSpot(12, 3.8),
+              FlSpot(14, 3.0),
+              FlSpot(16, 2.5),
+              FlSpot(18, 4.1),
+              FlSpot(20, 3.2),
+              FlSpot(22, 2.8),
               FlSpot(23.9, 2.7),
             ],
             isCurved: true,
@@ -2072,7 +2864,6 @@ class _EnergyUsageChart extends StatelessWidget {
   }
 }
 
-
 class _TipCard extends StatelessWidget {
   final String tip;
   final IconData icon;
@@ -2087,7 +2878,11 @@ class _TipCard extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         child: Row(
           children: [
-            Icon(icon, color: Theme.of(context).colorScheme.secondary, size: 28),
+            Icon(
+              icon,
+              color: Theme.of(context).colorScheme.secondary,
+              size: 28,
+            ),
             const SizedBox(width: 16),
             Expanded(child: Text(tip)),
           ],

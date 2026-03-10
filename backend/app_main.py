@@ -5,12 +5,29 @@ import joblib
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 from sqlalchemy import text, create_engine
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv(override=False)
+
+def _load_sibling_module(name: str):
+    """
+    Load a sibling module by filename, working in both contexts:
+      - Package:  backend.app_main  (uvicorn backend.app_main:app)
+      - Script:   python app_main.py
+    Always does a direct file import so __init__.py is never involved.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    filepath = os.path.join(here, name + ".py")
+    spec = importlib.util.spec_from_file_location(name, filepath)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod          # register so relative imports inside the module work
+    spec.loader.exec_module(mod)
+    return mod
+
 
 # --- DATABASE SETUP ---
 def _load_cfg():
@@ -51,6 +68,15 @@ except Exception as e:
     print(f"⚠️ Preprocessing skipped: {e}")
 
 app = FastAPI(title="ENERGIA Backend")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # --- 4. MOUNT REMAINING APPS ---
@@ -106,16 +132,13 @@ monthly_report_api_module = _load_monthly_report_api()
 app.include_router(monthly_report_api_module.app.router, prefix="/reports", tags=["Reports"])
 
 # Import notify_api module
-def _load_notify_api():
-    if __package__:
-        from . import notify_api
-        return notify_api
-    else:
-        sys.path.append(os.path.dirname(__file__))
-        return importlib.import_module("notify_api")
-
-notify_api_module = _load_notify_api()
-app.include_router(notify_api_module.app.router, prefix="/notify", tags=["Notifications"])
+try:
+    notify_api_module = _load_sibling_module("notify_api")
+    app.include_router(notify_api_module.app.router, prefix="/notify", tags=["Notifications"])
+    print("[app_main] notify_api mounted at /notify ✅")
+except Exception as _e:
+    notify_api_module = None
+    print(f"[app_main] notify_api not available: {_e}")
 # Import sergeant_api module
 def _load_sergeant_api():
     if __package__:
@@ -143,16 +166,13 @@ app.include_router(relay_control_api_module.app.router, prefix="/relay", tags=["
 app.include_router(relay_control_api_module.app.router, prefix="/api/relay", tags=["ESP32 Relay Control"])
 
 # Import anomaly_alert_service module
-def _load_anomaly_alert_service():
-    if __package__:
-        from . import anomaly_alert_service
-        return anomaly_alert_service
-    else:
-        sys.path.append(os.path.dirname(__file__))
-        return importlib.import_module("anomaly_alert_service")
-
-anomaly_alert_service_module = _load_anomaly_alert_service()
-app.include_router(anomaly_alert_service_module.app.router, prefix="/anomaly-alerts", tags=["Anomaly Alerts"])
+try:
+    anomaly_alert_service_module = _load_sibling_module("anomaly_alert_service")
+    app.include_router(anomaly_alert_service_module.app.router, prefix="/anomaly-alerts", tags=["Anomaly Alerts"])
+    print("[app_main] anomaly_alert_service mounted at /anomaly-alerts ✅")
+except Exception as _e:
+    anomaly_alert_service_module = None
+    print(f"[app_main] anomaly_alert_service not available: {_e}")
 
 
 # Import mixed ensemble model service first; fall back to Prophet if unavailable.

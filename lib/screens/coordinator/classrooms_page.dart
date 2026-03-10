@@ -37,5 +37,4 @@ class ClassroomsPage extends StatelessWidget {
     );
   }
 }
-  }
-}
+

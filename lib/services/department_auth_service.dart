@@ -6,7 +6,8 @@ import 'package:energia/models/user_role_model.dart';
 
 /// Authentication service with department-based role support
 class DepartmentAuthService {
-  static final DepartmentAuthService _instance = DepartmentAuthService._internal();
+  static final DepartmentAuthService _instance =
+      DepartmentAuthService._internal();
 
   factory DepartmentAuthService() {
     return _instance;
@@ -16,13 +17,13 @@ class DepartmentAuthService {
 
   // Try multiple base URLs in order of preference
   static const List<String> _baseUrls = [
-    'http://192.168.160.1:5000',
-    'http://10.93.17.69:5000',
-    'http://10.0.2.2:5000', // Android emulator
     'http://localhost:5000',
     'http://127.0.0.1:5000',
+    'http://10.0.2.2:5000', // Android emulator
+    'http://192.168.160.1:5000',
+    'http://10.93.17.69:5000',
   ];
-  
+
   static const String _userKey = 'current_user';
   static const String _tokenKey = 'auth_token';
   static const String _deptKey = 'user_department';
@@ -54,18 +55,24 @@ class DepartmentAuthService {
     // Try each base URL until one works
     for (final baseUrl in _baseUrls) {
       try {
-        final response = await http.post(
-          Uri.parse('$baseUrl/coordinator/login'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'username': coordinatorId,
-            'coordinator_id': coordinatorId,
-            'password': password,
-            if (department != null && department.isNotEmpty) 'department': department,
-          }),
-        ).timeout(const Duration(seconds: 15), onTimeout: () {
-          throw TimeoutException('Login request timed out');
-        });
+        final response = await http
+            .post(
+              Uri.parse('$baseUrl/coordinator/login'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'username': coordinatorId,
+                'coordinator_id': coordinatorId,
+                'password': password,
+                if (department != null && department.isNotEmpty)
+                  'department': department,
+              }),
+            )
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () {
+                throw TimeoutException('Login request timed out');
+              },
+            );
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -76,7 +83,8 @@ class DepartmentAuthService {
             name: data['name'],
             role: UserRole.technicalCoordinator,
             department: _parseDepartment(data['department']),
-            createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
+            createdAt:
+                DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
             lastLogin: DateTime.now(),
             coordinatorId: data['coordinator_id'],
           );
@@ -95,8 +103,10 @@ class DepartmentAuthService {
         continue;
       }
     }
-    
-    return LoginResult.error('Cannot connect to server. Please check if backend is running.');
+
+    return LoginResult.error(
+      'Cannot connect to server. Please check if backend is running.',
+    );
   }
 
   /// Login class representative with department
@@ -107,16 +117,18 @@ class DepartmentAuthService {
     // Try each base URL until one works
     for (final baseUrl in _baseUrls) {
       try {
-        final response = await http.post(
-          Uri.parse('$baseUrl/student/login'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'username': username,
-            'password': password,
-          }),
-        ).timeout(const Duration(seconds: 15), onTimeout: () {
-          throw TimeoutException('Login request timed out');
-        });
+        final response = await http
+            .post(
+              Uri.parse('$baseUrl/student/login'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'username': username, 'password': password}),
+            )
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () {
+                throw TimeoutException('Login request timed out');
+              },
+            );
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -127,7 +139,8 @@ class DepartmentAuthService {
             name: data['name'],
             role: UserRole.classRepresentative,
             department: _parseDepartment(data['department']),
-            createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
+            createdAt:
+                DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
             lastLogin: DateTime.now(),
             ktuId: data['ktu_id'],
             classYear: data['year'],
@@ -148,8 +161,10 @@ class DepartmentAuthService {
         continue;
       }
     }
-    
-    return LoginResult.error('Cannot connect to server. Please check if backend is running.');
+
+    return LoginResult.error(
+      'Cannot connect to server. Please check if backend is running.',
+    );
   }
 
   /// Login admin with department
@@ -160,16 +175,18 @@ class DepartmentAuthService {
     // Try each base URL until one works
     for (final baseUrl in _baseUrls) {
       try {
-        final response = await http.post(
-          Uri.parse('$baseUrl/admin/login'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'username': username,
-            'password': password,
-          }),
-        ).timeout(const Duration(seconds: 15), onTimeout: () {
-          throw TimeoutException('Login request timed out');
-        });
+        final response = await http
+            .post(
+              Uri.parse('$baseUrl/admin/login'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'username': username, 'password': password}),
+            )
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () {
+                throw TimeoutException('Login request timed out');
+              },
+            );
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -182,7 +199,8 @@ class DepartmentAuthService {
             name: data['name'],
             role: isSuperAdmin ? UserRole.superAdmin : UserRole.admin,
             department: _parseDepartment(data['department']),
-            createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
+            createdAt:
+                DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
             lastLogin: DateTime.now(),
           );
 
@@ -200,8 +218,10 @@ class DepartmentAuthService {
         continue;
       }
     }
-    
-    return LoginResult.error('Cannot connect to server. Please check if backend is running.');
+
+    return LoginResult.error(
+      'Cannot connect to server. Please check if backend is running.',
+    );
   }
 
   /// Restore session if user was previously logged in
@@ -238,15 +258,20 @@ class DepartmentAuthService {
     // Try each base URL until one works
     for (final baseUrl in _baseUrls) {
       try {
-        final response = await http.get(
-          Uri.parse('$baseUrl/user/profile'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-        ).timeout(const Duration(seconds: 15), onTimeout: () {
-          throw TimeoutException('Request timed out');
-        });
+        final response = await http
+            .get(
+              Uri.parse('$baseUrl/user/profile'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(
+              const Duration(seconds: 15),
+              onTimeout: () {
+                throw TimeoutException('Request timed out');
+              },
+            );
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -288,7 +313,7 @@ class DepartmentAuthService {
   Future<void> _saveUser(EnhancedUser user, String token) async {
     // Ensure prefs is initialized
     _prefs = await SharedPreferences.getInstance();
-    
+
     await _prefs.setString(_userKey, jsonEncode(user.toJson()));
     await _prefs.setString(_tokenKey, token);
     await _prefs.setString(_deptKey, user.department.name);
@@ -308,12 +333,27 @@ class DepartmentAuthService {
   List<String> _getAllRooms() {
     // This would be fetched from your backend
     return [
-      'CSL-101', 'CSL-102', 'CSL-103', 'CS-Lab-1', 'CS-Lab-2', 'Server-Room',
-      'ELE-101', 'ELE-102', 'ELE-Lab-1', 'Power-Room',
-      'ECE-101', 'ECE-102', 'ECE-Lab-1',
-      'MECH-101', 'MECH-102', 'MECH-Lab-1', 'Workshop',
-      'ITT-101', 'ITT-102',
-      'CIVIL-101', 'CIVIL-102',
+      'CSL-101',
+      'CSL-102',
+      'CSL-103',
+      'CS-Lab-1',
+      'CS-Lab-2',
+      'Server-Room',
+      'ELE-101',
+      'ELE-102',
+      'ELE-Lab-1',
+      'Power-Room',
+      'ECE-101',
+      'ECE-102',
+      'ECE-Lab-1',
+      'MECH-101',
+      'MECH-102',
+      'MECH-Lab-1',
+      'Workshop',
+      'ITT-101',
+      'ITT-102',
+      'CIVIL-101',
+      'CIVIL-102',
     ];
   }
 }
@@ -324,23 +364,13 @@ class LoginResult {
   final String? message;
   final EnhancedUser? user;
 
-  LoginResult({
-    required this.success,
-    this.message,
-    this.user,
-  });
+  LoginResult({required this.success, this.message, this.user});
 
   factory LoginResult.success(EnhancedUser user) {
-    return LoginResult(
-      success: true,
-      user: user,
-    );
+    return LoginResult(success: true, user: user);
   }
 
   factory LoginResult.error(String message) {
-    return LoginResult(
-      success: false,
-      message: message,
-    );
+    return LoginResult(success: false, message: message);
   }
 }

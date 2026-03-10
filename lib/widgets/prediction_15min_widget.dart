@@ -34,7 +34,10 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
     super.initState();
     _fetchPrediction();
     // Auto-refresh every 2 minutes
-    _refreshTimer = Timer.periodic(const Duration(minutes: 2), (_) => _fetchPrediction());
+    _refreshTimer = Timer.periodic(
+      const Duration(minutes: 2),
+      (_) => _fetchPrediction(),
+    );
   }
 
   @override
@@ -53,24 +56,28 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
       final List<String> apiCandidates = [
         'http://localhost:5000',
         'http://127.0.0.1:5000',
-        'http://192.168.160.1:5000',
+        'http://localhost:5000',
         'http://10.0.2.2:5000',
       ];
 
       for (final baseUrl in apiCandidates) {
         try {
-          final uri = Uri.parse('$baseUrl/model/predict_15min_detailed').replace(
+          final uri = Uri.parse(
+            '$baseUrl/model/predict_15min_detailed',
+          ).replace(
             queryParameters: {
               if (widget.roomName != null) 'room_name': widget.roomName!,
             },
           );
 
-          final response = await http.get(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-          ).timeout(const Duration(seconds: 15), onTimeout: () {
-            throw TimeoutException('Prediction request timed out');
-          });
+          final response = await http
+              .get(uri, headers: {'Content-Type': 'application/json'})
+              .timeout(
+                const Duration(seconds: 15),
+                onTimeout: () {
+                  throw TimeoutException('Prediction request timed out');
+                },
+              );
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
@@ -150,7 +157,10 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
       return const SizedBox.shrink();
     }
 
-    final predictions = (_predictionData!['predictions'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final predictions =
+        (_predictionData!['predictions'] as List?)
+            ?.cast<Map<String, dynamic>>() ??
+        [];
     final summary = _predictionData!['summary'] as Map<String, dynamic>? ?? {};
     final latestReading = _predictionData!['latest_reading'] as num? ?? 0;
     final hasLiveData = _predictionData!['has_live_data'] == true;
@@ -188,7 +198,10 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
                   ),
                   if (hasLiveData)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.green.shade100,
                         borderRadius: BorderRadius.circular(20),
@@ -196,7 +209,11 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.circle, size: 8, color: Colors.green),
+                          const Icon(
+                            Icons.circle,
+                            size: 8,
+                            color: Colors.green,
+                          ),
                           const SizedBox(width: 6),
                           Text(
                             'Live Data',
@@ -230,7 +247,10 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
                   child: _buildMetricBox(
                     context,
                     'Trend',
-                    (summary['trend'] as String? ?? 'stable').replaceFirst(summary['trend']![0], summary['trend']![0].toUpperCase()),
+                    (summary['trend'] as String? ?? 'stable').replaceFirst(
+                      summary['trend']![0],
+                      summary['trend']![0].toUpperCase(),
+                    ),
                     _getTrendIcon(summary['trend'] as String? ?? ''),
                     _getTrendColor(summary['trend'] as String? ?? ''),
                   ),
@@ -311,7 +331,11 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 16, color: Colors.blue.shade700),
+                  Icon(
+                    Icons.info_outline,
+                    size: 16,
+                    color: Colors.blue.shade700,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -416,12 +440,13 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
     ThemeData theme,
     List<Map<String, dynamic>> predictions,
   ) {
-    final spots = predictions.asMap().entries.map((entry) {
-      return FlSpot(
-        entry.key.toDouble(),
-        (entry.value['yhat'] as num?)?.toDouble() ?? 0,
-      );
-    }).toList();
+    final spots =
+        predictions.asMap().entries.map((entry) {
+          return FlSpot(
+            entry.key.toDouble(),
+            (entry.value['yhat'] as num?)?.toDouble() ?? 0,
+          );
+        }).toList();
 
     final maxY = predictions
         .map((p) => (p['yhat_upper'] as num?)?.toDouble() ?? 0)
@@ -444,30 +469,39 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
                 show: true,
                 drawVerticalLine: false,
                 horizontalInterval: max(10.0, (maxY - minY) / 4),
-                getDrawingHorizontalLine: (value) => FlLine(
-                  color: Colors.grey.shade300,
-                  strokeWidth: 0.5,
-                  dashArray: [5, 5],
-                ),
+                getDrawingHorizontalLine:
+                    (value) => FlLine(
+                      color: Colors.grey.shade300,
+                      strokeWidth: 0.5,
+                      dashArray: [5, 5],
+                    ),
               ),
               titlesData: FlTitlesData(
-                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false),
+                ),
+                topTitles: const AxisTitles(
+                  sideTitles: SideTitles(showTitles: false),
+                ),
                 leftTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
                     reservedSize: 40,
-                    getTitlesWidget: (value, meta) => Text(
-                      '${value.toStringAsFixed(0)}W',
-                      style: theme.textTheme.labelSmall,
-                    ),
+                    getTitlesWidget:
+                        (value, meta) => Text(
+                          '${value.toStringAsFixed(0)}W',
+                          style: theme.textTheme.labelSmall,
+                        ),
                   ),
                 ),
                 bottomTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
                     reservedSize: 30,
-                    interval: max(1, (predictions.length / 4).ceil().toDouble()),
+                    interval: max(
+                      1,
+                      (predictions.length / 4).ceil().toDouble(),
+                    ),
                     getTitlesWidget: (value, meta) {
                       final index = value.toInt();
                       if (index < predictions.length) {
@@ -491,8 +525,8 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
                   isStrokeCapRound: true,
                   dotData: FlDotData(
                     show: predictions.length <= 10,
-                    getDotPainter: (spot, percent, bar, index) =>
-                        FlDotCirclePainter(
+                    getDotPainter:
+                        (spot, percent, bar, index) => FlDotCirclePainter(
                           radius: 4,
                           color: Colors.blue.shade600,
                           strokeWidth: 0,

@@ -9,6 +9,7 @@ This uses SQLAlchemy to talk to Postgres (DB_URL env var) and PyJWT for tokens.
 import os
 import sys
 import importlib
+import asyncio
 from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
@@ -76,6 +77,25 @@ JWT_ALG = "HS256"
 PWD_CTX = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 engine = create_engine(DB_URL)
+
+# ── Load anomaly alert service for in-app notifications ───────────────────────
+def _load_anomaly_alert_service():
+    """Direct file-based load — bypasses __init__.py completely."""
+    import importlib.util as _ilu
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _fp   = os.path.join(_here, "anomaly_alert_service.py")
+    _spec = _ilu.spec_from_file_location("anomaly_alert_service", _fp)
+    _mod  = _ilu.module_from_spec(_spec)
+    sys.modules.setdefault("anomaly_alert_service", _mod)
+    _spec.loader.exec_module(_mod)
+    return _mod
+
+try:
+    _alert_svc = _load_anomaly_alert_service()
+    print("[auth_api] anomaly_alert_service loaded ✅")
+except Exception as _e:
+    _alert_svc = None
+    print(f"[auth_api] anomaly_alert_service not available: {_e}")
 
 
 # Ensure password reset table exists (idempotent)
@@ -701,8 +721,11 @@ async def invite_user(req: InviteUserRequest):
             subtype="html"
         )
         fm = FastMail(conf)
-        await fm.send_message(message)
+        await asyncio.wait_for(fm.send_message(message), timeout=30.0)  # 10 second timeout
         email_status = "sent"
+    except asyncio.TimeoutError:
+        print(f"Warning: Email send timed out for {req.username}")
+        email_status = "failed"
     except Exception as e:
         # Log error but don't fail the invite if email fails
         print(f"Warning: Failed to send email to {req.username}: {e}")
@@ -716,54 +739,133 @@ async def invite_user(req: InviteUserRequest):
         "message": f"Invitation {'sent' if email_status == 'sent' else 'created but email sending failed'}"
     }
 @app.get("/anomalies")
-def get_anomalies(limit: int = 10, department: str = None):
-    """Fetch recent anomalies from the anomaly_logs table.
-    Optional: filter by department if provided."""
+def get_anomalies(limit: int = 50, department: str = None):
+    """Fetch active anomalies from anomaly_logs.
+    is_anomaly IN (1, -1) catches both storage conventions.
+    Returns field names matching Flutter: timestamp, score."""
     try:
         with engine.connect() as conn:
             if department and not _is_admin_department(department):
-                # Filter by department - join with rooms table
                 result = conn.execute(
                     text("""
-                        SELECT al.id, al.ds, al.device_id, al.power, al.occupancy, al.anomaly_score, al.energy_accumulated
+                        SELECT al.id, al.ds, al.device_id, al.power, al.occupancy,
+                               al.anomaly_score, al.energy_accumulated
                         FROM anomaly_logs al
                         LEFT JOIN rooms r ON al.device_id = r.room_id
-                        WHERE al.is_anomaly = -1 
+                        WHERE al.is_anomaly IN (1, -1)
                         AND r.department = :department
-                        ORDER BY al.ds DESC 
+                        ORDER BY al.ds DESC
                         LIMIT :limit
                     """),
                     {"department": department, "limit": limit}
                 )
             else:
-                # No department filter
                 result = conn.execute(
                     text("""
-                        SELECT id, ds, device_id, power, occupancy, anomaly_score, energy_accumulated
-                        FROM anomaly_logs 
-                        WHERE is_anomaly = -1
-                        ORDER BY ds DESC 
+                        SELECT id, ds, device_id, power, occupancy,
+                               anomaly_score, energy_accumulated
+                        FROM anomaly_logs
+                        WHERE is_anomaly IN (1, -1)
+                        ORDER BY ds DESC
                         LIMIT :limit
                     """),
                     {"limit": limit}
                 )
-            
             rows = result.fetchall()
+            # Join with anomaly_alert_tracking to get reminder metadata
+            tracking_map = {}
+            try:
+                with engine.connect() as tc:
+                    t_rows = tc.execute(text("""
+                        SELECT anomaly_log_id, reminder_count, last_reminder_time,
+                               first_detected_at, status
+                        FROM anomaly_alert_tracking
+                        WHERE status = 'active'
+                    """)).fetchall()
+                    for tr in t_rows:
+                        if tr[0]:
+                            tracking_map[tr[0]] = {
+                                "reminder_count":    tr[1] or 0,
+                                "last_reminder_time": tr[2].isoformat() if tr[2] else None,
+                                "first_detected_at": tr[3].isoformat() if tr[3] else None,
+                                "alert_status":      tr[4],
+                            }
+            except Exception:
+                pass
+
             return [
                 {
-                    "id": row[0],
-                    "timestamp": row[1].isoformat() if row[1] else None,
-                    "device_id": row[2],
-                    "power": row[3],
-                    "occupancy": row[4],
-                    "score": round(row[5], 4) if row[5] else 0,
-                    "energy": row[6]
+                    "id":                row[0],
+                    "timestamp":         row[1].isoformat() if row[1] else None,
+                    "device_id":         row[2],
+                    "power":             row[3],
+                    "occupancy":         row[4],
+                    "score":             round(row[5], 4) if row[5] is not None else 0,
+                    "energy_accumulated": row[6],
+                    "status":            "active",
+                    "reminder_count":    tracking_map.get(row[0], {}).get("reminder_count", 0),
+                    "last_reminder_time": tracking_map.get(row[0], {}).get("last_reminder_time"),
+                    "first_detected_at": tracking_map.get(row[0], {}).get("first_detected_at"),
                 }
                 for row in rows
             ]
     except Exception as e:
         print(f"Error fetching anomalies: {e}")
         raise HTTPException(status_code=500, detail="Internal server error fetching alerts")
+
+@app.delete("/anomalies/{anomaly_id}")
+def resolve_anomaly(anomaly_id: int):
+    """Delete/resolve an anomaly alert by ID."""
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(
+                text("DELETE FROM anomaly_logs WHERE id = :id RETURNING id"),
+                {"id": anomaly_id}
+            ).fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Anomaly not found")
+        return {"status": "success", "message": "Anomaly resolved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error resolving anomaly: {e}")
+        raise HTTPException(status_code=500, detail="Error resolving anomaly")
+
+@app.put("/anomalies/{anomaly_id}/resolve")
+def resolve_anomaly_put(anomaly_id: int):
+    """
+    Soft-resolve: sets is_anomaly=0 so it disappears from active alerts list
+    for ALL departments (shared resolution — both coordinator and CR see it gone).
+    Also marks the anomaly_alert_tracking row as 'acknowledged'.
+    """
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(
+                text("UPDATE anomaly_logs SET is_anomaly = 0 WHERE id = :id RETURNING id"),
+                {"id": anomaly_id}
+            ).fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Anomaly not found")
+
+            # Mark tracking row as resolved too (stops backend reminders)
+            try:
+                conn.execute(text("""
+                    UPDATE anomaly_alert_tracking
+                    SET status       = 'acknowledged',
+                        resolved_at  = NOW()
+                    WHERE anomaly_log_id = :id
+                      AND status = 'active'
+                """), {"id": anomaly_id})
+            except Exception:
+                pass  # tracking table may not exist yet — non-fatal
+
+        return {"status": "success", "message": f"Anomaly {anomaly_id} resolved",
+                "id": anomaly_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error resolving anomaly")
+
 @app.post("/register")
 def register(req: RegisterRequest):
     # For student registration, verify KTU ID, Department, and Year against authorized list
@@ -1092,6 +1194,50 @@ def get_user_profile(request: Request):
         raise HTTPException(status_code=500, detail="Failed to retrieve profile")
 
 
+@app.get("/admin/profile")
+def get_admin_profile(request: Request):
+    """Get admin profile from JWT token."""
+    try:
+        # Extract token from Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing or invalid authorization header")
+        
+        token = auth_header.split(" ")[1]
+        
+        # Decode JWT token
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Verify admin role
+        if payload.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        # Return admin data from token payload wrapped in 'data' key
+        user_data = {
+            "id": payload.get("sub"),
+            "username": payload.get("username"),
+            "name": payload.get("name"),
+            "email": payload.get("username"),
+            "role": payload.get("role"),
+            "department": payload.get("department"),
+            "ktu_id": payload.get("ktu_id"),
+            "year": payload.get("year"),
+        }
+        
+        return {"data": user_data}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Get admin profile error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve admin profile")
+
+
 @app.get("/users/coordinators")
 def get_coordinators():
     """Fetch all coordinators from the database."""
@@ -1149,14 +1295,16 @@ def get_user_counts():
     with engine.begin() as conn:
         coordinator_count = conn.execute(text("SELECT COUNT(*) FROM coordinators")).scalar()
         class_rep_count = conn.execute(text("SELECT COUNT(*) FROM class_representatives")).scalar()
+        sergeant_count = conn.execute(text("SELECT COUNT(*) FROM sergeants")).scalar()
         
         # Total users (excluding admins)
-        total_users = coordinator_count + class_rep_count
+        total_users = coordinator_count + class_rep_count + sergeant_count
         
         return {
             "total_users": total_users,
             "coordinators": coordinator_count,
-            "class_representatives": class_rep_count
+            "class_representatives": class_rep_count,
+            "sergeants": sergeant_count
         }
 
 
@@ -1373,30 +1521,53 @@ async def receive_sensor_data(request: Request):
         # 1. Identify what data we just received
         has_power = "power" in payload and payload.get("power") is not None
         has_occ = "human_present" in payload and payload.get("human_present") is not None
+        has_relay_state = "relay_state" in payload and payload.get("relay_state") is not None
+        relay_state = str(payload.get("relay_state", "")).strip().upper()
 
         with engine.begin() as conn:
-            # 2. LOOKUP: Check for a row from this device created in the last 60 seconds
-            # This window bridges the asynchronous nature of your two ESP32s
+            # Keep relay heartbeat fresh whenever ESP32 includes relay state in sensor payload.
+            if has_relay_state and relay_state in {"ON", "OFF", "UNKNOWN"}:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO relay_states (device_id, state, last_updated)
+                        VALUES (:device_id, :state, NOW())
+                        ON CONFLICT (device_id)
+                        DO UPDATE SET state = :state, last_updated = NOW()
+                        """
+                    ),
+                    {"device_id": device_id, "state": relay_state},
+                )
+
+            # 2. LOOKUP: Check for a row from this device created in the last 5 minutes
+            # Extended window to allow camera and power sensor data to merge
             existing = conn.execute(
                 text("""SELECT id, occupancy, power, current, voltage, energy, power_factor 
                         FROM sensor_data 
                         WHERE device_id = :id 
                         AND ds > :window 
                         ORDER BY ds DESC LIMIT 1"""),
-                {"id": device_id, "window": timestamp - timedelta(seconds=60)}
+                {"id": device_id, "window": timestamp - timedelta(minutes=5)}
             ).fetchone()
 
             if existing:
                 row_id = existing[0]
-                # 3. UPDATE: Fill the gaps in the existing 1-minute row
+                # 3. UPDATE: Fill the gaps in the existing row
                 if has_occ:
                     occupancy = payload.get("human_present")
                     conn.execute(
                         text("UPDATE sensor_data SET occupancy = :occ WHERE id = :rid"),
                         {"occ": occupancy, "rid": row_id}
                     )
-                    # Use existing electrical data for AI processing
-                    p, c, pf, v, e = existing[2], existing[3], existing[5], existing[4], existing[6]
+                    # Use existing electrical data for AI processing (FIXED indices)
+                    # SELECT: id[0], occupancy[1], power[2], current[3], voltage[4], energy[5], power_factor[6]
+                    p, c, v, e, pf = existing[2], existing[3], existing[4], existing[5], existing[6]
+                    # Use 0 if values are None
+                    p = p if p is not None else 0.0
+                    c = c if c is not None else 0.0
+                    v = v if v is not None else 0.0
+                    e = e if e is not None else 0.0
+                    pf = pf if pf is not None else 0.0
                 
                 if has_power:
                     p = float(payload.get("power", 0))
@@ -1415,27 +1586,43 @@ async def receive_sensor_data(request: Request):
                     occupancy = existing[1] if existing[1] is not None else 0
             else:
                 # 4. INSERT: Create a fresh row if no recent entry exists
-                p = float(payload.get("power", 0)) if has_power else 0.0
-                c = float(payload.get("current", 0)) if has_power else 0.0
-                pf = float(payload.get("power_factor", 0)) if has_power else 0.0
-                v = float(payload.get("voltage", 0)) if has_power else 0.0
-                e = float(payload.get("energy", 0)) if has_power else 0.0
-                occupancy = payload.get("human_present") if has_occ else 0
-                
-                # If this is power data without occupancy, perform a quick history lookup
-                if has_power and not has_occ:
-                    occ_q = conn.execute(
-                        text("SELECT occupancy FROM sensor_data WHERE device_id = :id AND occupancy IS NOT NULL ORDER BY ds DESC LIMIT 1"),
-                        {"id": device_id}
-                    ).fetchone()
-                    occupancy = occ_q[0] if occ_q else 0
-
-                conn.execute(
-                    text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, power_factor, occupancy) 
-                            VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
-                    {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
-                )
-                print(f"[DEBUG] INSERT sensor_data: device_id={device_id}, power={p}, ts={timestamp}")
+                if has_power:
+                    # Power sensor data - insert with actual values
+                    p = float(payload.get("power", 0))
+                    c = float(payload.get("current", 0))
+                    pf = float(payload.get("power_factor", 0))
+                    v = float(payload.get("voltage", 0))
+                    e = float(payload.get("energy", 0))
+                    occupancy = payload.get("human_present") if has_occ else 0
+                    
+                    # If no occupancy in payload, lookup most recent
+                    if not has_occ:
+                        occ_q = conn.execute(
+                            text("SELECT occupancy FROM sensor_data WHERE device_id = :id AND occupancy IS NOT NULL ORDER BY ds DESC LIMIT 1"),
+                            {"id": device_id}
+                        ).fetchone()
+                        occupancy = occ_q[0] if occ_q else 0
+                    
+                    conn.execute(
+                        text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, power_factor, occupancy) 
+                                VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
+                        {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
+                    )
+                    print(f"[DEBUG] INSERT sensor_data with power: device_id={device_id}, power={p}, occupancy={occupancy}")
+                elif has_occ:
+                    # Camera-only data - insert with NULL power values (not 0) to distinguish from actual zero readings
+                    occupancy = payload.get("human_present")
+                    conn.execute(
+                        text("""INSERT INTO sensor_data (ds, device_id, occupancy) 
+                                VALUES (:ds, :id, :occ)"""),
+                        {"ds": timestamp, "id": device_id, "occ": occupancy}
+                    )
+                    print(f"[DEBUG] INSERT sensor_data with occupancy only: device_id={device_id}, occupancy={occupancy}")
+                    # Use NULL power values for AI processing (will be handled as 0 in calculations)
+                    p, c, v, e, pf = 0.0, 0.0, 0.0, 0.0, 0.0
+                else:
+                    # No valid data
+                    return {"status": "error", "message": "No valid sensor data in payload"}
 
             # 5. Fetch history for rolling AI features
             hist_res = conn.execute(
@@ -1456,31 +1643,81 @@ async def receive_sensor_data(request: Request):
             'rolling_std_power': rolling_std, 'is_holiday': is_holiday
         }
         
-        # Isolation Forest Prediction
+        # ── Anomaly Detection ─────────────────────────────────────────────────────────
+        # Isolation Forest: predict() returns -1 (anomaly) or +1 (normal).
+        # When sklearn is missing we use a dual-rule fallback:
+        #   1. Absolute: power > room threshold (kW) * 1000
+        #   2. Relative: power > 2.5x the rolling average (catches spikes)
+        # Final flag: is_anomaly_flag = 1 (anomaly) | 0 (normal)
         if p < 10.0:
-            prediction, score = 1, 0.5
+            raw_prediction = -1
+            score = 0.5
+        elif model is not None and model_features is not None:
+            input_df = pd.DataFrame([input_data])[model_features]
+            raw_prediction = int(model.predict(input_df)[0])
+            score = float(model.decision_function(input_df)[0])
         else:
-            if model is not None and model_features is not None:
-                input_df = pd.DataFrame([input_data])[model_features]
-                prediction = model.predict(input_df)[0]
-                score = model.decision_function(input_df)[0]
-            else:
-                prediction, score = 1, 0.0
+            # Fetch room threshold from DB (stored in kW, compare in W)
+            room_threshold_w = 5000.0  # safe default 5 kW
+            try:
+                with engine.connect() as _tc:
+                    _tr = _tc.execute(
+                        text("SELECT threshold FROM rooms WHERE room_id = :rid"),
+                        {"rid": device_id}
+                    ).fetchone()
+                    if _tr and _tr[0]:
+                        room_threshold_w = float(_tr[0]) * 1000.0
+            except Exception:
+                pass
 
-        # Log to Anomaly Table for Flutter
+            # Relative spike: >2.5x rolling avg (avoids the "avg is already high" problem)
+            relative_threshold = rolling_avg * 2.5 if rolling_avg > 50 else float("inf")
+
+            is_above_absolute = p > room_threshold_w
+            is_spike = p > relative_threshold and (p - rolling_avg) > 500
+
+            raw_prediction = -1 if (is_above_absolute or is_spike) else 1
+            score = round((p - rolling_avg) / max(rolling_avg, 1.0), 4)
+
+        is_anomaly_flag = 1 if raw_prediction == -1 else 0
+
+        # Log to anomaly_logs using the normalised flag
         with engine.begin() as conn:
             conn.execute(
-                text("""INSERT INTO anomaly_logs (ds, device_id, power, occupancy, is_anomaly, anomaly_score, energy_accumulated)
-                        VALUES (:ds, :id, :p, :o, :ia, :as, :e)"""),
-                {"ds": timestamp, "id": device_id, "p": p, "o": occupancy, 
-                 "ia": int(prediction), "as": float(score), "e": e}
+                text("""INSERT INTO anomaly_logs
+                            (ds, device_id, power, occupancy, is_anomaly, anomaly_score, energy_accumulated)
+                        VALUES (:ds, :id, :p, :o, :ia, :sc, :e)"""),
+                {"ds": timestamp, "id": device_id, "p": p, "o": occupancy,
+                 "ia": is_anomaly_flag, "sc": score, "e": e}
             )
 
         # Invalidate overview cache so admin widgets update immediately on new sensor data
         _overview_cache["data"] = None
         _overview_cache["timestamp"] = None
 
-        return {"status": "success", "is_anomaly": int(prediction), "score": round(score, 4)}
+        # ── Trigger in-app notification to coordinator & class rep ────────────────────
+        if is_anomaly_flag == 1 and _alert_svc:
+            try:
+                with engine.connect() as _conn:
+                    _log_row = _conn.execute(
+                        text("SELECT id FROM anomaly_logs WHERE device_id = :d ORDER BY ds DESC LIMIT 1"),
+                        {"d": device_id}
+                    ).fetchone()
+                    _log_id = _log_row[0] if _log_row else None
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        _alert_svc.anomaly_alert_service.create_anomaly_alert(device_id, _log_id)
+                    )
+                except RuntimeError:
+                    asyncio.run(
+                        _alert_svc.anomaly_alert_service.create_anomaly_alert(device_id, _log_id)
+                    )
+            except Exception as _ae:
+                print(f"[auth_api] Alert notification error: {_ae}")
+
+        return {"status": "success", "is_anomaly": is_anomaly_flag, "score": round(score, 4)}
 
     except Exception as err:
         return {"status": "error", "message": str(err)}
@@ -1730,6 +1967,97 @@ def update_room_threshold(room_id: str, threshold: float = None):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error updating threshold: {str(e)}")
+
+
+@app.put("/rooms/assign-departments")
+def assign_room_departments(assignments: dict):
+    """
+    Bulk-assign departments to rooms.
+    Body: {"ROOM_302": "CS", "ROOM_101": "CS", "ROOM_405": "EC", ...}
+    Also call with {} to auto-assign based on floor if departments are all null.
+    """
+    try:
+        with engine.begin() as conn:
+            updated = 0
+            for room_id, dept in assignments.items():
+                conn.execute(
+                    text("UPDATE rooms SET department = :dept WHERE room_id = :rid"),
+                    {"dept": dept, "rid": room_id}
+                )
+                updated += 1
+
+            # If no explicit assignments given, auto-fill nulls by floor convention
+            if not assignments:
+                conn.execute(text("""
+                    UPDATE rooms SET department = 'CS'
+                    WHERE department IS NULL OR department = ''
+                """))
+                updated = -1  # signal: auto-filled
+
+        return {"status": "success", "updated": updated,
+                "message": "Departments assigned. Re-run GET /rooms to verify."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/rooms/departments")
+def get_room_departments():
+    """Show each room's current department value — for debugging."""
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT room_id, room_name, department FROM rooms ORDER BY room_id"
+            )).fetchall()
+        return [{"room_id": r[0], "room_name": r[1], "department": r[2]} for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ── FCM Token Registration ────────────────────────────────────────────────────
+class FCMTokenRequest(BaseModel):
+    user_email: str
+    user_role:  str          # 'coordinator', 'student', 'admin'
+    department: str = None
+    fcm_token:  str
+    device_info: str = ""
+
+@app.post("/fcm/register-token")
+def register_fcm_token(req: FCMTokenRequest):
+    """
+    Called by Flutter immediately after login to register the device FCM token.
+    Stores token in fcm_tokens table so the backend can push alerts.
+    """
+    try:
+        import importlib.util as _ilu
+        _here = os.path.dirname(os.path.abspath(__file__))
+        _spec = _ilu.spec_from_file_location("fcm_service",
+                    os.path.join(_here, "fcm_service.py"))
+        _fcm  = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_fcm)
+        ok = _fcm.register_token(
+            user_email  = req.user_email,
+            user_role   = req.user_role,
+            department  = req.department,
+            fcm_token   = req.fcm_token,
+            device_info = req.device_info,
+        )
+        return {"status": "ok" if ok else "error"}
+    except Exception as e:
+        print(f"[FCM register] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/fcm/remove-token")
+def remove_fcm_token(fcm_token: str):
+    """Called on logout to deregister the device token."""
+    try:
+        from sqlalchemy import text as _text
+        with engine.begin() as conn:
+            conn.execute(_text("DELETE FROM fcm_tokens WHERE fcm_token = :t"),
+                         {"t": fcm_token})
+        return {"status": "removed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/health")

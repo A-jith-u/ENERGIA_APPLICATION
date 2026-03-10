@@ -25,6 +25,10 @@ import 'activity_logs_page.dart'; // Import activity logs page
 import 'monthly_report_page.dart'; // Import monthly report page
 import 'dart:ui'; // For ImageFilter (glassmorphism effect)
 import 'package:flutter/foundation.dart';
+import 'sergeant_list_page.dart'; // Import sergeant list page
+import 'user_permissions_page.dart'; // Import user permissions page
+import 'admin_profile_page.dart'; // Import admin profile page
+import 'services/admin_api.dart'; // Import admin API functions
 
 // --- HELPER WIDGETS ---
 
@@ -400,12 +404,62 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
+  Future<void> _openProfile() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token') ?? '';
+      
+      if (token.isEmpty) {
+        if (mounted) {
+          AppNotifier.showError(context, 'Authentication token not found');
+        }
+        return;
+      }
+
+      // Show loading indicator
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const Center(child: CircularProgressIndicator()),
+        );
+      }
+
+      final profile = await getAdminProfile(token);
+
+      if (!mounted) return;
+      // Close loading indicator
+      Navigator.pop(context);
+
+      // Navigate to profile page
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AdminProfilePage(
+            profile: profile,
+            token: token,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      // Close loading indicator if still showing
+      Navigator.pop(context);
+      AppNotifier.showError(context, 'Failed to load profile: ${e.toString()}');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return DashboardScaffold(
       title: '⚡ GECI ENERGIA Control Center',
       actions: [
+        IconButton(
+          icon: const Icon(Icons.account_circle),
+          tooltip: 'Profile',
+          onPressed: _openProfile,
+        ),
         IconButton(
           icon: const Icon(Icons.logout),
           tooltip: 'Logout',
@@ -899,6 +953,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
     final totalUsers = _userCounts?['total_users'] ?? 0;
     final coordinatorCount = _userCounts?['coordinators'] ?? 0;
     final classRepCount = _userCounts?['class_representatives'] ?? 0;
+    final sergeantCount = _userCounts?['sergeants'] ?? 0;
     
     return RefreshIndicator(
       onRefresh: _loadUserCounts,
@@ -963,6 +1018,16 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClassRepresentativesPage()));
           },
         ),
+        _buildUserTypeCard(
+          context,
+          'Sergeants', 
+          _isLoading ? 'Loading...' : '$sergeantCount Users', 
+          Icons.security_outlined, 
+          Colors.purple.shade600,
+          onTap: () {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SergeantListPage()));
+          },
+        ),
         // (Students card removed)
         
         const SizedBox(height: 24),
@@ -990,7 +1055,15 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
           Icons.download_outlined,
           onTap: () => _exportAllUsersCSV(context),
         ),
-        _buildActionCard(context, 'User Permissions', 'Manage access controls', Icons.security_outlined),
+        _buildActionCard(
+          context, 
+          'User Permissions', 
+          'Manage access controls', 
+          Icons.security_outlined,
+          onTap: () {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UserPermissionsPage()));
+          },
+        ),
         _buildActionCard(
           context, 
           'Activity Logs', 
