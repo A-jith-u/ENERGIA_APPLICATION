@@ -9,6 +9,7 @@ import 'package:energia/widgets/energy_visualization_widgets.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'alert_reminder_service.dart';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -43,7 +44,8 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       DepartmentCustomizationService();
   List<String> _accessibleRooms = [];
   List<Map<String, dynamic>> _anomalies = [];
-  int _badgeCount = 0;  // badge counter managed by _DepartmentAlertsSection
+  int _badgeCount = 0;
+  late AlertReminderService _reminderService;
 
 // 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
@@ -70,8 +72,17 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       _fetchAnomalyAlerts();
     });
 
-    // Badge updates from _DepartmentAlertsSection via callback
-    // (no Firebase needed — badge is incremented when new alerts arrive)
+    // ── In-app reminder service ─────────────────────────────────────────
+    _reminderService = AlertReminderService(
+      contextGetter: () => context,
+      onBadgeUpdate: (count) {
+        if (mounted) setState(() => _badgeCount = count);
+      },
+      onResolve: (alertId) => _resolveAlertFromPopup(alertId),
+      onViewAlerts: () {
+        if (mounted) setState(() => _currentIndex = 3);
+      },
+    );
   }
   
   Future<void> _loadUserDepartmentFromPrefs() async {
@@ -140,6 +151,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   void dispose() {
     _dataRefreshTimer?.cancel();
     _liveTimer?.cancel();
+    _reminderService.dispose();
     super.dispose();
   }
 
@@ -288,12 +300,9 @@ Widget _buildAnomalyTab() {
               final fetched = List<Map<String, dynamic>>.from(
                 anomalies.whereType<Map<String, dynamic>>(),
               );
-              final prevCount = _anomalies.length;
               setState(() { _anomalies = fetched; });
-              // Increment badge if new alerts arrived and user not on alerts tab
-              if (fetched.length > prevCount && _currentIndex != 3) {
-                setState(() => _badgeCount += fetched.length - prevCount);
-              }
+              // Feed reminder service — shows popup for new alerts + schedules timers
+              _reminderService.syncAlerts(fetched);
             }
             return;
           }
@@ -361,6 +370,7 @@ Widget _buildAnomalyTab() {
           if (index == 3) {
             _fetchAnomalyAlerts();
             setState(() => _badgeCount = 0);
+            _reminderService.clearBadge();
           }
         }
       },
@@ -381,8 +391,8 @@ Widget _buildAnomalyTab() {
           label: 'Analytics',
         ),
         BottomNavigationBarItem(
-          icon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications_outlined)),
-          activeIcon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications)),
+          icon: AlertBadgeIcon(icon: Icons.notifications_outlined, count: _badgeCount),
+          activeIcon: AlertBadgeIcon(icon: Icons.notifications, count: _badgeCount),
           label: 'Alerts',
         ),
       ],
@@ -455,6 +465,7 @@ Widget _buildAnomalyTab() {
            if (index == 3) {
              _fetchAnomalyAlerts();
              setState(() => _badgeCount = 0);
+            _reminderService.clearBadge();
            }
         }
       },
@@ -475,8 +486,8 @@ Widget _buildAnomalyTab() {
           label: 'Analytics',
         ),
         BottomNavigationBarItem(
-          icon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications_outlined)),
-          activeIcon: _CoordAlertsBadge(count: _badgeCount, child: const Icon(Icons.notifications)),
+          icon: AlertBadgeIcon(icon: Icons.notifications_outlined, count: _badgeCount),
+          activeIcon: AlertBadgeIcon(icon: Icons.notifications, count: _badgeCount),
           label: 'Alerts',
         ),
       ],
