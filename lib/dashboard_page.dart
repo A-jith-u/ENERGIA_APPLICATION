@@ -16,7 +16,7 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
 import 'package:http/http.dart' as http; // Fixes 'http'
 import 'dart:async';
-import 'anomaly_reminder_service.dart';
+import 'alert_reminder_service.dart';
 import 'dart:math';
 
 class DashboardPage extends StatefulWidget {
@@ -32,11 +32,10 @@ class _DashboardPageState extends State<DashboardPage> {
   String? _department; // decoded from JWT, used to filter anomaly alerts
 
   // ── Badge notification state ───────────────────────────────────────────────
-  final Set<String> _seenAnomalyIds = {};
-  int _unseenAnomalyCount = 0;
   List<Map<String, dynamic>> _anomalies = [];
   Timer? _badgePollingTimer;
-  final AnomalyReminderService _reminders = AnomalyReminderService();
+  late AlertReminderService _reminderService;
+  int _badgeCount = 0;
 
   static const List<String> _baseUrls = [
     'http://127.0.0.1:5000',   // Windows desktop app
@@ -61,34 +60,24 @@ class _DashboardPageState extends State<DashboardPage> {
       const Duration(seconds: 8),
       (_) => _pollForNewAnomalies(),
     );
-    // Wire reminder service
-    _reminders.mount();
-    _reminders.onShowPopup = (alert, reminderNum) {
-      if (!mounted) return;
-      AnomalyReminderPopup.show(
-        context,
-        alert: alert,
-        reminderNumber: reminderNum,
-        onViewAlerts: () {
-          setState(() => _index = 2);
-          _fetchAnomalies();
-          _clearAlertBadge();
-        },
-        onResolve: (a) async {
-          _reminders.onAlertResolved(a);
-          await _resolveAlertById(a['id'] ?? a['_id']);
-        },
-      );
-    };
-    _reminders.onBadgeUpdate = (count) {
-      if (mounted) setState(() => _unseenAnomalyCount = count);
-    };
+    // ── In-app reminder service ──────────────────────────────────────────
+    _reminderService = AlertReminderService(
+      contextGetter: () => context,
+      onBadgeUpdate: (count) {
+        if (mounted) setState(() => _badgeCount = count);
+      },
+      onResolve: (alertId) => _resolveAlertById(alertId),
+      onViewAlerts: () {
+        if (mounted) setState(() => _index = 2);
+        _fetchAnomalies();
+      },
+    );
   }
 
   @override
   void dispose() {
     _badgePollingTimer?.cancel();
-    _reminders.dispose();
+    _reminderService.dispose();
     super.dispose();
   }
 
@@ -132,13 +121,8 @@ class _DashboardPageState extends State<DashboardPage> {
           final fetched = List<Map<String, dynamic>>.from(
               raw.whereType<Map<String, dynamic>>());
           if (!mounted) return;
-          setState(() {
-            _anomalies = fetched;
-            if (seedSeen && _seenAnomalyIds.isEmpty) {
-              _seenAnomalyIds.addAll(fetched.map(_anomalyKey));
-            }
-          });
-          if (!seedSeen) _reminders.onAnomaliesUpdated(fetched);
+          setState(() { _anomalies = fetched; });
+          _reminderService.syncAlerts(fetched);
           return;
         }
       } catch (_) {
@@ -163,23 +147,9 @@ class _DashboardPageState extends State<DashboardPage> {
           final fetched = List<Map<String, dynamic>>.from(
               raw.whereType<Map<String, dynamic>>());
           if (!mounted) return;
-          if (_index == 2) {
-            // User is already on Alerts tab — refresh silently, clear badge
-            setState(() {
-              _anomalies = fetched;
-              _unseenAnomalyCount = 0;
-              _seenAnomalyIds.addAll(fetched.map(_anomalyKey));
-            });
-            _reminders.onAnomaliesUpdated(fetched);
-          } else {
-            final newOnes = fetched
-                .where((a) => !_seenAnomalyIds.contains(_anomalyKey(a)))
-                .length;
-            setState(() {
-              _anomalies = fetched;
-              _unseenAnomalyCount = newOnes;
-            });
-          }
+          setState(() { _anomalies = fetched; });
+          _reminderService.syncAlerts(fetched);
+          if (_index == 2) _reminderService.clearBadge();
           return;
         }
       } catch (_) {
@@ -190,10 +160,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _clearAlertBadge() {
     if (!mounted) return;
-    setState(() {
-      _unseenAnomalyCount = 0;
-      _seenAnomalyIds.addAll(_anomalies.map(_anomalyKey));
-    });
+    _reminderService.clearBadge();
   }
 
   List<BottomNavigationBarItem> _buildNavItems() {
@@ -211,11 +178,11 @@ class _DashboardPageState extends State<DashboardPage> {
       BottomNavigationBarItem(
         icon: _CRBadgeIcon(
           icon: Icons.notifications_outlined,
-          count: _unseenAnomalyCount,
+          count: _badgeCount,
         ),
         activeIcon: _CRBadgeIcon(
           icon: Icons.notifications,
-          count: _unseenAnomalyCount,
+          count: _badgeCount,
         ),
         label: 'Alerts',
       ),
