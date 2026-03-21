@@ -16,28 +16,28 @@ def run_preprocessing():
     for enc in ['utf-16', 'utf-8', 'latin1']:
         try:
             df = pd.read_csv(INPUT_PATH, encoding=enc, skipinitialspace=True)
-            print(f"✅ Loaded successfully with {enc} encoding.")
+            print(f"[OK] Loaded successfully with {enc} encoding.")
             break
         except (UnicodeError, UnicodeDecodeError):
             continue
     
     if df is None:
-        print("❌ Failed to load CSV: Could not determine file encoding.")
+        print("[ERROR] Failed to load CSV: Could not determine file encoding.")
         return
 
     # 2. DATA RESCUE: Check if data is trapped in the first column
     # If the first row's second column is empty, the data is likely all in the first column
     if df.shape[1] > 1 and df.iloc[:, 1].isnull().all():
-        print("🔍 Trapped data detected (Quoted Rows). Unpacking...")
+        print("[INFO] Trapped data detected (Quoted Rows). Unpacking...")
         # Take everything in the first column, split it by comma
         new_df = df.iloc[:, 0].str.strip('"').str.split(',', expand=True)
         # Ensure we have the right number of columns
         if new_df.shape[1] == len(df.columns):
             new_df.columns = df.columns
             df = new_df
-            print("✅ Data rows successfully unpacked.")
+            print("[OK] Data rows successfully unpacked.")
         else:
-            print(f"⚠️ Warning: Unpacked column count ({new_df.shape[1]}) doesn't match header ({len(df.columns)})")
+            print(f"[WARN] Unpacked column count ({new_df.shape[1]}) doesn't match header ({len(df.columns)})")
 
     # 3. Numeric Conversion
     numeric_cols = ['power', 'current', 'power_factor', 'voltage']
@@ -47,7 +47,7 @@ def run_preprocessing():
     
     # 4. Basic Cleaning
     if 'ds' not in df.columns:
-        print(f"⚠️ Error: 'ds' column missing. Columns found: {df.columns.tolist()}")
+        print(f"[ERROR] 'ds' column missing. Columns found: {df.columns.tolist()}")
         return
 
     # Clean the timestamp string and convert
@@ -66,7 +66,7 @@ def run_preprocessing():
     processed_df['occupancy'] = (processed_df['power'] > 10).astype(int) # Using 10W as a baseline
     # 6. Save the final file
     processed_df.to_csv(OUTPUT_PATH, index=False)
-    print(f"✨ Success! Preprocessed data stored in: {OUTPUT_PATH}")
+    print(f"[OK] Success! Preprocessed data stored in: {OUTPUT_PATH}")
     print(f"Sample Row: {processed_df.head(1).to_dict(orient='records')[0]}")
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
   String? _authToken;
   String? _department; // decoded from JWT, used to filter anomaly alerts
+  String? _assignedRoomId; // decoded from JWT, used to scope class-rep data
 
   // ── Badge notification state ───────────────────────────────────────────────
   List<Map<String, dynamic>> _anomalies = [];
@@ -90,6 +91,7 @@ class _DashboardPageState extends State<DashboardPage> {
         setState(() {
           _authToken = token;
           _department = decoded['department'] as String?;
+          _assignedRoomId = decoded['assigned_room_id'] as String?;
         });
       } catch (_) {
         setState(() => _authToken = token);
@@ -109,8 +111,15 @@ class _DashboardPageState extends State<DashboardPage> {
     for (final base in _baseUrls) {
       try {
         var url = '$base/anomalies';
+        final query = <String>[];
         if (_department != null && _department!.isNotEmpty) {
-          url += '?department=${Uri.encodeComponent(_department!)}';
+          query.add('department=${Uri.encodeComponent(_department!)}');
+        }
+        if (_assignedRoomId != null && _assignedRoomId!.isNotEmpty) {
+          query.add('room_id=${Uri.encodeComponent(_assignedRoomId!)}');
+        }
+        if (query.isNotEmpty) {
+          url += '?${query.join('&')}';
         }
         final resp = await http
             .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
@@ -135,8 +144,15 @@ class _DashboardPageState extends State<DashboardPage> {
     for (final base in _baseUrls) {
       try {
         var url = '$base/anomalies';
+        final query = <String>[];
         if (_department != null && _department!.isNotEmpty) {
-          url += '?department=${Uri.encodeComponent(_department!)}';
+          query.add('department=${Uri.encodeComponent(_department!)}');
+        }
+        if (_assignedRoomId != null && _assignedRoomId!.isNotEmpty) {
+          query.add('room_id=${Uri.encodeComponent(_assignedRoomId!)}');
+        }
+        if (query.isNotEmpty) {
+          url += '?${query.join('&')}';
         }
         final resp = await http
             .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
@@ -261,13 +277,17 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
-        return _WelcomeSection(scheme: scheme);
+        return _WelcomeSection(
+          scheme: scheme,
+          assignedRoomId: _assignedRoomId,
+        );
       case 1:
         return _ReportsSection(scheme: scheme, userToken: _authToken);
       case 2:
         return _CRAlertsSection(
           anomalies: _anomalies,
           department: _department,
+          roomId: _assignedRoomId,
           baseUrls: _baseUrls,
           onRefresh: () async {
             await _fetchAnomalies();
@@ -1062,7 +1082,12 @@ class _ProfileInfoTile extends StatelessWidget {
 
 class _WelcomeSection extends StatefulWidget {
   final ColorScheme scheme;
-  const _WelcomeSection({required this.scheme});
+  final String? assignedRoomId;
+
+  const _WelcomeSection({
+    required this.scheme,
+    this.assignedRoomId,
+  });
 
   @override
   State<_WelcomeSection> createState() => _WelcomeSectionState();
@@ -1090,7 +1115,10 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   Timer? _refreshTimer;
   String? _preferredBaseUrl;
 
-  static const String _roomDeviceId = 'ESP32-CS-C201';
+  String get _roomDeviceId =>
+      (widget.assignedRoomId == null || widget.assignedRoomId!.trim().isEmpty)
+          ? 'CS-201'
+          : widget.assignedRoomId!.trim();
 
   // Getter for power in kW
   double get _currentPowerKw => _currentPowerW / 1000.0;
@@ -1100,7 +1128,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
     super.initState();
     _loadLiveData();
     _refreshTimer = Timer.periodic(
-      const Duration(seconds: 60),
+      const Duration(seconds: 10),
       (_) => _loadLiveData(),
     );
   }
@@ -1134,11 +1162,8 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             '$baseUrl/sensor-data?limit=36&device_id=${Uri.encodeComponent(_roomDeviceId)}',
           );
 
-          // Fallback endpoint when room-specific query yields nothing.
-          final fallbackUri = Uri.parse('$baseUrl/sensor-data?limit=36');
-
           // Use a smaller timeout to keep UI responsive even when a host is down.
-          final response = await http
+          final finalResponse = await http
               .get(roomUri, headers: {'Content-Type': 'application/json'})
               .timeout(
                 const Duration(seconds: 4),
@@ -1146,18 +1171,6 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                   throw TimeoutException('Request timed out');
                 },
               );
-
-          http.Response finalResponse = response;
-          if (response.statusCode != 200) {
-            finalResponse = await http
-                .get(fallbackUri, headers: {'Content-Type': 'application/json'})
-                .timeout(
-                  const Duration(seconds: 4),
-                  onTimeout: () {
-                    throw TimeoutException('Request timed out');
-                  },
-                );
-          }
 
           if (finalResponse.statusCode != 200) continue;
 
@@ -1460,7 +1473,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Welcome to CS-201! 💡',
+                      'Welcome to ${_roomDeviceId}! 💡',
                       style: theme.textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.w900,
                         color: Colors.white,
@@ -2021,6 +2034,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
 class _CRAlertsSection extends StatefulWidget {
   final List<Map<String, dynamic>> anomalies;
   final String? department;
+  final String? roomId;
   final List<String> baseUrls;
   final Future<void> Function() onRefresh;
 
@@ -2029,6 +2043,7 @@ class _CRAlertsSection extends StatefulWidget {
     required this.baseUrls,
     required this.onRefresh,
     this.department,
+    this.roomId,
   });
 
   @override
@@ -2072,8 +2087,15 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
     for (final base in widget.baseUrls) {
       try {
         var url = '$base/anomalies';
+        final query = <String>[];
         if (widget.department != null && widget.department!.isNotEmpty) {
-          url += '?department=${Uri.encodeComponent(widget.department!)}';
+          query.add('department=${Uri.encodeComponent(widget.department!)}');
+        }
+        if (widget.roomId != null && widget.roomId!.isNotEmpty) {
+          query.add('room_id=${Uri.encodeComponent(widget.roomId!)}');
+        }
+        if (query.isNotEmpty) {
+          url += '?${query.join('&')}';
         }
         final resp = await http
             .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})

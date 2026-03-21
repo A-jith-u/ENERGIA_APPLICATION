@@ -217,13 +217,20 @@ async def auto_cutoff_relay(request: RelayControlRequest):
             
             device_id, channel = mapping
             
-            # Queue OFF command
+            action = request.action.upper().strip()
+            if action not in {"ON", "OFF"}:
+                raise HTTPException(status_code=400, detail="Action must be ON or OFF")
+
+            # Queue relay command
             command_id = queue_relay_command(
                 device_id=device_id,
-                action="OFF",
+                action=action,
                 user_id="system",
                 user_name="Anomaly Alert System",
-                reason=request.reason or "Automatic cutoff after 7-minute alert escalation"
+                reason=request.reason or (
+                    "Automatic cutoff after unresolved anomaly" if action == "OFF"
+                    else "Automatic restore after occupancy detected"
+                )
             )
             
             # Log automatic cutoff
@@ -232,20 +239,25 @@ async def auto_cutoff_relay(request: RelayControlRequest):
                 (room_id, relay_channel, action, trigger_type,
                  triggered_by_user_id, triggered_by_user_name, reason, timestamp)
                 VALUES
-                (:room_id, :channel, 'OFF', 'auto',
+                (:room_id, :channel, :action, 'auto',
                  'system', 'Anomaly Alert System', :reason, NOW())
             """), {
                 "room_id": request.room_id,
                 "channel": channel,
-                "reason": request.reason or "Automatic cutoff after 7-minute alert escalation"
+                "action": action,
+                "reason": request.reason or (
+                    "Automatic cutoff after unresolved anomaly" if action == "OFF"
+                    else "Automatic restore after occupancy detected"
+                )
             })
             
             return {
                 "status": "queued",
-                "message": f"Automatic power cutoff queued for {request.room_id}",
+                "message": f"Automatic power {action} queued for {request.room_id}",
                 "room_id": request.room_id,
+                "action": action,
                 "command_id": command_id,
-                "note": "Cutoff will execute within 5 seconds"
+                "note": "Command will execute within 5 seconds"
             }
     
     except Exception as e:

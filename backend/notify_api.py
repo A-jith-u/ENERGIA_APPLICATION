@@ -63,6 +63,9 @@ def _init_notifications_table():
                 power           FLOAT,
                 anomaly_score   FLOAT,
                 is_read         BOOLEAN     NOT NULL DEFAULT FALSE,
+                is_resolved     BOOLEAN     NOT NULL DEFAULT FALSE,
+                resolved_at      TIMESTAMPTZ,
+                resolution_note  TEXT,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
@@ -80,6 +83,9 @@ def _init_notifications_table():
         ("power",           "FLOAT"),
         ("anomaly_score",   "FLOAT"),
         ("is_read",         "BOOLEAN DEFAULT FALSE"),
+        ("is_resolved",     "BOOLEAN DEFAULT FALSE"),
+        ("resolved_at",      "TIMESTAMPTZ"),
+        ("resolution_note",  "TEXT"),
         ("created_at",      "TIMESTAMPTZ DEFAULT NOW()"),
     ]
     for col_name, col_type in columns_to_ensure:
@@ -230,7 +236,8 @@ def get_notifications(
             rows = conn.execute(text(f"""
                 SELECT id, recipient_email, recipient_type, department,
                        room_id, room_name, title, message,
-                       power, anomaly_score, is_read, created_at
+                      power, anomaly_score, is_read, is_resolved,
+                      resolved_at, resolution_note, created_at
                 FROM notifications
                 {where}
                 ORDER BY created_at DESC
@@ -249,7 +256,10 @@ def get_notifications(
                 "power":          r[8],
                 "anomaly_score":  round(r[9], 4) if r[9] is not None else None,
                 "is_read":        r[10],
-                "created_at":     r[11].isoformat() if r[11] else None,
+                "is_resolved":    r[11],
+                "resolved_at":    r[12].isoformat() if r[12] else None,
+                "resolution_note": r[13],
+                "created_at":     r[14].isoformat() if r[14] else None,
             } for r in rows]
 
             unread_count = sum(1 for n in data if not n["is_read"])

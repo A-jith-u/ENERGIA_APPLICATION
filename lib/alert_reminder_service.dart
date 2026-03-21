@@ -4,10 +4,9 @@
 //
 // ── Reminder schedule (minutes from detection moment) ───────────────────────
 //   0 min  → immediate popup (alert detected)        badge += 1  ← only here
-//   +1 min → Reminder #1 popup                       badge unchanged
-//   +3 min → Reminder #2 popup                       badge unchanged
-//   +5 min → Reminder #3 popup                       badge unchanged
-//   +7 min → Reminder #4 popup (final, then stops)   badge unchanged
+//   +3 min → Reminder #1 popup                       badge unchanged
+//   +5 min → Reminder #2 popup                       badge unchanged
+//   +7 min → Reminder #3 popup (final, then stops)   badge unchanged
 //
 // Badge rule: badge increments ONLY when a brand-new alert ID is seen.
 //             Reminder popups for the same alert never change the badge.
@@ -15,10 +14,9 @@
 // Timing rule: all delays are measured from the moment the alert is first
 //              detected (createdAt), NOT from the previous reminder.
 //              e.g. if alert arrives at 18:00:
-//                18:01 → reminder 1
-//                18:03 → reminder 2   (3 min from 18:00, NOT 2 min after 18:01)
-//                18:05 → reminder 3
-//                18:07 → reminder 4  → STOP
+//                18:03 → reminder 1
+//                18:05 → reminder 2
+//                18:07 → reminder 3  → STOP
 //
 // Each alert has independent timers.  Resolve cancels all timers for that alert.
 
@@ -26,7 +24,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 // ── Schedule (absolute minutes from detection) ────────────────────────────────
-const List<int> _kScheduleMinutes = [1, 3, 5, 7];
+const List<int> _kScheduleMinutes = [3, 5, 7];
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -65,7 +63,11 @@ class AlertReminderService {
       if (!_states.containsKey(key)) {
         // ── Brand-new alert ───────────────────────────────────────────────
         final now = DateTime.now();
-        final state = _AlertState(alert: Map<String, dynamic>.from(alert), createdAt: now);
+        final detectedAt = _extractDetectedAt(alert) ?? now;
+        final state = _AlertState(
+          alert: Map<String, dynamic>.from(alert),
+          createdAt: detectedAt,
+        );
         _states[key] = state;
 
         // Badge: only increment for genuinely new alert IDs
@@ -77,8 +79,8 @@ class AlertReminderService {
         // Immediate popup (step 0)
         Future.microtask(() => _showPopup(key, 0));
 
-        // Schedule reminders at absolute offsets from now
-        _scheduleReminders(key, state, now);
+        // Schedule reminders at absolute offsets from anomaly detection time
+        _scheduleReminders(key, state, detectedAt);
       }
     }
 
@@ -187,6 +189,17 @@ class AlertReminderService {
     if (id != null) return 'alert_$id';
     // Fallback for alerts without an id
     return '${a['device_id']}_${a['timestamp'] ?? a['ds']}';
+  }
+
+  static DateTime? _extractDetectedAt(Map<String, dynamic> alert) {
+    final raw =
+        alert['first_detected_at'] ?? alert['timestamp'] ?? alert['ds'];
+    if (raw == null) return null;
+    try {
+      return DateTime.parse(raw.toString()).toLocal();
+    } catch (_) {
+      return null;
+    }
   }
 }
 

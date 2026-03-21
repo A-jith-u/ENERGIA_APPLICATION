@@ -66,9 +66,10 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
     _loadDepartmentAnalyticsData();
     _fetchAnomalyAlerts(); 
     
-    // Setup the periodic timer for live updates (every 15 seconds for analytics)
-    _liveTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      _loadDepartmentAnalyticsData(); // Update analytics data regularly
+    // Setup the periodic timer for live updates.
+    _liveTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _loadLiveData();
+      _loadDepartmentAnalyticsData();
       _fetchAnomalyAlerts();
     });
 
@@ -347,7 +348,7 @@ Widget _buildAnomalyTab() {
 
   Widget _buildDepartmentDashboard(ColorScheme scheme) {
     return DashboardScaffold(
-      title: '🏢 ${_currentUser?.department ?? "Coordinator"} Dashboard',
+      title: 'Coordinator Dashboard',
       actions: [
         IconButton(
           icon: const Icon(Icons.logout),
@@ -430,19 +431,10 @@ Widget _buildAnomalyTab() {
 
   @override
   Widget build(BuildContext context) {
-    // If user is loaded, use department-themed dashboard
-    if (_currentUser != null) {
-      final departmentTheme = _customizationService.getDepartmentTheme(_currentUser!.department);
-      return Theme(
-        data: departmentTheme,
-        child: _buildDepartmentDashboard(departmentTheme.colorScheme),
-      );
-    }
-    
-    // Fallback to default theme if user not loaded
+    // Keep coordinator page on the app-wide theme so it matches other dashboards.
     final colorScheme = Theme.of(context).colorScheme;
     return DashboardScaffold(
-      title: '🏢 ENERGIA Dashboard',
+      title: 'Coordinator Dashboard',
       actions: [
         IconButton(
           icon: const Icon(Icons.logout),
@@ -499,6 +491,7 @@ Widget _buildPage(int index, ColorScheme scheme) {
       case 0:
         return _CoordinatorOverviewPage(
           scheme: scheme,
+          departmentName: _userDepartment ?? '',
           firstDropdownValue: _firstDropdownValue,
           secondDropdownValue: _secondDropdownValue,
           thirdDropdownValue: _thirdDropdownValue,
@@ -546,6 +539,7 @@ Widget _buildPage(int index, ColorScheme scheme) {
 // OVERVIEW PAGE WITH DYNAMIC DROPDOWNS
 class _CoordinatorOverviewPage extends StatelessWidget {
   final ColorScheme scheme;
+  final String departmentName;
   final String firstDropdownValue;
   final String secondDropdownValue;
   final String thirdDropdownValue;
@@ -560,6 +554,7 @@ class _CoordinatorOverviewPage extends StatelessWidget {
 
   const _CoordinatorOverviewPage({
     required this.scheme,
+    required this.departmentName,
     required this.firstDropdownValue,
     required this.secondDropdownValue,
     required this.thirdDropdownValue,
@@ -579,6 +574,10 @@ class _CoordinatorOverviewPage extends StatelessWidget {
     const cardWidth = 500.0;
     final latestPower = sensorData?['power']?.toDouble() ?? 0.0;
     final liveLoading = loadingData;
+    final normalizedDepartmentName =
+      departmentName.trim().isEmpty || departmentName.trim().toLowerCase() == 'admin'
+        ? 'Department'
+        : departmentName.trim();
    
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -640,7 +639,7 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Welcome, Department Leader!',
+                                'Welcome, Coordinator!',
                                 style: theme.textTheme.headlineMedium?.copyWith(
                                   fontWeight: FontWeight.bold,
                                   color: scheme.onPrimaryContainer,
@@ -648,7 +647,7 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                'CS Department Energy Coordinator',
+                                '$normalizedDepartmentName Energy Coordinator',
                                 style: theme.textTheme.titleLarge?.copyWith(
                                   color: scheme.onPrimaryContainer.withOpacity(
                                     0.8,
