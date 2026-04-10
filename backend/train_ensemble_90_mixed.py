@@ -16,7 +16,7 @@ MODEL_OUT = "models/energy_ensemble_90_mixed.joblib"
 METRICS_JSON = "metrics/ensemble90_mixed_metrics.json"
 PREDICTIONS_CSV = "metrics/ensemble90_mixed_predictions.csv"
 PLOT_PATH = "metrics/ensemble90_mixed_accuracy_plot.png"
-COMBINED_CSV = "metrics/ensemble90_mixed_training_data.csv"
+COMBINED_CSV = "datasets/ensemble90_mixed_training_data.csv"
 
 RANDOM_SEED = 42
 
@@ -340,6 +340,7 @@ def main() -> None:
 
     Path("models").mkdir(exist_ok=True)
     Path("metrics").mkdir(exist_ok=True)
+    Path(COMBINED_CSV).parent.mkdir(parents=True, exist_ok=True)
 
     engine = create_engine(DB_URL)
     real_reg = load_live_real_data(engine)

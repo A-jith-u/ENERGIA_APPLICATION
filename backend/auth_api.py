@@ -10,6 +10,8 @@ import os
 import sys
 import importlib
 import asyncio
+import json
+import re
 from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
@@ -41,9 +43,9 @@ try:
     if os.path.exists(MODEL_PATH):
         model = joblib.load(MODEL_PATH)
         model_features = joblib.load(FEATURES_PATH)
-        print("✅ Anomaly Detection Model Loaded Successfully")
+        print("[OK] Anomaly Detection Model Loaded Successfully")
 except Exception as e:
-    print(f"❌ Error loading AI model: {e}")
+    print(f"[ERROR] Error loading AI model: {e}")
 def _load_cfg():
     """Load config module handling both package and script execution."""
     if __package__:
@@ -92,10 +94,30 @@ def _load_anomaly_alert_service():
 
 try:
     _alert_svc = _load_anomaly_alert_service()
-    print("[auth_api] anomaly_alert_service loaded ✅")
+    print("[auth_api] anomaly_alert_service loaded [OK]")
 except Exception as _e:
     _alert_svc = None
     print(f"[auth_api] anomaly_alert_service not available: {_e}")
+
+
+def _load_alert_mail_service():
+    import importlib.util as _ilu
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _fp = os.path.join(_here, "alert_mail_service.py")
+    _spec = _ilu.spec_from_file_location("alert_mail_service", _fp)
+    _mod = _ilu.module_from_spec(_spec)
+    sys.modules.setdefault("alert_mail_service", _mod)
+    _spec.loader.exec_module(_mod)
+    return _mod
+
+
+try:
+    _mail_mod = _load_alert_mail_service()
+    _invite_mailer = _mail_mod.AlertMailService()
+    print("[auth_api] alert_mail_service loaded [OK]")
+except Exception as _e:
+    _invite_mailer = None
+    print(f"[auth_api] alert_mail_service not available: {_e}")
 
 
 # Ensure password reset table exists (idempotent)
@@ -136,12 +158,353 @@ def _ensure_sensor_data_occupancy_column():
         print(f"Warning: could not ensure sensor_data.occupancy column: {exc}")
 
 
+def _ensure_sensor_data_frequency_column():
+    """Ensure legacy databases have sensor_data.frequency for incoming ESP payloads."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sensor_data ADD COLUMN IF NOT EXISTS frequency DOUBLE PRECISION"))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure sensor_data.frequency column: {exc}")
+
+
 _ensure_rooms_department_column()
 _ensure_sensor_data_occupancy_column()
+_ensure_sensor_data_frequency_column()
+
+MAX_CLASS_REPS_PER_ROOM = 3
+MAX_COORDINATORS_PER_DEPARTMENT = 3
+
+
+def _ensure_proxy_user_columns():
+    """Ensure proxy-account metadata exists for class reps/coordinators."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE class_representatives ADD COLUMN IF NOT EXISTS is_proxy BOOLEAN NOT NULL DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE class_representatives ADD COLUMN IF NOT EXISTS proxy_for_email TEXT"))
+            conn.execute(text("ALTER TABLE class_representatives ADD COLUMN IF NOT EXISTS assigned_room_id TEXT"))
+
+            conn.execute(text("ALTER TABLE coordinators ADD COLUMN IF NOT EXISTS is_proxy BOOLEAN NOT NULL DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE coordinators ADD COLUMN IF NOT EXISTS proxy_for_email TEXT"))
+            conn.execute(text("ALTER TABLE coordinators ADD COLUMN IF NOT EXISTS assigned_room_id TEXT"))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure proxy columns: {exc}")
+
+
+_ensure_proxy_user_columns()
+
+
+def _ensure_class_rep_room_mapping_table():
+    """Ensure room->class rep mapping exists for class-specific notifications."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS class_rep_room_mapping (
+                    id               SERIAL PRIMARY KEY,
+                    room_id          TEXT NOT NULL,
+                    class_rep_email  TEXT NOT NULL,
+                    is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(room_id, class_rep_email)
+                )
+            """))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS idx_crrm_room_active ON class_rep_room_mapping(room_id, is_active)"
+            ))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure class_rep_room_mapping table: {exc}")
+
+
+_ensure_class_rep_room_mapping_table()
+
+
+class ClassRepRoomAssignRequest(BaseModel):
+    room_id: str
+    class_rep_email: str
+
+
+@app.post("/rooms/assign-class-rep")
+def assign_class_rep_to_room(req: ClassRepRoomAssignRequest):
+    room_id = req.room_id.strip()
+    class_rep_email = req.class_rep_email.strip()
+    if not room_id or not class_rep_email:
+        raise HTTPException(status_code=400, detail="room_id and class_rep_email are required")
+
+    with engine.begin() as conn:
+        resolved_room_id = _resolve_room_id_for_device(conn, room_id)
+        if resolved_room_id:
+            room_id = resolved_room_id
+
+        room_exists = conn.execute(
+            text("""
+                SELECT 1
+                FROM (
+                    SELECT room_id FROM rooms WHERE UPPER(room_id) = UPPER(:rid)
+                    UNION ALL
+                    SELECT room_id FROM room_relay_mapping WHERE UPPER(room_id) = UPPER(:rid) OR UPPER(relay_device_id) = UPPER(:rid)
+                ) x
+                LIMIT 1
+            """),
+            {"rid": room_id},
+        ).fetchone()
+        if not room_exists:
+            raise HTTPException(status_code=404, detail=f"Room not found: {room_id}")
+
+        rep_exists = conn.execute(
+            text("SELECT 1 FROM class_representatives WHERE UPPER(email)=UPPER(:e) LIMIT 1"),
+            {"e": class_rep_email},
+        ).fetchone()
+        if not rep_exists:
+            raise HTTPException(status_code=404, detail=f"Class representative not found: {class_rep_email}")
+
+        active_count = conn.execute(
+            text("""
+                SELECT COUNT(*)
+                FROM class_rep_room_mapping
+                WHERE UPPER(room_id) = UPPER(:rid)
+                  AND is_active = TRUE
+                  AND UPPER(class_rep_email) <> UPPER(:email)
+            """),
+            {"rid": room_id, "email": class_rep_email},
+        ).scalar() or 0
+
+        if active_count >= MAX_CLASS_REPS_PER_ROOM:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Room {room_id} already has {MAX_CLASS_REPS_PER_ROOM} active class representatives",
+            )
+
+        # Keep one active room mapping per class representative.
+        conn.execute(
+            text("UPDATE class_rep_room_mapping SET is_active = FALSE WHERE UPPER(class_rep_email)=UPPER(:email)"),
+            {"email": class_rep_email},
+        )
+
+        conn.execute(text("""
+            INSERT INTO class_rep_room_mapping (room_id, class_rep_email, is_active)
+            VALUES (:rid, :email, TRUE)
+            ON CONFLICT (room_id, class_rep_email)
+            DO UPDATE SET is_active = TRUE, created_at = NOW()
+        """), {"rid": room_id, "email": class_rep_email})
+
+        conn.execute(
+            text("UPDATE class_representatives SET assigned_room_id = :rid WHERE UPPER(email)=UPPER(:email)"),
+            {"rid": room_id, "email": class_rep_email},
+        )
+
+    return {
+        "status": "success",
+        "room_id": room_id,
+        "class_rep_email": class_rep_email,
+        "message": "Class representative mapping updated",
+    }
+
+
+@app.get("/rooms/connected-assignable")
+def get_connected_assignable_rooms(department: str = None, active_window_minutes: int = 15):
+    """Return rooms that have both active relay heartbeat and recent sensor data."""
+    window = max(1, min(active_window_minutes, 60))
+    window_interval = f"{window} minutes"
+
+    with engine.connect() as conn:
+        where_parts = [
+            "s.last_sensor_at >= NOW() - CAST(:window AS INTERVAL)",
+            "rs.last_relay_at >= NOW() - CAST(:window AS INTERVAL)",
+        ]
+        params = {"window": window_interval}
+
+        if department and not _is_admin_department(department):
+            where_parts.append("COALESCE(NULLIF(TRIM(UPPER(r.department)), ''), CASE WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE' ELSE UPPER(split_part(m.room_id, '-', 1)) END) = UPPER(:department)")
+            params["department"] = department
+
+        where_sql = " AND ".join(where_parts)
+
+        rows = conn.execute(text(f"""
+            WITH relay_last AS (
+                SELECT m.room_id, MAX(rs.last_updated) AS last_relay_at
+                FROM room_relay_mapping m
+                LEFT JOIN relay_states rs
+                    ON rs.device_id = m.room_id
+                    OR rs.device_id = m.relay_device_id
+                GROUP BY m.room_id
+            ),
+            rep_counts AS (
+                SELECT room_id, COUNT(*) AS active_rep_count
+                FROM class_rep_room_mapping
+                WHERE is_active = TRUE
+                GROUP BY room_id
+            )
+            SELECT
+                m.room_id,
+                COALESCE(NULLIF(TRIM(r.room_name), ''), m.room_id) AS room_name,
+                COALESCE(NULLIF(TRIM(UPPER(r.department)), ''), CASE WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE' ELSE UPPER(split_part(m.room_id, '-', 1)) END) AS department,
+                m.relay_device_id,
+                s.last_sensor_at,
+                rs.last_relay_at,
+                COALESCE(rc.active_rep_count, 0) AS active_rep_count
+            FROM room_relay_mapping m
+            LEFT JOIN rooms r ON UPPER(r.room_id) = UPPER(m.room_id)
+            JOIN LATERAL (
+                SELECT MAX(sd.ds) AS last_sensor_at
+                FROM sensor_data sd
+                WHERE UPPER(sd.device_id) = UPPER(m.room_id)
+                   OR UPPER(sd.device_id) = UPPER(m.relay_device_id)
+                   OR UPPER(sd.device_id) = UPPER('ESP32-' || m.room_id)
+                   OR UPPER(sd.device_id) = UPPER(
+                        CASE
+                            WHEN POSITION('-' IN m.room_id) > 0 THEN
+                                'ESP32-' || split_part(m.room_id, '-', 1) || '-' ||
+                                LEFT(split_part(m.room_id, '-', 1), 1) || split_part(m.room_id, '-', 2)
+                            ELSE ''
+                        END
+                   )
+            ) s ON TRUE
+            JOIN relay_last rs ON rs.room_id = m.room_id
+            LEFT JOIN rep_counts rc ON UPPER(rc.room_id) = UPPER(m.room_id)
+            WHERE {where_sql}
+            ORDER BY department ASC NULLS LAST, room_name ASC
+        """), params).fetchall()
+
+    data = []
+    for row in rows:
+        active_rep_count = int(row[6] or 0)
+        available_slots = max(0, MAX_CLASS_REPS_PER_ROOM - active_rep_count)
+        data.append({
+            "room_id": row[0],
+            "room_name": row[1],
+            "department": row[2],
+            "relay_device_id": row[3],
+            "last_sensor_at": row[4].isoformat() if row[4] else None,
+            "last_relay_at": row[5].isoformat() if row[5] else None,
+            "active_rep_count": active_rep_count,
+            "max_reps": MAX_CLASS_REPS_PER_ROOM,
+            "available_slots": available_slots,
+            "can_assign_class_rep": available_slots > 0,
+        })
+
+    return {"status": "success", "count": len(data), "data": data}
+
+
+@app.get("/rooms/class-rep-mappings")
+def list_class_rep_room_mappings(active_only: bool = True, room_id: str = None):
+    with engine.connect() as conn:
+        where_parts = []
+        params = {}
+        if active_only:
+            where_parts.append("m.is_active = TRUE")
+        if room_id:
+            where_parts.append("m.room_id = :rid")
+            params["rid"] = room_id
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        rows = conn.execute(text(f"""
+            SELECT m.id, m.room_id, m.class_rep_email, m.is_active, m.created_at,
+                   COALESCE(cr.name, cr.username) AS class_rep_name
+            FROM class_rep_room_mapping m
+            LEFT JOIN class_representatives cr ON UPPER(cr.email)=UPPER(m.class_rep_email)
+            {where_sql}
+            ORDER BY m.room_id ASC, m.created_at DESC
+        """), params).fetchall()
+
+    data = [
+        {
+            "id": r[0],
+            "room_id": r[1],
+            "class_rep_email": r[2],
+            "is_active": r[3],
+            "created_at": r[4].isoformat() if r[4] else None,
+            "class_rep_name": r[5],
+        }
+        for r in rows
+    ]
+    return {"status": "success", "count": len(data), "data": data}
 
 
 def _is_admin_department(department: str | None) -> bool:
     return bool(department and department.strip().lower() == "admin")
+
+
+def _is_test_identifier(value: str | None) -> bool:
+    """Return True when identifier points to test/demo/mock data."""
+    token = (value or "").strip().upper()
+    if not token:
+        return False
+    test_markers = ("TEST", "DEMO", "MOCK", "SAMPLE", "DUMMY")
+    return any(marker in token for marker in test_markers)
+
+
+def _build_device_candidates(room_or_device_id: str | None) -> list[str]:
+    """Return likely sensor IDs for a room/device token."""
+    if not room_or_device_id:
+        return []
+
+    token = str(room_or_device_id).strip()
+    if not token:
+        return []
+
+    out: list[str] = []
+
+    def _push(value: str | None):
+        if not value:
+            return
+        v = value.strip()
+        if not v:
+            return
+        if all(v.upper() != existing.upper() for existing in out):
+            out.append(v)
+
+    _push(token)
+    upper_token = token.upper()
+
+    if upper_token.startswith("ESP32-"):
+        _push(token[6:])
+    else:
+        _push(f"ESP32-{token}")
+
+    # Heuristic for IDs like CS-201 <-> ESP32-CS-C201
+    base = token[6:] if upper_token.startswith("ESP32-") else token
+    m = re.match(r"^([A-Za-z]+)-(\d+)$", base)
+    if m:
+        dept = m.group(1).upper()
+        room_num = m.group(2)
+        _push(f"ESP32-{dept}-{dept[:1]}{room_num}")
+
+    m2 = re.match(r"^([A-Za-z]+)-([A-Za-z])(\d+)$", base)
+    if m2:
+        _push(f"{m2.group(1).upper()}-{m2.group(3)}")
+
+    return out
+
+
+def _resolve_room_id_for_device(conn, room_or_device_id: str | None) -> str | None:
+    """Resolve incoming device token to canonical rooms.room_id when possible."""
+    candidates = _build_device_candidates(room_or_device_id)
+    if not candidates:
+        return None
+
+    for candidate in candidates:
+        mapped = conn.execute(
+            text(
+                """
+                SELECT m.room_id
+                FROM room_relay_mapping m
+                WHERE UPPER(m.room_id) = UPPER(:id)
+                   OR UPPER(m.relay_device_id) = UPPER(:id)
+                LIMIT 1
+                """
+            ),
+            {"id": candidate},
+        ).fetchone()
+        if mapped and mapped[0]:
+            return mapped[0]
+
+        room = conn.execute(
+            text("SELECT room_id FROM rooms WHERE UPPER(room_id)=UPPER(:id) LIMIT 1"),
+            {"id": candidate},
+        ).fetchone()
+        if room and room[0]:
+            return room[0]
+
+    return None
 
 # Pydantic models
 
@@ -165,6 +528,9 @@ class InviteUserRequest(BaseModel):
     department: str | None = None
     year: str | None = None
     email: str | None = None
+    room_id: str | None = None
+    is_proxy: bool = False
+    proxy_for_email: str | None = None
 
 class LoginRequest(BaseModel):
     username: str
@@ -571,15 +937,155 @@ async def invite_user(req: InviteUserRequest):
     pw_hash = PWD_CTX.hash(otp)
     role_lower = req.role.lower()
     target_table = "class_representatives" if ("student" in role_lower or "representative" in role_lower) else ("coordinators" if "coordinator" in role_lower else "admins")
+    is_proxy = bool(req.is_proxy)
+    proxy_for_email = (req.proxy_for_email or "").strip() or None
+    room_id = (req.room_id or "").strip() or None
 
     # Normalize email field
     target_email = req.email or req.username
     if target_table in {"coordinators", "admins"} and not target_email:
         raise HTTPException(status_code=400, detail="Email is required for admins and coordinators")
+    if target_table == "coordinators" and not (req.department or "").strip():
+        raise HTTPException(status_code=400, detail="Department is required for coordinators")
+    if target_table == "class_representatives" and not room_id:
+        raise HTTPException(status_code=400, detail="Room selection is required for class representatives")
+    if is_proxy and not proxy_for_email:
+        raise HTTPException(status_code=400, detail="proxy_for_email is required when is_proxy is true")
 
     coordinator_id = None
 
     with engine.begin() as conn:
+        resolved_room_id = _resolve_room_id_for_device(conn, room_id) if room_id else None
+        if resolved_room_id:
+            room_id = resolved_room_id
+
+        if target_table == "class_representatives":
+            room_row = conn.execute(
+                text("""
+                    SELECT x.room_id, x.department
+                    FROM (
+                        SELECT room_id, department
+                        FROM rooms
+                        WHERE UPPER(room_id) = UPPER(:rid)
+
+                        UNION ALL
+
+                        SELECT m.room_id,
+                               CASE
+                                   WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE'
+                                   ELSE UPPER(split_part(m.room_id, '-', 1))
+                               END AS department
+                        FROM room_relay_mapping m
+                        WHERE UPPER(m.room_id) = UPPER(:rid)
+                           OR UPPER(m.relay_device_id) = UPPER(:rid)
+                    ) x
+                    LIMIT 1
+                """),
+                {"rid": room_id},
+            ).fetchone()
+            if not room_row:
+                raise HTTPException(status_code=404, detail=f"Room not found: {room_id}")
+
+            room_department = (room_row[1] or "").strip().upper()
+            if req.department and room_department and req.department.strip().upper() != room_department:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Department {req.department} does not match room department {room_department}",
+                )
+
+            if is_proxy:
+                base_rep = conn.execute(text("""
+                    SELECT email, department, assigned_room_id
+                    FROM class_representatives
+                    WHERE UPPER(email)=UPPER(:email)
+                    LIMIT 1
+                """), {"email": proxy_for_email}).fetchone()
+                if not base_rep:
+                    raise HTTPException(status_code=404, detail=f"Primary class representative not found: {proxy_for_email}")
+
+                base_dept = (base_rep[1] or "").strip().upper()
+                if req.department and base_dept and req.department.strip().upper() != base_dept:
+                    raise HTTPException(status_code=400, detail="Proxy class representative must match the primary representative department")
+
+                base_room = (base_rep[2] or "").strip()
+                if base_room and room_id and room_id.strip().upper() != base_room.upper():
+                    raise HTTPException(status_code=400, detail="Proxy class representative must be assigned to the same room as the primary representative")
+
+            active_rep_count = conn.execute(text("""
+                SELECT COUNT(*)
+                FROM class_rep_room_mapping
+                WHERE UPPER(room_id) = UPPER(:rid)
+                  AND is_active = TRUE
+                  AND UPPER(class_rep_email) <> UPPER(:email)
+            """), {"rid": room_id, "email": target_email}).scalar() or 0
+            if active_rep_count >= MAX_CLASS_REPS_PER_ROOM:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot add more than {MAX_CLASS_REPS_PER_ROOM} class representatives to room {room_id}",
+                )
+
+        if target_table == "coordinators" and is_proxy:
+            base_coord = conn.execute(text("""
+                SELECT email, department
+                FROM coordinators
+                WHERE UPPER(email)=UPPER(:email)
+                LIMIT 1
+            """), {"email": proxy_for_email}).fetchone()
+            if not base_coord:
+                raise HTTPException(status_code=404, detail=f"Primary coordinator not found: {proxy_for_email}")
+
+            if req.department and (base_coord[1] or "").strip().upper() != req.department.strip().upper():
+                raise HTTPException(status_code=400, detail="Proxy coordinator must match the primary coordinator department")
+
+        if target_table == "coordinators":
+            active_coord_count = conn.execute(text("""
+                SELECT COUNT(*)
+                FROM coordinators
+                WHERE UPPER(department) = UPPER(:department)
+                  AND UPPER(email) <> UPPER(:email)
+            """), {
+                "department": (req.department or "").strip(),
+                "email": target_email,
+            }).scalar() or 0
+            if active_coord_count >= MAX_COORDINATORS_PER_DEPARTMENT:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot add more than {MAX_COORDINATORS_PER_DEPARTMENT} coordinators to department {(req.department or '').strip().upper()}",
+                )
+
+        if target_table == "coordinators" and room_id:
+            coord_room = conn.execute(
+                text("""
+                    SELECT x.room_id, x.department
+                    FROM (
+                        SELECT room_id, department
+                        FROM rooms
+                        WHERE UPPER(room_id) = UPPER(:rid)
+
+                        UNION ALL
+
+                        SELECT m.room_id,
+                               CASE
+                                   WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE'
+                                   ELSE UPPER(split_part(m.room_id, '-', 1))
+                               END AS department
+                        FROM room_relay_mapping m
+                        WHERE UPPER(m.room_id) = UPPER(:rid)
+                           OR UPPER(m.relay_device_id) = UPPER(:rid)
+                    ) x
+                    LIMIT 1
+                """),
+                {"rid": room_id},
+            ).fetchone()
+            if not coord_room:
+                raise HTTPException(status_code=404, detail=f"Room not found: {room_id}")
+            coord_room_dept = (coord_room[1] or "").strip().upper()
+            if req.department and coord_room_dept and req.department.strip().upper() != coord_room_dept:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Department {req.department} does not match room department {coord_room_dept}",
+                )
+
         # Check if user already exists in the chosen table
         existing = conn.execute(
             text(f"SELECT id FROM {target_table} WHERE { 'username' if target_table == 'class_representatives' else 'email' } = :u"),
@@ -588,7 +1094,13 @@ async def invite_user(req: InviteUserRequest):
 
         if existing:
             if target_table == "class_representatives":
-                query = text("UPDATE class_representatives SET password_hash=:p, name=:n, department=:d, ktu_id=:k, year=:y, email=:e WHERE id=:i")
+                query = text("""
+                    UPDATE class_representatives
+                    SET password_hash=:p, name=:n, department=:d, ktu_id=:k, year=:y,
+                        email=:e, is_proxy=:is_proxy, proxy_for_email=:proxy_for_email,
+                        assigned_room_id=:assigned_room_id
+                    WHERE id=:i
+                """)
                 params = {
                     "p": pw_hash,
                     "n": req.name,
@@ -596,6 +1108,9 @@ async def invite_user(req: InviteUserRequest):
                     "k": req.ktu_id,
                     "y": req.year,
                     "e": target_email,
+                    "is_proxy": is_proxy,
+                    "proxy_for_email": proxy_for_email,
+                    "assigned_room_id": room_id,
                     "i": existing[0],
                 }
             elif target_table == "coordinators":
@@ -606,8 +1121,23 @@ async def invite_user(req: InviteUserRequest):
                 ).fetchone()
                 coordinator_id = coordinator_id_row[0] if coordinator_id_row else None
 
-                query = text("UPDATE coordinators SET password_hash=:p, name=:n, department=:d, email=:e WHERE id=:i")
-                params = {"p": pw_hash, "n": req.name, "d": req.department, "e": target_email, "i": existing[0]}
+                query = text("""
+                    UPDATE coordinators
+                    SET password_hash=:p, name=:n, department=:d, email=:e,
+                        is_proxy=:is_proxy, proxy_for_email=:proxy_for_email,
+                        assigned_room_id=:assigned_room_id
+                    WHERE id=:i
+                """)
+                params = {
+                    "p": pw_hash,
+                    "n": req.name,
+                    "d": req.department,
+                    "e": target_email,
+                    "is_proxy": is_proxy,
+                    "proxy_for_email": proxy_for_email,
+                    "assigned_room_id": room_id,
+                    "i": existing[0],
+                }
             else:  # admins
                 query = text("UPDATE admins SET password_hash=:p, name=:n, email=:e WHERE id=:i")
                 params = {"p": pw_hash, "n": req.name, "e": target_email, "i": existing[0]}
@@ -615,8 +1145,8 @@ async def invite_user(req: InviteUserRequest):
         else:
             if target_table == "class_representatives":
                 query = text(
-                    "INSERT INTO class_representatives (username, password_hash, name, department, ktu_id, year, email, created_at) "
-                    "VALUES (:u, :p, :n, :d, :k, :y, :e, :c)"
+                    "INSERT INTO class_representatives (username, password_hash, name, department, ktu_id, year, email, is_proxy, proxy_for_email, assigned_room_id, created_at) "
+                    "VALUES (:u, :p, :n, :d, :k, :y, :e, :is_proxy, :proxy_for_email, :assigned_room_id, :c)"
                 )
                 params = {
                     "u": req.username,
@@ -626,6 +1156,9 @@ async def invite_user(req: InviteUserRequest):
                     "k": req.ktu_id,
                     "y": req.year,
                     "e": target_email,
+                    "is_proxy": is_proxy,
+                    "proxy_for_email": proxy_for_email,
+                    "assigned_room_id": room_id,
                     "c": datetime.utcnow(),
                 }
             elif target_table == "coordinators":
@@ -655,8 +1188,8 @@ async def invite_user(req: InviteUserRequest):
                 coordinator_id = f"{dept_prefix}{next_num:03d}"
                 
                 query = text(
-                    "INSERT INTO coordinators (coordinator_id, email, password_hash, name, department, created_at) "
-                    "VALUES (:cid, :e, :p, :n, :d, :c)"
+                    "INSERT INTO coordinators (coordinator_id, email, password_hash, name, department, is_proxy, proxy_for_email, assigned_room_id, created_at) "
+                    "VALUES (:cid, :e, :p, :n, :d, :is_proxy, :proxy_for_email, :assigned_room_id, :c)"
                 )
                 params = {
                     "cid": coordinator_id,
@@ -664,6 +1197,9 @@ async def invite_user(req: InviteUserRequest):
                     "p": pw_hash,
                     "n": req.name,
                     "d": req.department,
+                    "is_proxy": is_proxy,
+                    "proxy_for_email": proxy_for_email,
+                    "assigned_room_id": room_id,
                     "c": datetime.utcnow(),
                 }
             else:  # admins
@@ -681,6 +1217,18 @@ async def invite_user(req: InviteUserRequest):
 
         try:
             conn.execute(query, params)
+            if target_table == "class_representatives" and room_id:
+                # Keep one active room per class representative and max 3 active reps per room.
+                conn.execute(
+                    text("UPDATE class_rep_room_mapping SET is_active = FALSE WHERE UPPER(class_rep_email)=UPPER(:email)"),
+                    {"email": target_email},
+                )
+                conn.execute(text("""
+                    INSERT INTO class_rep_room_mapping (room_id, class_rep_email, is_active)
+                    VALUES (:rid, :email, TRUE)
+                    ON CONFLICT (room_id, class_rep_email)
+                    DO UPDATE SET is_active = TRUE, created_at = NOW()
+                """), {"rid": room_id, "email": target_email})
         except SQLAlchemyError as e:
             # Handle database errors, especially unique constraint violations
             error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
@@ -727,88 +1275,118 @@ async def invite_user(req: InviteUserRequest):
         print(f"Warning: Email send timed out for {req.username}")
         email_status = "failed"
     except Exception as e:
-        # Log error but don't fail the invite if email fails
+        # FastMail failed; try dedicated SMTP sender before marking failed.
         print(f"Warning: Failed to send email to {req.username}: {e}")
-        email_status = "failed"
+        fallback_sent = False
+        if _invite_mailer and _invite_mailer.is_configured():
+            try:
+                _invite_mailer.send_html_email(
+                    subject=subject,
+                    html_body=email_body,
+                    recipients=[target_email],
+                )
+                fallback_sent = True
+                print(f"Info: Fallback invite email sent to {target_email}")
+            except Exception as fallback_err:
+                print(f"Warning: Fallback invite email failed for {target_email}: {fallback_err}")
+
+        email_status = "sent" if fallback_sent else "failed"
     
     return {
         "status": f"User {action} successfully",
         "username": req.username,
         "role": req.role,
+        "room_id": room_id,
+        "is_proxy": is_proxy,
+        "proxy_for_email": proxy_for_email,
         "email_status": email_status,
         "message": f"Invitation {'sent' if email_status == 'sent' else 'created but email sending failed'}"
     }
 @app.get("/anomalies")
-def get_anomalies(limit: int = 50, department: str = None):
+def get_anomalies(limit: int = 50, department: str = None, room_id: str = None):
     """Fetch active anomalies from anomaly_logs.
     is_anomaly IN (1, -1) catches both storage conventions.
     Returns field names matching Flutter: timestamp, score."""
     try:
         with engine.connect() as conn:
+            where_parts = []
+            params = {"limit": limit}
             if department and not _is_admin_department(department):
-                result = conn.execute(
-                    text("""
-                        SELECT al.id, al.ds, al.device_id, al.power, al.occupancy,
-                               al.anomaly_score, al.energy_accumulated
-                        FROM anomaly_logs al
-                        LEFT JOIN rooms r ON al.device_id = r.room_id
-                        WHERE al.is_anomaly IN (1, -1)
-                        AND r.department = :department
-                        ORDER BY al.ds DESC
-                        LIMIT :limit
-                    """),
-                    {"department": department, "limit": limit}
-                )
-            else:
-                result = conn.execute(
-                    text("""
-                        SELECT id, ds, device_id, power, occupancy,
-                               anomaly_score, energy_accumulated
-                        FROM anomaly_logs
-                        WHERE is_anomaly IN (1, -1)
-                        ORDER BY ds DESC
-                        LIMIT :limit
-                    """),
-                    {"limit": limit}
-                )
-            rows = result.fetchall()
-            # Join with anomaly_alert_tracking to get reminder metadata
-            tracking_map = {}
-            try:
-                with engine.connect() as tc:
-                    t_rows = tc.execute(text("""
-                        SELECT anomaly_log_id, reminder_count, last_reminder_time,
-                               first_detected_at, status
-                        FROM anomaly_alert_tracking
-                        WHERE status = 'active'
-                    """)).fetchall()
-                    for tr in t_rows:
-                        if tr[0]:
-                            tracking_map[tr[0]] = {
-                                "reminder_count":    tr[1] or 0,
-                                "last_reminder_time": tr[2].isoformat() if tr[2] else None,
-                                "first_detected_at": tr[3].isoformat() if tr[3] else None,
-                                "alert_status":      tr[4],
-                            }
-            except Exception:
-                pass
+                where_parts.append("r.department = :department")
+                params["department"] = department
+            if room_id:
+                room_candidates = _build_device_candidates(room_id)
+                room_clauses = []
+                for idx, candidate in enumerate(room_candidates):
+                    key = f"room_id_{idx}"
+                    params[key] = candidate
+                    room_clauses.append(f"UPPER(a.room_id) = UPPER(:{key})")
+                if room_clauses:
+                    where_parts.append("(" + " OR ".join(room_clauses) + ")")
 
-            return [
-                {
-                    "id":                row[0],
-                    "timestamp":         row[1].isoformat() if row[1] else None,
-                    "device_id":         row[2],
-                    "power":             row[3],
-                    "occupancy":         row[4],
-                    "score":             round(row[5], 4) if row[5] is not None else 0,
-                    "energy_accumulated": row[6],
-                    "status":            "active",
-                    "reminder_count":    tracking_map.get(row[0], {}).get("reminder_count", 0),
-                    "last_reminder_time": tracking_map.get(row[0], {}).get("last_reminder_time"),
-                    "first_detected_at": tracking_map.get(row[0], {}).get("first_detected_at"),
-                }
-                for row in rows
-            ]
+            where_clause = ""
+            if where_parts:
+                where_clause = "AND " + " AND ".join(where_parts)
+
+            rows = conn.execute(text(f"""
+                SELECT
+                    a.id                                 AS tracking_id,
+                    a.room_id,
+                    a.anomaly_log_id,
+                    a.first_detected_at,
+                    a.last_reminder_time,
+                    a.reminder_count,
+                    a.status,
+                    a.anomaly_type,
+                    r.department,
+                    latest.id                            AS latest_log_id,
+                    latest.ds                            AS latest_ds,
+                    latest.power,
+                    latest.occupancy,
+                    latest.anomaly_score,
+                    latest.energy_accumulated
+                FROM anomaly_alert_tracking a
+                LEFT JOIN rooms r ON r.room_id = a.room_id
+                LEFT JOIN room_relay_mapping m ON UPPER(m.room_id) = UPPER(a.room_id)
+                LEFT JOIN LATERAL (
+                    SELECT id, ds, power, occupancy, anomaly_score, energy_accumulated
+                    FROM anomaly_logs
+                    WHERE UPPER(device_id) = UPPER(a.room_id)
+                       OR UPPER(device_id) = UPPER(COALESCE(m.relay_device_id, ''))
+                       OR UPPER(device_id) = UPPER('ESP32-' || a.room_id)
+                    ORDER BY ds DESC
+                    LIMIT 1
+                ) latest ON TRUE
+                WHERE a.status IN ('active', 'power_cut')
+                                    AND UPPER(a.room_id) NOT LIKE '%TEST%'
+                                    AND UPPER(a.room_id) NOT LIKE '%DEMO%'
+                                    AND UPPER(a.room_id) NOT LIKE '%MOCK%'
+                {where_clause}
+                ORDER BY COALESCE(latest.ds, a.first_detected_at) DESC
+                LIMIT :limit
+            """), params).fetchall()
+
+            result = []
+            for row in rows:
+                # id uses tracking row id, so frontend reminder service sees one alert thread.
+                result.append({
+                    "id": row[0],
+                    "tracking_id": row[0],
+                    "device_id": row[1],
+                    "anomaly_log_id": row[9] if row[9] is not None else row[2],
+                    "timestamp": row[10].isoformat() if row[10] else None,
+                    "power": row[11],
+                    "occupancy": row[12],
+                    "score": round(row[13], 4) if row[13] is not None else 0,
+                    "energy_accumulated": row[14],
+                    "status": row[6],
+                    "anomaly_type": row[7],
+                    "department": row[8],
+                    "reminder_count": row[5] or 0,
+                    "last_reminder_time": row[4].isoformat() if row[4] else None,
+                    "first_detected_at": row[3].isoformat() if row[3] else None,
+                })
+            return result
     except Exception as e:
         print(f"Error fetching anomalies: {e}")
         raise HTTPException(status_code=500, detail="Internal server error fetching alerts")
@@ -840,27 +1418,74 @@ def resolve_anomaly_put(anomaly_id: int):
     """
     try:
         with engine.begin() as conn:
+            # First, try resolving by tracking id (new frontend behavior).
+            tr = conn.execute(text("""
+                SELECT room_id, anomaly_log_id
+                FROM anomaly_alert_tracking
+                WHERE id = :id AND status IN ('active', 'power_cut')
+                LIMIT 1
+            """), {"id": anomaly_id}).fetchone()
+
+            if tr:
+                room_id = tr[0]
+                conn.execute(text("""
+                    UPDATE anomaly_alert_tracking
+                    SET status = 'acknowledged', resolved_at = NOW()
+                    WHERE id = :id
+                """), {"id": anomaly_id})
+
+                # Soft-clear recent anomaly rows for that room from active feed.
+                conn.execute(text("""
+                    UPDATE anomaly_logs
+                    SET is_anomaly = 0
+                    WHERE device_id = :room_id
+                      AND is_anomaly IN (1, -1)
+                """), {"room_id": room_id})
+
+                # Mark in-app notifications as resolved/read.
+                try:
+                    conn.execute(text("""
+                        UPDATE notifications
+                        SET is_read = TRUE,
+                            is_resolved = TRUE,
+                            resolved_at = NOW(),
+                            resolution_note = 'Resolved manually by dashboard action'
+                        WHERE room_id = :room_id
+                    """), {"room_id": room_id})
+                except Exception:
+                    pass
+
+                return {"status": "success", "message": f"Alert thread {anomaly_id} resolved", "id": anomaly_id}
+
+            # Backward compatibility: resolve by anomaly_log id.
             result = conn.execute(
-                text("UPDATE anomaly_logs SET is_anomaly = 0 WHERE id = :id RETURNING id"),
+                text("UPDATE anomaly_logs SET is_anomaly = 0 WHERE id = :id RETURNING id, device_id"),
                 {"id": anomaly_id}
             ).fetchone()
             if not result:
                 raise HTTPException(status_code=404, detail="Anomaly not found")
 
-            # Mark tracking row as resolved too (stops backend reminders)
+            device_id = result[1]
+            conn.execute(text("""
+                UPDATE anomaly_alert_tracking
+                SET status = 'acknowledged', resolved_at = NOW()
+                WHERE room_id = :room_id
+                  AND status IN ('active', 'power_cut')
+            """), {"room_id": device_id})
+
             try:
                 conn.execute(text("""
-                    UPDATE anomaly_alert_tracking
-                    SET status       = 'acknowledged',
-                        resolved_at  = NOW()
-                    WHERE anomaly_log_id = :id
-                      AND status = 'active'
-                """), {"id": anomaly_id})
+                    UPDATE notifications
+                    SET is_read = TRUE,
+                        is_resolved = TRUE,
+                        resolved_at = NOW(),
+                        resolution_note = 'Resolved manually by dashboard action'
+                    WHERE room_id = :room_id
+                """), {"room_id": device_id})
             except Exception:
-                pass  # tracking table may not exist yet — non-fatal
+                pass
 
-        return {"status": "success", "message": f"Anomaly {anomaly_id} resolved",
-                "id": anomaly_id}
+        return {"status": "success", "message": f"Anomaly {anomaly_id} resolved", "id": anomaly_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -948,7 +1573,7 @@ def login(req: LoginRequest, request: Request):
             if not admin_row:
                 # Try coordinator by coordinator_id only
                 coordinator_row = conn.execute(
-                    text("SELECT id, password_hash, name, department, email, coordinator_id FROM coordinators WHERE UPPER(coordinator_id)=UPPER(:u)"),
+                    text("SELECT id, password_hash, name, department, email, coordinator_id, is_proxy, proxy_for_email, assigned_room_id FROM coordinators WHERE UPPER(coordinator_id)=UPPER(:u)"),
                     {"u": req.username.strip()},
                 ).fetchone()
                 
@@ -980,7 +1605,7 @@ def login(req: LoginRequest, request: Request):
             class_rep_row = None
             if not admin_row and not coordinator_row:
                 class_rep_row = conn.execute(
-                    text("SELECT id, password_hash, department, ktu_id, year, username, name, email FROM class_representatives WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u) OR UPPER(username)=UPPER(:u)"),
+                    text("SELECT id, password_hash, department, ktu_id, year, username, name, email, is_proxy, proxy_for_email, assigned_room_id FROM class_representatives WHERE UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u) OR UPPER(username)=UPPER(:u)"),
                     {"u": req.username.strip()},
                 ).fetchone()
 
@@ -988,12 +1613,13 @@ def login(req: LoginRequest, request: Request):
                 u_id, pw_hash, name, email, username = admin_row
                 role = "admin"
                 dept, ktu, year = None, None, None
+                is_proxy_user, proxy_for, assigned_room_id = False, None, None
             elif coordinator_row:
-                u_id, pw_hash, name, dept, email, coordinator_id = coordinator_row
+                u_id, pw_hash, name, dept, email, coordinator_id, is_proxy_user, proxy_for, assigned_room_id = coordinator_row
                 role = "coordinator"
                 ktu, year = None, None
             elif class_rep_row:
-                u_id, pw_hash, dept, ktu, year, username_val, name, email_from_table = class_rep_row
+                u_id, pw_hash, dept, ktu, year, username_val, name, email_from_table, is_proxy_user, proxy_for, assigned_room_id = class_rep_row
                 email = email_from_table or username_val
                 role = "student"
             else:
@@ -1039,6 +1665,9 @@ def login(req: LoginRequest, request: Request):
                 "department": dept,
                 "ktu_id": ktu,
                 "year": year,
+                "is_proxy": bool(is_proxy_user),
+                "proxy_for_email": proxy_for,
+                "assigned_room_id": assigned_room_id,
                 "exp": datetime.utcnow() + timedelta(hours=12),
             }
             return {"access_token": jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG), "token_type": "bearer"}
@@ -1071,7 +1700,8 @@ def coordinator_login(req: LoginRequest, request: Request):
             # Look up coordinator by coordinator_id
             coordinator_row = conn.execute(
                 text("""
-                    SELECT id, password_hash, name, department, email, coordinator_id, created_at 
+                    SELECT id, password_hash, name, department, email, coordinator_id, created_at,
+                           is_proxy, proxy_for_email, assigned_room_id
                     FROM coordinators 
                     WHERE UPPER(coordinator_id)=UPPER(:u)
                 """),
@@ -1088,7 +1718,7 @@ def coordinator_login(req: LoginRequest, request: Request):
                 )
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             
-            u_id, pw_hash, name, dept, email, coordinator_id, created_at = coordinator_row
+            u_id, pw_hash, name, dept, email, coordinator_id, created_at, is_proxy_user, proxy_for, assigned_room_id = coordinator_row
             
             # Verify password
             if not PWD_CTX.verify(req.password, pw_hash):
@@ -1130,6 +1760,9 @@ def coordinator_login(req: LoginRequest, request: Request):
                 "name": name,
                 "role": "coordinator",
                 "department": dept,
+                "is_proxy": bool(is_proxy_user),
+                "proxy_for_email": proxy_for,
+                "assigned_room_id": assigned_room_id,
                 "exp": datetime.now(timezone.utc) + timedelta(hours=12),
             }
             
@@ -1142,6 +1775,9 @@ def coordinator_login(req: LoginRequest, request: Request):
                 "name": name,
                 "email": email,
                 "department": dept,
+                "is_proxy": bool(is_proxy_user),
+                "proxy_for_email": proxy_for,
+                "assigned_room_id": assigned_room_id,
                 "created_at": created_at.isoformat() if created_at else None,
                 "token": token,
                 "token_type": "bearer"
@@ -1244,7 +1880,7 @@ def get_coordinators():
     with engine.begin() as conn:
         result = conn.execute(
             text(
-                "SELECT id, email, name, department, created_at FROM coordinators ORDER BY name ASC"
+                "SELECT id, email, name, department, is_proxy, proxy_for_email, assigned_room_id, created_at FROM coordinators ORDER BY name ASC"
             )
         ).fetchall()
         
@@ -1255,7 +1891,10 @@ def get_coordinators():
                 "username": row[1],
                 "name": row[2] or row[1],
                 "department": row[3] or "N/A",
-                "created_at": row[4].isoformat() if row[4] else None,
+                "is_proxy": bool(row[4]),
+                "proxy_for_email": row[5],
+                "assigned_room_id": row[6],
+                "created_at": row[7].isoformat() if row[7] else None,
             })
         
         return {"coordinators": coordinators, "total": len(coordinators)}
@@ -1267,7 +1906,8 @@ def get_class_representatives():
     with engine.begin() as conn:
         result = conn.execute(
             text("""
-                SELECT id, username, name, ktu_id, department, year, email, created_at 
+                SELECT id, username, name, ktu_id, department, year, email,
+                       created_at, is_proxy, proxy_for_email, assigned_room_id
                 FROM class_representatives 
                 ORDER BY department ASC, year ASC, name ASC
             """)
@@ -1283,6 +1923,9 @@ def get_class_representatives():
                 "department": row[4],
                 "year": row[5],
                 "email": row[6],
+                "is_proxy": bool(row[8]),
+                "proxy_for_email": row[9],
+                "assigned_room_id": row[10],
                 "created_at": row[7].isoformat() if row[7] else None
             })
         
@@ -1488,6 +2131,15 @@ def get_dashboard_overview(active_window_minutes: int = 5, usage_window_hours: i
 def delete_user(username: str):
     """Delete a user (coordinator or class representative) by username."""
     with engine.begin() as conn:
+        rep_emails = conn.execute(
+            text("""
+                SELECT email
+                FROM class_representatives
+                WHERE UPPER(username)=UPPER(:u) OR UPPER(ktu_id)=UPPER(:u) OR UPPER(email)=UPPER(:u)
+            """),
+            {"u": username},
+        ).fetchall()
+
         result_admin = conn.execute(
             text("DELETE FROM admins WHERE UPPER(email)=UPPER(:u)"),
             {"u": username},
@@ -1503,6 +2155,31 @@ def delete_user(username: str):
             {"u": username},
         )
 
+        for row in rep_emails:
+            rep_email = (row[0] or "").strip()
+            if rep_email:
+                conn.execute(
+                    text("DELETE FROM class_rep_room_mapping WHERE UPPER(class_rep_email)=UPPER(:e)"),
+                    {"e": rep_email},
+                )
+                conn.execute(
+                    text("UPDATE class_representatives SET proxy_for_email = NULL WHERE UPPER(proxy_for_email)=UPPER(:e)"),
+                    {"e": rep_email},
+                )
+                conn.execute(
+                    text("UPDATE coordinators SET proxy_for_email = NULL WHERE UPPER(proxy_for_email)=UPPER(:e)"),
+                    {"e": rep_email},
+                )
+
+        conn.execute(
+            text("UPDATE class_representatives SET proxy_for_email = NULL WHERE UPPER(proxy_for_email)=UPPER(:u)"),
+            {"u": username},
+        )
+        conn.execute(
+            text("UPDATE coordinators SET proxy_for_email = NULL WHERE UPPER(proxy_for_email)=UPPER(:u)"),
+            {"u": username},
+        )
+
         deleted_count = result_admin.rowcount + result_coord.rowcount + result_reps.rowcount
 
         if deleted_count == 0:
@@ -1515,16 +2192,33 @@ async def receive_sensor_data(request: Request):
     global model, model_features
     try:
         payload = await request.json()
-        device_id = payload.get("device_id", "unknown")
+        raw_device_id = payload.get("device_id", "unknown")
+        device_id = raw_device_id
         timestamp = datetime.now(timezone.utc)
+
+        # Verbose ingest log: show exactly what JSON values arrived at backend.
+        # Keep JSON encoded in one line so it is easy to grep in server logs.
+        try:
+            print(
+                f"[INGEST][RAW] ts={timestamp.isoformat()} device_id={raw_device_id} "
+                f"keys={sorted(list(payload.keys()))}"
+            )
+            print(f"[INGEST][JSON] {json.dumps(payload, ensure_ascii=True, default=str)}")
+        except Exception as _log_exc:
+            print(f"[INGEST][WARN] Failed to print payload: {_log_exc}")
 
         # 1. Identify what data we just received
         has_power = "power" in payload and payload.get("power") is not None
+        has_frequency = "frequency" in payload and payload.get("frequency") is not None
         has_occ = "human_present" in payload and payload.get("human_present") is not None
         has_relay_state = "relay_state" in payload and payload.get("relay_state") is not None
         relay_state = str(payload.get("relay_state", "")).strip().upper()
 
         with engine.begin() as conn:
+            resolved_room_id = _resolve_room_id_for_device(conn, raw_device_id)
+            # Store sensor/anomaly records under canonical room_id when resolvable.
+            device_id = resolved_room_id or raw_device_id
+
             # Keep relay heartbeat fresh whenever ESP32 includes relay state in sensor payload.
             if has_relay_state and relay_state in {"ON", "OFF", "UNKNOWN"}:
                 conn.execute(
@@ -1536,18 +2230,23 @@ async def receive_sensor_data(request: Request):
                         DO UPDATE SET state = :state, last_updated = NOW()
                         """
                     ),
-                    {"device_id": device_id, "state": relay_state},
+                    {"device_id": raw_device_id, "state": relay_state},
                 )
 
-            # 2. LOOKUP: Check for a row from this device created in the last 5 minutes
-            # Extended window to allow camera and power sensor data to merge
+            if resolved_room_id and resolved_room_id != raw_device_id:
+                print(f"[INGEST][MAP] raw_device_id={raw_device_id} -> room_id={resolved_room_id}")
+
+            # 2. LOOKUP: Check for a row from this device created in the last 7 minutes.
+            # Window is 7 min (not 5) because the ESP32 sends on an exact ~300s timer.
+            # With a 5-min window, the previous row lands at "now - 300.06s" and misses
+            # the "ds > now - 300.00s" check by milliseconds, causing spurious new rows.
             existing = conn.execute(
-                text("""SELECT id, occupancy, power, current, voltage, energy, power_factor 
+                text("""SELECT id, occupancy, power, current, voltage, energy, power_factor, frequency 
                         FROM sensor_data 
                         WHERE device_id = :id 
                         AND ds > :window 
                         ORDER BY ds DESC LIMIT 1"""),
-                {"id": device_id, "window": timestamp - timedelta(minutes=5)}
+                {"id": device_id, "window": timestamp - timedelta(minutes=7)}
             ).fetchone()
 
             if existing:
@@ -1560,14 +2259,15 @@ async def receive_sensor_data(request: Request):
                         {"occ": occupancy, "rid": row_id}
                     )
                     # Use existing electrical data for AI processing (FIXED indices)
-                    # SELECT: id[0], occupancy[1], power[2], current[3], voltage[4], energy[5], power_factor[6]
-                    p, c, v, e, pf = existing[2], existing[3], existing[4], existing[5], existing[6]
+                    # SELECT: id[0], occupancy[1], power[2], current[3], voltage[4], energy[5], power_factor[6], frequency[7]
+                    p, c, v, e, pf, f = existing[2], existing[3], existing[4], existing[5], existing[6], existing[7]
                     # Use 0 if values are None
                     p = p if p is not None else 0.0
                     c = c if c is not None else 0.0
                     v = v if v is not None else 0.0
                     e = e if e is not None else 0.0
                     pf = pf if pf is not None else 0.0
+                    f = f if f is not None else 0.0
                 
                 if has_power:
                     p = float(payload.get("power", 0))
@@ -1575,14 +2275,28 @@ async def receive_sensor_data(request: Request):
                     pf = float(payload.get("power_factor", 0))
                     v = float(payload.get("voltage", 0))
                     e = float(payload.get("energy", 0))
+                    f = float(payload.get("frequency", 0))
                     
                     conn.execute(
                         text("""UPDATE sensor_data SET 
-                                power=:p, current=:c, voltage=:v, energy=:e, power_factor=:pf 
+                                power=:p, current=:c, voltage=:v, energy=:e, power_factor=:pf, frequency=:f 
                                 WHERE id = :rid"""),
-                        {"p": p, "c": c, "v": v, "e": e, "pf": pf, "rid": row_id}
+                        {"p": p, "c": c, "v": v, "e": e, "pf": pf, "f": f, "rid": row_id}
                     )
                     # Use existing occupancy context for AI processing
+                    occupancy = existing[1] if existing[1] is not None else 0
+                elif has_frequency:
+                    f = float(payload.get("frequency", 0))
+                    conn.execute(
+                        text("UPDATE sensor_data SET frequency = :f WHERE id = :rid"),
+                        {"f": f, "rid": row_id}
+                    )
+                    p, c, v, e, pf = existing[2], existing[3], existing[4], existing[5], existing[6]
+                    p = p if p is not None else 0.0
+                    c = c if c is not None else 0.0
+                    v = v if v is not None else 0.0
+                    e = e if e is not None else 0.0
+                    pf = pf if pf is not None else 0.0
                     occupancy = existing[1] if existing[1] is not None else 0
             else:
                 # 4. INSERT: Create a fresh row if no recent entry exists
@@ -1593,6 +2307,7 @@ async def receive_sensor_data(request: Request):
                     pf = float(payload.get("power_factor", 0))
                     v = float(payload.get("voltage", 0))
                     e = float(payload.get("energy", 0))
+                    f = float(payload.get("frequency", 0))
                     occupancy = payload.get("human_present") if has_occ else 0
                     
                     # If no occupancy in payload, lookup most recent
@@ -1604,18 +2319,19 @@ async def receive_sensor_data(request: Request):
                         occupancy = occ_q[0] if occ_q else 0
                     
                     conn.execute(
-                        text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, power_factor, occupancy) 
-                                VALUES (:ds, :id, :p, :c, :v, :e, :pf, :occ)"""),
-                        {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "pf": pf, "occ": occupancy}
+                        text("""INSERT INTO sensor_data (ds, device_id, power, current, voltage, energy, frequency, power_factor, occupancy) 
+                                VALUES (:ds, :id, :p, :c, :v, :e, :f, :pf, :occ)"""),
+                        {"ds": timestamp, "id": device_id, "p": p, "c": c, "v": v, "e": e, "f": f, "pf": pf, "occ": occupancy}
                     )
                     print(f"[DEBUG] INSERT sensor_data with power: device_id={device_id}, power={p}, occupancy={occupancy}")
                 elif has_occ:
                     # Camera-only data - insert with NULL power values (not 0) to distinguish from actual zero readings
                     occupancy = payload.get("human_present")
+                    f = float(payload.get("frequency", 0)) if has_frequency else None
                     conn.execute(
-                        text("""INSERT INTO sensor_data (ds, device_id, occupancy) 
-                                VALUES (:ds, :id, :occ)"""),
-                        {"ds": timestamp, "id": device_id, "occ": occupancy}
+                        text("""INSERT INTO sensor_data (ds, device_id, occupancy, frequency) 
+                                VALUES (:ds, :id, :occ, :f)"""),
+                        {"ds": timestamp, "id": device_id, "occ": occupancy, "f": f}
                     )
                     print(f"[DEBUG] INSERT sensor_data with occupancy only: device_id={device_id}, occupancy={occupancy}")
                     # Use NULL power values for AI processing (will be handled as 0 in calculations)
@@ -1644,14 +2360,22 @@ async def receive_sensor_data(request: Request):
         }
         
         # ── Anomaly Detection ─────────────────────────────────────────────────────────
-        # Isolation Forest: predict() returns -1 (anomaly) or +1 (normal).
-        # When sklearn is missing we use a dual-rule fallback:
-        #   1. Absolute: power > room threshold (kW) * 1000
-        #   2. Relative: power > 2.5x the rolling average (catches spikes)
-        # Final flag: is_anomaly_flag = 1 (anomaly) | 0 (normal)
-        if p < 10.0:
-            raw_prediction = -1
-            score = 0.5
+        # Two scenarios trigger anomaly alerts:
+        #   Scenario 1: occupancy == 1 AND power > 100W (high usage while occupied)
+        #   Scenario 2: occupancy == 0 AND power >= 20W (equipment left on without occupancy)
+        
+        occ_active = str(occupancy).strip().lower() in {"1", "true", "yes", "on"}
+        occ_absent = str(occupancy).strip().lower() in {"0", "false", "no", "off"}
+        
+        # Check both scenarios
+        scenario1_high_occupancy = occ_active and p > 100.0  # occupied with very high power
+        scenario2_no_occupancy_usage = occ_absent and p >= 20.0  # not occupied but equipment running
+        
+        meets_required_conditions = scenario1_high_occupancy or scenario2_no_occupancy_usage
+
+        if not meets_required_conditions:
+            raw_prediction = 1
+            score = 0.0
         elif model is not None and model_features is not None:
             input_df = pd.DataFrame([input_data])[model_features]
             raw_prediction = int(model.predict(input_df)[0])
@@ -1662,7 +2386,7 @@ async def receive_sensor_data(request: Request):
             try:
                 with engine.connect() as _tc:
                     _tr = _tc.execute(
-                        text("SELECT threshold FROM rooms WHERE room_id = :rid"),
+                        text("SELECT threshold FROM rooms WHERE UPPER(room_id) = UPPER(:rid)"),
                         {"rid": device_id}
                     ).fetchone()
                     if _tr and _tr[0]:
@@ -1696,7 +2420,8 @@ async def receive_sensor_data(request: Request):
         _overview_cache["timestamp"] = None
 
         # ── Trigger in-app notification to coordinator & class rep ────────────────────
-        if is_anomaly_flag == 1 and _alert_svc:
+        # Ignore synthetic/test identifiers so fake alerts never enter active flow.
+        if is_anomaly_flag == 1 and _alert_svc and not _is_test_identifier(device_id):
             try:
                 with engine.connect() as _conn:
                     _log_row = _conn.execute(
@@ -1730,56 +2455,43 @@ def get_sensor_data(limit: int = 60, device_id: str = None, department: str = No
     """Get sensor data. Can filter by device_id, department, or both."""
     try:
         with engine.connect() as conn:
-            if device_id and department and not _is_admin_department(department):
-                # Filter by both device_id and department
-                result = conn.execute(
-                    text("""
-                        SELECT sd.id, sd.ds, sd.device_id, sd.value, sd.voltage, sd.current, sd.power, sd.energy, sd.frequency, sd.power_factor
-                        FROM sensor_data sd
-                        LEFT JOIN rooms r ON sd.device_id = r.room_id
-                        WHERE sd.device_id = :device_id 
-                        AND r.department = :department
-                        ORDER BY sd.ds DESC 
-                        LIMIT :limit
-                    """),
-                    {"device_id": device_id, "department": department, "limit": limit}
-                )
-            elif department and not _is_admin_department(department):
-                # Filter by department only
-                result = conn.execute(
-                    text("""
-                        SELECT sd.id, sd.ds, sd.device_id, sd.value, sd.voltage, sd.current, sd.power, sd.energy, sd.frequency, sd.power_factor
-                        FROM sensor_data sd
-                        LEFT JOIN rooms r ON sd.device_id = r.room_id
-                        WHERE r.department = :department
-                        ORDER BY sd.ds DESC 
-                        LIMIT :limit
-                    """),
-                    {"department": department, "limit": limit}
-                )
-            elif device_id:
-                # Filter by device_id only
-                result = conn.execute(
-                    text("""
-                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
-                        FROM sensor_data 
-                        WHERE device_id = :device_id
-                        ORDER BY ds DESC 
-                        LIMIT :limit
-                    """),
-                    {"device_id": device_id, "limit": limit}
-                )
-            else:
-                # No filters
-                result = conn.execute(
-                    text("""
-                        SELECT id, ds, device_id, value, voltage, current, power, energy, frequency, power_factor 
-                        FROM sensor_data 
-                        ORDER BY ds DESC 
-                        LIMIT :limit
-                    """),
-                    {"limit": limit}
-                )
+            params = {"limit": limit}
+            where_parts = []
+
+            if device_id:
+                candidates = _build_device_candidates(device_id)
+                candidate_clauses = []
+                for idx, candidate in enumerate(candidates):
+                    key = f"did_{idx}"
+                    params[key] = candidate
+                    candidate_clauses.append(f"UPPER(sd.device_id) = UPPER(:{key})")
+                if candidate_clauses:
+                    where_parts.append("(" + " OR ".join(candidate_clauses) + ")")
+
+            if department and not _is_admin_department(department):
+                params["department"] = department
+                where_parts.append("UPPER(r.department) = UPPER(:department)")
+
+            where_sql = ""
+            if where_parts:
+                where_sql = "WHERE " + " AND ".join(where_parts)
+
+            result = conn.execute(
+                text(f"""
+                    SELECT sd.id, sd.ds, sd.device_id, sd.value, sd.voltage, sd.current, sd.power, sd.energy, sd.frequency, sd.power_factor
+                    FROM sensor_data sd
+                    LEFT JOIN room_relay_mapping m
+                        ON UPPER(sd.device_id) = UPPER(m.room_id)
+                        OR UPPER(sd.device_id) = UPPER(m.relay_device_id)
+                    LEFT JOIN rooms r
+                        ON UPPER(r.room_id) = UPPER(sd.device_id)
+                        OR UPPER(r.room_id) = UPPER(m.room_id)
+                    {where_sql}
+                    ORDER BY sd.ds DESC
+                    LIMIT :limit
+                """),
+                params,
+            )
             
             rows = result.fetchall()
             data = [
