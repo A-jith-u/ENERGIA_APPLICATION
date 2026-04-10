@@ -319,9 +319,11 @@ Widget _buildAnomalyTab() {
                   
                   // Index notifications by room_id
                   for (final notif in notifications) {
-                    final roomId = notif['room_id'] ?? '';
+                    final roomId = (notif['room_id'] ?? notif['device_id'] ?? '').toString().trim();
                     if (roomId.isNotEmpty) {
-                      notifsByRoom[roomId] = notif as Map<String, dynamic>;
+                      final mapNotif = notif as Map<String, dynamic>;
+                      notifsByRoom[roomId] = mapNotif;
+                      notifsByRoom[roomId.toUpperCase()] = mapNotif;
                     }
                   }
                 }
@@ -2811,15 +2813,26 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
   /// Build the alert message content widget, showing formatted notification message
   /// if available, otherwise fall back to raw anomaly data
   Widget _buildAlertMessageContent(Map<String, dynamic> alert) {
-    final roomId = alert['device_id'] ?? '';
-    final notification = widget.notificationsByRoom[roomId];
+    final roomId = (alert['room_id'] ?? alert['device_id'] ?? '').toString().trim();
+    final notification =
+        widget.notificationsByRoom[roomId] ?? widget.notificationsByRoom[roomId.toUpperCase()];
     final theme = Theme.of(context);
 
     if (notification != null) {
       // Display formatted role-based notification message
       final title = notification['title'] ?? '';
       final message = notification['message'] ?? '';
-      final power = notification['power'];
+        final notifPowerRaw = notification['power'];
+        final notifPower = notifPowerRaw is num
+          ? notifPowerRaw.toDouble()
+          : double.tryParse('${notifPowerRaw ?? ''}');
+        final alertPowerRaw = alert['power'];
+        final alertPower = alertPowerRaw is num
+          ? alertPowerRaw.toDouble()
+          : double.tryParse('${alertPowerRaw ?? ''}');
+        final powerText = notifPower != null
+          ? '${notifPower.toStringAsFixed(1)}W'
+          : (alertPower != null ? '${alertPower.toStringAsFixed(1)}W' : 'N/A');
       
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2850,7 +2863,7 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
           if (message.isNotEmpty) const SizedBox(height: 4),
           // Metadata now fallback
           Text(
-            '${_formatTime(alert['timestamp'])} • Power: ${power?.toStringAsFixed(1) ?? alert['power']}W',
+            '${_formatTime(alert['timestamp'])} • Power: $powerText',
             style: theme.textTheme.bodySmall?.copyWith(
               color: Colors.grey.shade500,
               fontSize: 11,
@@ -2999,7 +3012,7 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
                                     children: [
                                       Expanded(
                                         child: Text(
-                                          'Anomaly in ${alert['device_id']}',
+                                          'Anomaly in ${alert['room_id'] ?? alert['device_id'] ?? 'Unknown room'}',
                                           style: const TextStyle(
                                               fontWeight: FontWeight.bold,
                                               fontSize: 14),

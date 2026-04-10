@@ -86,6 +86,30 @@ class AlertMailService:
     def is_configured(self) -> bool:
         return bool(self.smtp_host and self.smtp_user and self.smtp_password and self.smtp_from)
 
+    def _smtp_attempts(self):
+        hosts = []
+        for h in [
+            self.smtp_host,
+            os.environ.get("MAIL_SERVER"),
+            "smtp.gmail.com",
+            "smtp.googlemail.com",
+        ]:
+            if h and h not in hosts:
+                hosts.append(h)
+
+        modes = []
+        if self.smtp_use_ssl or self.smtp_port == 465:
+            modes.extend([(self.smtp_port, True), (465, True), (587, False)])
+        else:
+            modes.extend([(self.smtp_port, False), (587, False), (465, True)])
+
+        dedup_modes = []
+        for mode in modes:
+            if mode not in dedup_modes:
+                dedup_modes.append(mode)
+
+        return [(host, port, use_ssl) for host in hosts for (port, use_ssl) in dedup_modes]
+
     def send_html_email(self, *, subject: str, html_body: str, recipients: Iterable[str]) -> None:
         recipients = [r.strip() for r in recipients if str(r).strip()]
         if not recipients:
@@ -100,12 +124,23 @@ class AlertMailService:
         msg.set_content(html_body, subtype="html")
 
         ctx = ssl.create_default_context()
-        if self.smtp_use_ssl or self.smtp_port == 465:
-            with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, context=ctx) as server:
-                server.login(self.smtp_user, self.smtp_password)
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-                server.starttls(context=ctx)
-                server.login(self.smtp_user, self.smtp_password)
-                server.send_message(msg)
+        errors = []
+        for host, port, use_ssl in self._smtp_attempts():
+            try:
+                if use_ssl:
+                    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as server:
+                        server.login(self.smtp_user, self.smtp_password)
+                        server.send_message(msg)
+                else:
+                    with smtplib.SMTP(host, port, timeout=20) as server:
+                        server.ehlo()
+                        server.starttls(context=ctx)
+                        server.ehlo()
+                        server.login(self.smtp_user, self.smtp_password)
+                        server.send_message(msg)
+                return
+            except Exception as exc:
+                errors.append(f"{host}:{port} ssl={1 if use_ssl else 0} -> {exc}")
+
+        detail = " | ".join(errors[:3]) if errors else "unknown SMTP error"
+        raise RuntimeError(f"Error connecting to SMTP server. Attempts failed: {detail}")

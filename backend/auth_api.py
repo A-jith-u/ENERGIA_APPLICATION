@@ -100,6 +100,26 @@ except Exception as _e:
     print(f"[auth_api] anomaly_alert_service not available: {_e}")
 
 
+def _load_alert_mail_service():
+    import importlib.util as _ilu
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _fp = os.path.join(_here, "alert_mail_service.py")
+    _spec = _ilu.spec_from_file_location("alert_mail_service", _fp)
+    _mod = _ilu.module_from_spec(_spec)
+    sys.modules.setdefault("alert_mail_service", _mod)
+    _spec.loader.exec_module(_mod)
+    return _mod
+
+
+try:
+    _mail_mod = _load_alert_mail_service()
+    _invite_mailer = _mail_mod.AlertMailService()
+    print("[auth_api] alert_mail_service loaded [OK]")
+except Exception as _e:
+    _invite_mailer = None
+    print(f"[auth_api] alert_mail_service not available: {_e}")
+
+
 # Ensure password reset table exists (idempotent)
 def _init_password_reset_table():
     try:
@@ -1255,9 +1275,22 @@ async def invite_user(req: InviteUserRequest):
         print(f"Warning: Email send timed out for {req.username}")
         email_status = "failed"
     except Exception as e:
-        # Log error but don't fail the invite if email fails
+        # FastMail failed; try dedicated SMTP sender before marking failed.
         print(f"Warning: Failed to send email to {req.username}: {e}")
-        email_status = "failed"
+        fallback_sent = False
+        if _invite_mailer and _invite_mailer.is_configured():
+            try:
+                _invite_mailer.send_html_email(
+                    subject=subject,
+                    html_body=email_body,
+                    recipients=[target_email],
+                )
+                fallback_sent = True
+                print(f"Info: Fallback invite email sent to {target_email}")
+            except Exception as fallback_err:
+                print(f"Warning: Fallback invite email failed for {target_email}: {fallback_err}")
+
+        email_status = "sent" if fallback_sent else "failed"
     
     return {
         "status": f"User {action} successfully",

@@ -29,6 +29,7 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
   String? _authToken;
+  String? _userEmail;
   String? _department; // decoded from JWT, used to filter anomaly alerts
   String? _assignedRoomId; // decoded from JWT, used to scope class-rep data
 
@@ -90,6 +91,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final decoded = JwtDecoder.decode(token);
         setState(() {
           _authToken = token;
+          _userEmail = decoded['username'] as String?;
           _department = decoded['department'] as String?;
           _assignedRoomId = decoded['assigned_room_id'] as String?;
         });
@@ -288,6 +290,7 @@ class _DashboardPageState extends State<DashboardPage> {
           anomalies: _anomalies,
           department: _department,
           roomId: _assignedRoomId,
+          userEmail: _userEmail,
           baseUrls: _baseUrls,
           onRefresh: () async {
             await _fetchAnomalies();
@@ -2035,6 +2038,7 @@ class _CRAlertsSection extends StatefulWidget {
   final List<Map<String, dynamic>> anomalies;
   final String? department;
   final String? roomId;
+  final String? userEmail;
   final List<String> baseUrls;
   final Future<void> Function() onRefresh;
 
@@ -2044,6 +2048,7 @@ class _CRAlertsSection extends StatefulWidget {
     required this.onRefresh,
     this.department,
     this.roomId,
+    this.userEmail,
   });
 
   @override
@@ -2053,6 +2058,7 @@ class _CRAlertsSection extends StatefulWidget {
 class _CRAlertsSectionState extends State<_CRAlertsSection> {
   late List<Map<String, dynamic>> _localAnomalies;
   final Set<dynamic> _resolvingIds = {};
+  Map<String, Map<String, dynamic>> _notificationsByRoom = {};
   Timer? _selfRefreshTimer;
 
   @override
@@ -2105,11 +2111,39 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
           final raw = body is List ? body : (body['anomalies'] as List? ?? []);
           final fetched = List<Map<String, dynamic>>.from(
               raw.whereType<Map<String, dynamic>>());
+
+          Map<String, Map<String, dynamic>> notifsByRoom = {};
+          final email = widget.userEmail?.trim() ?? '';
+          if (email.isNotEmpty) {
+            try {
+              final notifResp = await http
+                  .get(
+                    Uri.parse('$base/notify/notifications?email=${Uri.encodeComponent(email)}&limit=100'),
+                    headers: {'Content-Type': 'application/json'},
+                  )
+                  .timeout(const Duration(seconds: 6));
+              if (notifResp.statusCode == 200) {
+                final notifBody = jsonDecode(notifResp.body) as Map<String, dynamic>;
+                final notifications = notifBody['notifications'] as List? ?? [];
+                for (final n in notifications) {
+                  final roomId = (n['room_id'] ?? n['device_id'] ?? '').toString().trim();
+                  if (roomId.isEmpty) continue;
+                  final mapN = n as Map<String, dynamic>;
+                  notifsByRoom[roomId] = mapN;
+                  notifsByRoom[roomId.toUpperCase()] = mapN;
+                }
+              }
+            } catch (_) {
+              // Best effort only.
+            }
+          }
+
           if (!mounted) return;
           setState(() {
             _localAnomalies = fetched
                 .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
                 .toList();
+            _notificationsByRoom = notifsByRoom;
           });
           return;
         }
@@ -2117,6 +2151,76 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
         continue;
       }
     }
+  }
+
+  Widget _buildAlertMessageContent(Map<String, dynamic> alert) {
+    final roomId = (alert['room_id'] ?? alert['device_id'] ?? '').toString().trim();
+    final notification =
+        _notificationsByRoom[roomId] ?? _notificationsByRoom[roomId.toUpperCase()];
+    final theme = Theme.of(context);
+
+    if (notification != null) {
+      final title = (notification['title'] ?? '').toString();
+      final message = (notification['message'] ?? '').toString();
+      final notifPowerRaw = notification['power'];
+      final notifPower = notifPowerRaw is num
+          ? notifPowerRaw.toDouble()
+          : double.tryParse('${notifPowerRaw ?? ''}');
+      final rawPower = alert['power'];
+      final anomalyPower = rawPower is num ? rawPower.toDouble() : double.tryParse('${rawPower ?? ''}');
+      final powerText = notifPower != null
+          ? '${notifPower.toStringAsFixed(1)}W'
+          : (anomalyPower != null ? '${anomalyPower.toStringAsFixed(1)}W' : 'N/A');
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty)
+            Text(
+              title,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade700,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (title.isNotEmpty) const SizedBox(height: 4),
+          if (message.isNotEmpty)
+            Text(
+              message,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade700,
+                height: 1.35,
+              ),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (message.isNotEmpty) const SizedBox(height: 4),
+          Text(
+            'Power: $powerText',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: Colors.grey.shade500,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
+          style: theme.textTheme.bodySmall,
+        ),
+        Text(
+          'Score: ${alert['score']}',
+          style: theme.textTheme.bodySmall,
+        ),
+      ],
+    );
   }
 
   Future<void> _resolveAlert(int index) async {
@@ -2290,20 +2394,13 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Anomaly in ${alert['device_id']}',
+                                'Anomaly in ${alert['room_id'] ?? alert['device_id'] ?? 'Unknown room'}',
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 14),
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                              Text(
-                                'Score: ${alert['score']}',
-                                style: theme.textTheme.bodySmall,
-                              ),
+                              _buildAlertMessageContent(alert),
                             ],
                           ),
                         ),
