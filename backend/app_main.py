@@ -269,7 +269,7 @@ async def startup_event():
             task = asyncio.create_task(_anomaly_alert_service.start())
             _background_tasks.append(task)
             print("[app_main] Anomaly alert escalation service RUNNING [OK]")
-            print("[app_main] Alert reminders scheduled: 3min → 5min → 7min → auto-cutoff")
+            print("[app_main] Alert escalation scheduled: class rep 0-5min → coordinator 5-10min → sergeant 10-15min → auto-cutoff")
         except Exception as e:
             print(f"[app_main] ERROR: Failed to start anomaly alert service: {e}")
 

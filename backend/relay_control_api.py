@@ -52,6 +52,7 @@ def verify_token(authorization: Optional[str], required_roles: list):
         role = payload.get("role")
         user_id = payload.get("sub") or payload.get("sergeant_id") or payload.get("user_id")
         user_name = payload.get("name") or payload.get("user_name")
+        department = payload.get("department")
         
         if role not in required_roles:
             raise HTTPException(
@@ -59,7 +60,7 @@ def verify_token(authorization: Optional[str], required_roles: list):
                 detail=f"Access denied. Required roles: {', '.join(required_roles)}"
             )
         
-        return {"role": role, "user_id": user_id, "user_name": user_name}
+        return {"role": role, "user_id": user_id, "user_name": user_name, "department": department}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception as e:
@@ -127,8 +128,8 @@ async def control_relay(request: RelayControlRequest, authorization: Optional[st
     Accessible by sergeants and admins.
     """
     try:
-        # Verify authorization (sergeant or admin)
-        user = verify_token(authorization, ["sergeant", "admin"])
+        # Verify authorization (sergeant, admin, or coordinator)
+        user = verify_token(authorization, ["sergeant", "admin", "coordinator"])
         
         # Validate action
         if request.action.upper() not in ["ON", "OFF"]:
@@ -149,6 +150,30 @@ async def control_relay(request: RelayControlRequest, authorization: Optional[st
                 )
             
             device_id, channel, pin = mapping
+
+            # Coordinators can control only rooms in their own department.
+            if user["role"] == "coordinator":
+                room_dept_row = conn.execute(text("""
+                    SELECT COALESCE(
+                        NULLIF(TRIM(UPPER(r.department)), ''),
+                        CASE
+                            WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE'
+                            ELSE UPPER(split_part(m.room_id, '-', 1))
+                        END
+                    ) AS department
+                    FROM room_relay_mapping m
+                    LEFT JOIN rooms r ON UPPER(r.room_id) = UPPER(m.room_id)
+                    WHERE UPPER(m.room_id) = UPPER(:room_id)
+                    LIMIT 1
+                """), {"room_id": request.room_id}).fetchone()
+
+                room_department = (room_dept_row[0] if room_dept_row else "") or ""
+                user_department = (user.get("department") or "")
+                if not user_department or room_department.upper() != user_department.strip().upper():
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Coordinator can only control relay for rooms in their own department",
+                    )
             
             # Queue command for ESP32 to poll
             command_id = queue_relay_command(
@@ -447,16 +472,34 @@ async def create_room_relay_mapping(mapping: RoomRelayMapping, authorization: Op
 async def list_room_relay_mappings(authorization: Optional[str] = Header(None)):
     """List all room-relay mappings."""
     try:
-        verify_token(authorization, ["sergeant", "admin"])
+        user = verify_token(authorization, ["sergeant", "admin", "coordinator"])
         
         with engine.connect() as conn:
-            result = conn.execute(text("""
+            where_clause = ""
+            params = {}
+            if user["role"] == "coordinator":
+                dept = (user.get("department") or "").strip()
+                if not dept:
+                    raise HTTPException(status_code=403, detail="Coordinator department missing in token")
+                where_clause = """
+                WHERE COALESCE(
+                    NULLIF(TRIM(UPPER(r.department)), ''),
+                    CASE
+                        WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE'
+                        ELSE UPPER(split_part(m.room_id, '-', 1))
+                    END
+                ) = UPPER(:department)
+                """
+                params["department"] = dept
+
+            result = conn.execute(text(f"""
                 SELECT m.room_id, m.relay_device_id, m.relay_channel, m.relay_pin,
                        r.room_name, r.department, r.floor_number
                 FROM room_relay_mapping m
                 LEFT JOIN rooms r ON m.room_id = r.room_id
+                {where_clause}
                 ORDER BY r.department, r.floor_number, r.room_name
-            """)).fetchall()
+            """), params).fetchall()
             
             mappings = []
             for row in result:
@@ -656,14 +699,34 @@ async def get_all_device_status(authorization: Optional[str] = Header(None)):
     Used for Sergeant overview dashboard.
     """
     try:
-        verify_token(authorization, ["sergeant", "admin"])
+        user = verify_token(authorization, ["sergeant", "admin", "coordinator"])
         
         with engine.connect() as conn:
-            results = conn.execute(text("""
-                SELECT device_id, state, last_updated
-                FROM relay_states
-                ORDER BY device_id
-            """)).fetchall()
+            if user["role"] == "coordinator":
+                dept = (user.get("department") or "").strip()
+                if not dept:
+                    raise HTTPException(status_code=403, detail="Coordinator department missing in token")
+
+                results = conn.execute(text("""
+                    SELECT rs.device_id, rs.state, rs.last_updated
+                    FROM relay_states rs
+                    JOIN room_relay_mapping m ON UPPER(rs.device_id) = UPPER(m.relay_device_id)
+                    LEFT JOIN rooms r ON UPPER(r.room_id) = UPPER(m.room_id)
+                    WHERE COALESCE(
+                        NULLIF(TRIM(UPPER(r.department)), ''),
+                        CASE
+                            WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE'
+                            ELSE UPPER(split_part(m.room_id, '-', 1))
+                        END
+                    ) = UPPER(:department)
+                    ORDER BY rs.device_id
+                """), {"department": dept}).fetchall()
+            else:
+                results = conn.execute(text("""
+                    SELECT device_id, state, last_updated
+                    FROM relay_states
+                    ORDER BY device_id
+                """)).fetchall()
             
             now = datetime.now()
             devices = []

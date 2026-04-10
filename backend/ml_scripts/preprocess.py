@@ -4,18 +4,22 @@ import os
 
 # --- Path Logic ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-INPUT_PATH = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "sensor_data_export.csv"))
-DATA_FOLDER = os.path.dirname(INPUT_PATH)
-OUTPUT_PATH = os.path.join(DATA_FOLDER, "preprocessed_energy_data.csv")
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+DATASET_DIR = os.path.join(BACKEND_DIR, "datasets")
+INPUT_PATH = os.path.join(DATASET_DIR, "sensor_data_export.csv")
+LEGACY_INPUT_PATH = os.path.join(BACKEND_DIR, "sensor_data_export.csv")
+OUTPUT_PATH = os.path.join(DATASET_DIR, "preprocessed_energy_data.csv")
 
 def run_preprocessing():
-    print(f"Reading data from: {INPUT_PATH}")
+    os.makedirs(DATASET_DIR, exist_ok=True)
+    input_path = INPUT_PATH if os.path.exists(INPUT_PATH) else LEGACY_INPUT_PATH
+    print(f"Reading data from: {input_path}")
     
     # 1. Load the dataset with Encoding Protection
     df = None
     for enc in ['utf-16', 'utf-8', 'latin1']:
         try:
-            df = pd.read_csv(INPUT_PATH, encoding=enc, skipinitialspace=True)
+            df = pd.read_csv(input_path, encoding=enc, skipinitialspace=True)
             print(f"[OK] Loaded successfully with {enc} encoding.")
             break
         except (UnicodeError, UnicodeDecodeError):

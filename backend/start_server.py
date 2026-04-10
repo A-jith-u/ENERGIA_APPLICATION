@@ -12,8 +12,13 @@ from dotenv import load_dotenv
 # Add parent directory to path so backend module can be imported
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Load environment from .env (if present, without overriding real env)
-load_dotenv(override=False)
+# Load environment from backend/.env first, then fallback to default search.
+_here = os.path.dirname(os.path.abspath(__file__))
+_backend_env = os.path.join(_here, ".env")
+if os.path.exists(_backend_env):
+    load_dotenv(dotenv_path=_backend_env, override=False)
+else:
+    load_dotenv(override=False)
 
 # Import config to validate and fail early if DB_URL is invalid
 from backend import config as cfg

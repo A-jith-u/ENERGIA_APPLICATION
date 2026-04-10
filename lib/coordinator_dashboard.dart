@@ -44,6 +44,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       DepartmentCustomizationService();
   List<String> _accessibleRooms = [];
   List<Map<String, dynamic>> _anomalies = [];
+  Map<String, Map<String, dynamic>> _notificationsByRoom = {}; // roomId -> notification data
   int _badgeCount = 0;
   late AlertReminderService _reminderService;
 
@@ -177,6 +178,7 @@ Widget _buildAnomalyTab() {
     anomalies: _anomalies,
     onRefresh: _fetchAnomalyAlerts,
     department: _userDepartment,
+    notificationsByRoom: _notificationsByRoom,
     baseUrls: const [
       'http://127.0.0.1:5000',
       'http://localhost:5000',
@@ -281,27 +283,61 @@ Widget _buildAnomalyTab() {
 
       for (final baseUrl in apiCandidates) {
         try {
-          // Build query with department if available
+          // 1. Fetch anomalies
           String queryString = '/anomalies';
           if (_userDepartment != null && _userDepartment!.isNotEmpty) {
             queryString += '?department=${Uri.encodeComponent(_userDepartment!)}';
           }
           
-          final resp = await http
+          final anomResp = await http
               .get(
                 Uri.parse('$baseUrl$queryString'),
                 headers: {'Content-Type': 'application/json'},
               )
               .timeout(const Duration(seconds: 6));
 
-          if (resp.statusCode == 200) {
-            final data = jsonDecode(resp.body);
-            final anomalies = data is List ? data : (data['anomalies'] as List? ?? []);
+          if (anomResp.statusCode == 200) {
+            final anomData = jsonDecode(anomResp.body);
+            final anomalies = anomData is List ? anomData : (anomData['anomalies'] as List? ?? []);
+            
+            // 2. Fetch notifications for this coordinator
+            final coordEmail = _currentUser?.email ?? '';
+            Map<String, Map<String, dynamic>> notifsByRoom = {};
+            
+            if (coordEmail.isNotEmpty) {
+              try {
+                final notifResp = await http
+                    .get(
+                      Uri.parse('$baseUrl/notify/notifications?email=${Uri.encodeComponent(coordEmail)}&limit=100'),
+                      headers: {'Content-Type': 'application/json'},
+                    )
+                    .timeout(const Duration(seconds: 6));
+                
+                if (notifResp.statusCode == 200) {
+                  final notifData = jsonDecode(notifResp.body);
+                  final notifications = notifData['notifications'] as List? ?? [];
+                  
+                  // Index notifications by room_id
+                  for (final notif in notifications) {
+                    final roomId = notif['room_id'] ?? '';
+                    if (roomId.isNotEmpty) {
+                      notifsByRoom[roomId] = notif as Map<String, dynamic>;
+                    }
+                  }
+                }
+              } catch (_) {
+                // Silently skip if notifications fail
+              }
+            }
+            
             if (mounted) {
               final fetched = List<Map<String, dynamic>>.from(
                 anomalies.whereType<Map<String, dynamic>>(),
               );
-              setState(() { _anomalies = fetched; });
+              setState(() { 
+                _anomalies = fetched;
+                _notificationsByRoom = notifsByRoom;
+              });
               // Feed reminder service — shows popup for new alerts + schedules timers
               _reminderService.syncAlerts(fetched);
             }
@@ -523,6 +559,7 @@ Widget _buildPage(int index, ColorScheme scheme) {
           anomalies: _anomalies,
           onRefresh: _fetchAnomalyAlerts,
           department: _userDepartment,
+          notificationsByRoom: _notificationsByRoom,
           baseUrls: const [
             'http://127.0.0.1:5000',
             'http://localhost:5000',
@@ -1430,6 +1467,12 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
   
   // Live data tracking for each room
   Map<String, Map<String, dynamic>> _roomLiveData = {};
+  Map<String, Map<String, dynamic>> _relayMappingByRoom = {};
+  Map<String, bool> _relayOnlineByDevice = {};
+  Map<String, String> _relayStateByDevice = {};
+  Map<String, String> _lastRelayActionByRoom = {};
+  Set<String> _onlineRelayDeviceIds = <String>{};
+  String? _authToken;
   Timer? _liveDataTimer;
 
   static const List<String> _apiCandidates = [
@@ -1444,10 +1487,12 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     super.initState();
     _loadRooms();
     _searchController.addListener(_applyFilters);
+    _loadAuthToken();
     
     // Setup live data refresh timer
     _liveDataTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _fetchLiveDataForDepartment();
+      _fetchRelayConnectivity();
     });
   }
 
@@ -1457,6 +1502,20 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     _thresholdController.dispose();
     _liveDataTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadAuthToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
+      if (!mounted) return;
+      setState(() {
+        _authToken = token;
+      });
+      await _fetchRelayConnectivity();
+    } catch (_) {
+      // Best-effort only; room metrics still work without relay controls.
+    }
   }
 
   Future<void> _loadRooms() async {
@@ -1500,6 +1559,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
           
           // Fetch live data for all rooms
           await _fetchLiveDataForDepartment();
+          await _fetchRelayConnectivity();
           return;
         }
       } catch (_) {
@@ -1558,6 +1618,185 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
         continue;
       }
     }
+  }
+
+  Future<void> _fetchRelayConnectivity() async {
+    final token = _authToken;
+    if (token == null || token.isEmpty) {
+      return;
+    }
+
+    for (final baseUrl in _apiCandidates) {
+      try {
+        final mappingsResp = await http
+            .get(
+              Uri.parse('$baseUrl/relay/mappings'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(const Duration(seconds: 6));
+
+        final statusResp = await http
+            .get(
+              Uri.parse('$baseUrl/relay/all-device-status'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(const Duration(seconds: 6));
+
+        if (mappingsResp.statusCode != 200 || statusResp.statusCode != 200) {
+          continue;
+        }
+
+        final mappingPayload = jsonDecode(mappingsResp.body) as Map<String, dynamic>;
+        final statusPayload = jsonDecode(statusResp.body) as Map<String, dynamic>;
+
+        final rawMappings = (mappingPayload['data'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        final rawStatuses = (statusPayload['devices'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+
+        final mappingByRoom = <String, Map<String, dynamic>>{};
+        for (final row in rawMappings) {
+          final roomId = (row['room_id'] ?? '').toString().trim();
+          if (roomId.isEmpty) continue;
+          mappingByRoom[roomId] = row;
+        }
+
+        final relayOnlineByDevice = <String, bool>{};
+        final relayStateByDevice = <String, String>{};
+        final onlineDeviceIds = <String>{};
+        for (final device in rawStatuses) {
+          final deviceId = (device['device_id'] ?? '').toString().trim().toUpperCase();
+          final isOnline = device['is_online'] == true;
+          final state = (device['state'] ?? 'UNKNOWN').toString().trim().toUpperCase();
+          if (deviceId.isEmpty) continue;
+          relayOnlineByDevice[deviceId] = isOnline;
+          relayStateByDevice[deviceId] = state;
+          if (isOnline && state != 'UNKNOWN') {
+            onlineDeviceIds.add(deviceId);
+          }
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _relayMappingByRoom = mappingByRoom;
+          _relayOnlineByDevice = relayOnlineByDevice;
+          _relayStateByDevice = relayStateByDevice;
+          _onlineRelayDeviceIds = onlineDeviceIds;
+        });
+        return;
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
+  bool _hasActiveRelayConnectionForRoom(String roomId) {
+    final mapping = _relayMappingByRoom[roomId];
+    if (mapping == null) return false;
+
+    final relayDeviceId = (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    final relayChannel = int.tryParse((mapping['relay_channel'] ?? '').toString());
+    if (relayDeviceId.isEmpty || (relayChannel != 1 && relayChannel != 2)) {
+      return false;
+    }
+
+    final isOnline = _relayOnlineByDevice[relayDeviceId] == true;
+    final state = (_relayStateByDevice[relayDeviceId] ?? 'UNKNOWN').toUpperCase();
+    if (!isOnline || state == 'UNKNOWN') {
+      return false;
+    }
+
+    if (_onlineRelayDeviceIds.isNotEmpty && !_onlineRelayDeviceIds.contains(relayDeviceId)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  String _relayConnectionLabel(String roomId) {
+    final mapping = _relayMappingByRoom[roomId];
+    if (mapping == null) return 'Relay: Not configured';
+
+    final relayDeviceId = (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    final relayChannel = (mapping['relay_channel'] ?? '').toString();
+    final state = (_relayStateByDevice[relayDeviceId] ?? 'UNKNOWN').toUpperCase();
+    final isActive = _hasActiveRelayConnectionForRoom(roomId);
+    if (!isActive) {
+      return 'Relay: Offline/unknown (Device $relayDeviceId, CH$relayChannel)';
+    }
+
+    final localAction = (_lastRelayActionByRoom[roomId] ?? '').toUpperCase();
+    final effectiveState = (localAction == 'ON' || localAction == 'OFF') ? localAction : state;
+    return 'Relay: Active (Device $relayDeviceId, CH$relayChannel, State $effectiveState)';
+  }
+
+  void _setLocalRelayRoomState(String roomId, String action) {
+    final normalized = action.toUpperCase();
+    _lastRelayActionByRoom[roomId] = normalized;
+    final mapping = _relayMappingByRoom[roomId];
+    if (mapping == null) return;
+    final relayDeviceId = (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    if (relayDeviceId.isNotEmpty) {
+      _relayStateByDevice[relayDeviceId] = normalized;
+    }
+  }
+
+  Future<void> _controlRoomPower(String roomId, String action) async {
+    final token = _authToken;
+    if (token == null || token.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session expired. Please login again.')),
+      );
+      return;
+    }
+
+    for (final baseUrl in _apiCandidates) {
+      try {
+        final resp = await http
+            .post(
+              Uri.parse('$baseUrl/relay/control'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode({
+                'room_id': roomId,
+                'action': action.toUpperCase(),
+                'reason': 'Manual room control by coordinator dashboard',
+              }),
+            )
+            .timeout(const Duration(seconds: 8));
+
+        if (resp.statusCode == 200) {
+          if (!mounted) return;
+          setState(() {
+            _setLocalRelayRoomState(roomId, action);
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Room $roomId power set to ${action.toUpperCase()}')),
+          );
+          return;
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to set $roomId to ${action.toUpperCase()}')),
+    );
   }
 
   void _applyFilters() {
@@ -1875,6 +2114,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
               final roomId = (room['room_id'] ?? '').toString();
               final roomName = (room['room_name'] ?? roomId).toString();
               final floor = (room['floor_number'] ?? '-').toString();
+              final hasActiveRelay = _hasActiveRelayConnectionForRoom(roomId);
 
               return Card(
                 elevation: 2,
@@ -1903,6 +2143,14 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                                   'ID: $roomId • Floor: $floor',
                                   style: theme.textTheme.bodySmall?.copyWith(
                                     color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  _relayConnectionLabel(roomId),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: hasActiveRelay ? Colors.green.shade700 : Colors.orange.shade800,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
@@ -1940,6 +2188,20 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                             label: const Text('Edit Threshold'),
                           ),
                           const SizedBox(width: 10),
+                          if (hasActiveRelay) ...[
+                            ElevatedButton(
+                              onPressed: () => _controlRoomPower(roomId, 'ON'),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700),
+                              child: const Text('ON'),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () => _controlRoomPower(roomId, 'OFF'),
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
+                              child: const Text('OFF'),
+                            ),
+                            const SizedBox(width: 10),
+                          ],
                           TextButton.icon(
                             onPressed: () {
                               final liveData = _roomLiveData[roomId];
@@ -1950,7 +2212,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                               }
                             },
                             icon: const Icon(Icons.info_outline, size: 18),
-                            label: const Text('Details'),
+                            label: Text(hasActiveRelay ? 'Details' : 'Details (Relay unavailable)'),
                           ),
                         ],
                       ),
@@ -2361,6 +2623,7 @@ class _DepartmentAlertsSection extends StatefulWidget {
   final Future<void> Function() onRefresh;
   final String? department;
   final List<String> baseUrls;
+  final Map<String, Map<String, dynamic>> notificationsByRoom;
 
   const _DepartmentAlertsSection({
     super.key,
@@ -2368,6 +2631,7 @@ class _DepartmentAlertsSection extends StatefulWidget {
     required this.onRefresh,
     required this.baseUrls,
     this.department,
+    this.notificationsByRoom = const {},
   });
 
   @override
@@ -2544,6 +2808,74 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
     }
   }
 
+  /// Build the alert message content widget, showing formatted notification message
+  /// if available, otherwise fall back to raw anomaly data
+  Widget _buildAlertMessageContent(Map<String, dynamic> alert) {
+    final roomId = alert['device_id'] ?? '';
+    final notification = widget.notificationsByRoom[roomId];
+    final theme = Theme.of(context);
+
+    if (notification != null) {
+      // Display formatted role-based notification message
+      final title = notification['title'] ?? '';
+      final message = notification['message'] ?? '';
+      final power = notification['power'];
+      
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Role-specific title
+          if (title.isNotEmpty)
+            Text(
+              title,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade700,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (title.isNotEmpty) const SizedBox(height: 4),
+          // Formatted message with recommendations
+          if (message.isNotEmpty)
+            Text(
+              message,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade600,
+                height: 1.4,
+              ),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (message.isNotEmpty) const SizedBox(height: 4),
+          // Metadata now fallback
+          Text(
+            '${_formatTime(alert['timestamp'])} • Power: ${power?.toStringAsFixed(1) ?? alert['power']}W',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: Colors.grey.shade500,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Fallback: display raw anomaly data if no formatted notification
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
+          style: theme.textTheme.bodySmall,
+        ),
+        Text(
+          'Score: ${alert['score']}  |  ${_formatTime(alert['timestamp'])}',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade500),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2692,16 +3024,9 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                  Text(
-                                    'Score: ${alert['score']}  |  ${_formatTime(alert['timestamp'])}',
-                                    style: theme.textTheme.bodySmall
-                                        ?.copyWith(color: Colors.grey.shade500),
-                                  ),
+                                  const SizedBox(height: 8),
+                                  // Display formatted notification message if available
+                                  _buildAlertMessageContent(alert),
                                 ],
                               ),
                             ),
