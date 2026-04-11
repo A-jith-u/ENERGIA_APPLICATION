@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 import jwt
 import os
+import re
 import requests
 from dotenv import load_dotenv
 
@@ -24,6 +25,36 @@ app = FastAPI(title="Relay Control API")
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key")
 ALGORITHM = "HS256"
 RELAY_ONLINE_TIMEOUT_SECONDS = 180
+
+
+def _normalize_room_key(value: Optional[str]) -> str:
+    """Normalize room identifiers for tolerant matching (case/space/hyphen-insensitive)."""
+    return re.sub(r"[^A-Za-z0-9]", "", (value or "")).upper()
+
+
+def _resolve_room_mapping(conn, requested_room_id: str, include_pin: bool = False):
+    """
+    Resolve relay mapping using tolerant room matching and return canonical room_id.
+    Supports matching by room_id or room_name from rooms table.
+    """
+    room_key = _normalize_room_key(requested_room_id)
+    if not room_key:
+        return None
+
+    select_cols = "m.relay_device_id, m.relay_channel, m.room_id"
+    if include_pin:
+        select_cols = "m.relay_device_id, m.relay_channel, m.relay_pin, m.room_id"
+
+    query = f"""
+        SELECT {select_cols}
+        FROM room_relay_mapping m
+        LEFT JOIN rooms r ON r.room_id = m.room_id
+        WHERE regexp_replace(upper(m.room_id), '[^A-Z0-9]', '', 'g') = :room_key
+           OR regexp_replace(upper(COALESCE(r.room_name, '')), '[^A-Z0-9]', '', 'g') = :room_key
+           OR regexp_replace(upper(COALESCE(r.room_id, '')), '[^A-Z0-9]', '', 'g') = :room_key
+        LIMIT 1
+    """
+    return conn.execute(text(query), {"room_key": room_key}).fetchone()
 
 
 class RelayControlRequest(BaseModel):
@@ -136,11 +167,7 @@ async def control_relay(request: RelayControlRequest, authorization: Optional[st
         
         with engine.begin() as conn:
             # Get relay mapping for the room
-            mapping = conn.execute(text("""
-                SELECT relay_device_id, relay_channel, relay_pin
-                FROM room_relay_mapping
-                WHERE room_id = :room_id
-            """), {"room_id": request.room_id}).fetchone()
+            mapping = _resolve_room_mapping(conn, request.room_id, include_pin=True)
             
             if not mapping:
                 raise HTTPException(
@@ -148,7 +175,7 @@ async def control_relay(request: RelayControlRequest, authorization: Optional[st
                     detail=f"No relay mapping found for room {request.room_id}"
                 )
             
-            device_id, channel, pin = mapping
+            device_id, channel, pin, canonical_room_id = mapping
             
             # Queue command for ESP32 to poll
             command_id = queue_relay_command(
@@ -168,7 +195,7 @@ async def control_relay(request: RelayControlRequest, authorization: Optional[st
                 (:room_id, :channel, :action, 'manual',
                  :user_id, :user_name, :reason, NOW())
             """), {
-                "room_id": request.room_id,
+                "room_id": canonical_room_id,
                 "channel": channel,
                 "action": request.action.upper(),
                 "user_id": user["user_id"],
@@ -178,8 +205,8 @@ async def control_relay(request: RelayControlRequest, authorization: Optional[st
             
             return {
                 "status": "queued",
-                "message": f"Power {request.action.upper()} command queued for {request.room_id}",
-                "room_id": request.room_id,
+                "message": f"Power {request.action.upper()} command queued for {canonical_room_id}",
+                "room_id": canonical_room_id,
                 "action": request.action.upper(),
                 "command_id": command_id,
                 "device_id": device_id,
@@ -202,11 +229,7 @@ async def auto_cutoff_relay(request: RelayControlRequest):
     try:
         with engine.begin() as conn:
             # Get relay mapping
-            mapping = conn.execute(text("""
-                SELECT relay_device_id, relay_channel
-                FROM room_relay_mapping
-                WHERE room_id = :room_id
-            """), {"room_id": request.room_id}).fetchone()
+            mapping = _resolve_room_mapping(conn, request.room_id)
             
             if not mapping:
                 print(f"[Auto-Cutoff] No relay mapping for room {request.room_id}")
@@ -215,7 +238,7 @@ async def auto_cutoff_relay(request: RelayControlRequest):
                     "message": f"No relay configured for {request.room_id}"
                 }
             
-            device_id, channel = mapping
+            device_id, channel, canonical_room_id = mapping
             
             # Queue OFF command
             command_id = queue_relay_command(
@@ -235,15 +258,15 @@ async def auto_cutoff_relay(request: RelayControlRequest):
                 (:room_id, :channel, 'OFF', 'auto',
                  'system', 'Anomaly Alert System', :reason, NOW())
             """), {
-                "room_id": request.room_id,
+                "room_id": canonical_room_id,
                 "channel": channel,
                 "reason": request.reason or "Automatic cutoff after 7-minute alert escalation"
             })
             
             return {
                 "status": "queued",
-                "message": f"Automatic power cutoff queued for {request.room_id}",
-                "room_id": request.room_id,
+                "message": f"Automatic power cutoff queued for {canonical_room_id}",
+                "room_id": canonical_room_id,
                 "command_id": command_id,
                 "note": "Cutoff will execute within 5 seconds"
             }
@@ -264,11 +287,7 @@ async def get_room_relay_status(room_id: str, authorization: Optional[str] = Hea
         
         with engine.connect() as conn:
             # Get relay mapping
-            mapping = conn.execute(text("""
-                SELECT relay_device_id, relay_channel
-                FROM room_relay_mapping
-                WHERE room_id = :room_id
-            """), {"room_id": room_id}).fetchone()
+            mapping = _resolve_room_mapping(conn, room_id)
             
             if not mapping:
                 return {
@@ -278,7 +297,7 @@ async def get_room_relay_status(room_id: str, authorization: Optional[str] = Hea
                     "message": "No relay configured for this room"
                 }
             
-            device_id, channel = mapping
+            device_id, channel, canonical_room_id = mapping
             
             # Get recent control logs
             logs = conn.execute(text("""
@@ -287,7 +306,7 @@ async def get_room_relay_status(room_id: str, authorization: Optional[str] = Hea
                 WHERE room_id = :room_id
                 ORDER BY timestamp DESC
                 LIMIT 10
-            """), {"room_id": room_id}).fetchall()
+            """), {"room_id": canonical_room_id}).fetchall()
             
             control_history = []
             for log in logs:
@@ -304,7 +323,7 @@ async def get_room_relay_status(room_id: str, authorization: Optional[str] = Hea
             
             return {
                 "status": "success",
-                "room_id": room_id,
+                "room_id": canonical_room_id,
                 "relay_configured": True,
                 "device_id": device_id,
                 "channel": channel,
