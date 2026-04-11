@@ -301,14 +301,26 @@ Widget _buildAnomalyTab() {
             final anomalies = anomData is List ? anomData : (anomData['anomalies'] as List? ?? []);
             
             // 2. Fetch notifications for this coordinator
-            final coordEmail = _currentUser?.email ?? '';
+            String coordEmail = (_currentUser?.email ?? '').trim();
+            if (coordEmail.isEmpty) {
+              final maybeUsername = (_currentUser?.username ?? '').trim();
+              if (maybeUsername.contains('@')) {
+                coordEmail = maybeUsername;
+              }
+            }
             Map<String, Map<String, dynamic>> notifsByRoom = {};
             
-            if (coordEmail.isNotEmpty) {
+            if (coordEmail.isNotEmpty || (_userDepartment != null && _userDepartment!.isNotEmpty)) {
               try {
+                String notifUrl = '$baseUrl/notify/notifications?limit=100';
+                if (coordEmail.isNotEmpty) {
+                  notifUrl += '&email=${Uri.encodeComponent(coordEmail)}';
+                } else {
+                  notifUrl += '&department=${Uri.encodeComponent(_userDepartment!)}';
+                }
                 final notifResp = await http
                     .get(
-                      Uri.parse('$baseUrl/notify/notifications?email=${Uri.encodeComponent(coordEmail)}&limit=100'),
+                      Uri.parse(notifUrl),
                       headers: {'Content-Type': 'application/json'},
                     )
                     .timeout(const Duration(seconds: 6));
@@ -324,6 +336,13 @@ Widget _buildAnomalyTab() {
                       final mapNotif = notif as Map<String, dynamic>;
                       notifsByRoom[roomId] = mapNotif;
                       notifsByRoom[roomId.toUpperCase()] = mapNotif;
+                      final bareRoom = roomId.replaceFirst(RegExp(r'^ESP32-', caseSensitive: false), '');
+                      if (bareRoom.isNotEmpty) {
+                        notifsByRoom[bareRoom] = mapNotif;
+                        notifsByRoom[bareRoom.toUpperCase()] = mapNotif;
+                        notifsByRoom['ESP32-$bareRoom'] = mapNotif;
+                        notifsByRoom['ESP32-${bareRoom.toUpperCase()}'] = mapNotif;
+                      }
                     }
                   }
                 }
@@ -2874,15 +2893,34 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
     }
 
     // Fallback: display raw anomaly data if no formatted notification
+    final powerRaw = alert['power'];
+    final power = powerRaw is num ? powerRaw.toDouble() : double.tryParse('${powerRaw ?? ''}');
+    final scoreRaw = alert['score'] ?? alert['anomaly_score'];
+    final score = scoreRaw is num ? scoreRaw.toDouble() : double.tryParse('${scoreRaw ?? ''}');
+    final occupancyRaw = alert['occupancy'];
+    final occupancy = occupancyRaw is num ? occupancyRaw.toInt() : int.tryParse('${occupancyRaw ?? ''}') ?? 0;
+    final anomalyType = (alert['anomaly_type'] ?? ((occupancy <= 0 && (power ?? 0) >= 20)
+        ? 'usage_without_occupancy'
+        : 'high_unrecognized_usage')).toString();
+    final reasonText = anomalyType == 'usage_without_occupancy'
+        ? 'Usage without occupancy'
+        : 'High/unrecognized usage';
+    final sevLabel = _severityLabel(power ?? 0);
+    final stage = (alert['stage'] ?? 'live monitoring').toString().replaceAll('_', ' ');
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
+          'Alert Type: $reasonText. Severity: $sevLabel. Stage: $stage.',
           style: theme.textTheme.bodySmall,
         ),
         Text(
-          'Score: ${alert['score']}  |  ${_formatTime(alert['timestamp'])}',
+          'Recommendation: Verify room condition, contact class rep/coordinator as applicable, and resolve if safe.',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+        ),
+        Text(
+          '${_formatTime(alert['timestamp'])} • Power: ${power?.toStringAsFixed(1) ?? 'N/A'}W • Occupancy: $occupancy • Score: ${score?.toStringAsFixed(4) ?? 'N/A'}',
           style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade500),
         ),
       ],

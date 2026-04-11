@@ -1880,21 +1880,25 @@ def get_coordinators():
     with engine.begin() as conn:
         result = conn.execute(
             text(
-                "SELECT id, email, name, department, is_proxy, proxy_for_email, assigned_room_id, created_at FROM coordinators ORDER BY name ASC"
+                "SELECT id, email, coordinator_id, name, department, is_proxy, proxy_for_email, assigned_room_id, created_at FROM coordinators ORDER BY name ASC"
             )
         ).fetchall()
         
         coordinators = []
         for row in result:
+            coordinator_email = row[1] or row[2]
+            coordinator_login_id = row[2] or row[1]
             coordinators.append({
                 "id": row[0],
-                "username": row[1],
-                "name": row[2] or row[1],
-                "department": row[3] or "N/A",
-                "is_proxy": bool(row[4]),
-                "proxy_for_email": row[5],
-                "assigned_room_id": row[6],
-                "created_at": row[7].isoformat() if row[7] else None,
+                "email": coordinator_email,
+                "username": coordinator_email,
+                "coordinator_id": coordinator_login_id,
+                "name": row[3] or coordinator_email or coordinator_login_id,
+                "department": row[4] or "N/A",
+                "is_proxy": bool(row[5]),
+                "proxy_for_email": row[6],
+                "assigned_room_id": row[7],
+                "created_at": row[8].isoformat() if row[8] else None,
             })
         
         return {"coordinators": coordinators, "total": len(coordinators)}

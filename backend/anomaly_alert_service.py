@@ -12,6 +12,7 @@ import asyncio
 import sys
 import os
 import importlib
+from urllib.parse import quote
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import requests
@@ -135,6 +136,7 @@ STAGE_COORDINATOR_MINUTES = 5
 STAGE_SERGEANT_MINUTES = 10
 AUTO_CUTOFF_THRESHOLD_MINUTES = 15
 MAX_REMINDER_MINUTES = 120  # stop everything after 2 hours as a safety bound
+PUBLIC_BASE_URL = os.environ.get("ALERT_PUBLIC_BASE_URL", "http://127.0.0.1:5000")
 
 
 def _is_test_identifier(value: str | None) -> bool:
@@ -211,9 +213,10 @@ class AnomalyAlertService:
         """
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT cr.email, COALESCE(cr.name, cr.username)
+                                SELECT COALESCE(NULLIF(cr.email, ''), cr.username), COALESCE(cr.name, cr.username)
                 FROM class_rep_room_mapping m
-                JOIN class_representatives cr ON UPPER(cr.email) = UPPER(m.class_rep_email)
+                                JOIN class_representatives cr
+                                    ON UPPER(COALESCE(NULLIF(cr.email, ''), cr.username)) = UPPER(m.class_rep_email)
                 WHERE m.room_id = :room_id
                   AND m.is_active = TRUE
                 ORDER BY m.created_at DESC
@@ -226,12 +229,56 @@ class AnomalyAlertService:
         """
         with engine.connect() as conn:
             rows = conn.execute(text("""
-                SELECT email, name
+                SELECT COALESCE(NULLIF(email, ''), name), name
                 FROM sergeants
                 WHERE COALESCE(is_active, 1) = 1
                 ORDER BY created_at DESC
             """)).fetchall()
             return list(rows or [])
+
+    def _resolve_recipient_email(self, recipient: str, recipient_type: str) -> str:
+        candidate = (recipient or '').strip()
+        if '@' in candidate:
+            return candidate
+
+        try:
+            with engine.connect() as conn:
+                if recipient_type == 'coordinator':
+                    row = conn.execute(text("""
+                        SELECT email
+                        FROM coordinators
+                        WHERE UPPER(coordinator_id) = UPPER(:u)
+                           OR UPPER(COALESCE(email, '')) = UPPER(:u)
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    """), {"u": candidate}).fetchone()
+                elif recipient_type == 'class_rep':
+                    row = conn.execute(text("""
+                        SELECT email
+                        FROM class_representatives
+                        WHERE UPPER(COALESCE(username, '')) = UPPER(:u)
+                           OR UPPER(COALESCE(ktu_id, '')) = UPPER(:u)
+                           OR UPPER(COALESCE(email, '')) = UPPER(:u)
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    """), {"u": candidate}).fetchone()
+                elif recipient_type == 'sergeant':
+                    row = conn.execute(text("""
+                        SELECT email
+                        FROM sergeants
+                        WHERE UPPER(COALESCE(email, '')) = UPPER(:u)
+                           OR UPPER(COALESCE(name, '')) = UPPER(:u)
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    """), {"u": candidate}).fetchone()
+                else:
+                    row = None
+
+            resolved = (row[0] if row else '') if row else ''
+            resolved = (resolved or '').strip()
+            return resolved if '@' in resolved else candidate
+        except Exception:
+            return candidate
 
     def _classify_severity(self, anomaly_type: str, power: Optional[float], anomaly_score: Optional[float]) -> dict:
         """Return severity level + color code for notification rendering.
@@ -321,10 +368,15 @@ class AnomalyAlertService:
 
         if recipient_type == "class_rep":
             title = f"[{severity_level}] Classroom Alert - {room_name}"
+            power_text = f"{float(power):.2f}W" if power is not None else "N/A"
             message = (
+                f"Classroom {room_name} ({room_id}) in {department} has an active energy anomaly. "
                 f"Alert Type: {reason_text}. "
                 f"Severity: {severity_text}. "
+                f"Current Power: {power_text}. "
                 f"Stage: {stage}. "
+                f"What to do now: Visit the room, verify occupancy and loads, switch off unnecessary devices, "
+                f"then acknowledge/resolve in the app once stable. "
                 f"Recommendation: {recommendation}"
             )
             return title, message, severity_level, severity_color
@@ -542,7 +594,7 @@ class AnomalyAlertService:
             
             # Get all coordinators for this department so primary + proxy users are both notified.
             coordinator_infos = conn.execute(text("""
-                SELECT email, name FROM coordinators
+                SELECT COALESCE(NULLIF(email, ''), coordinator_id), name FROM coordinators
                 WHERE UPPER(department) = UPPER(:dept)
                 ORDER BY created_at DESC
             """), {"dept": department}).fetchall()
@@ -616,6 +668,7 @@ class AnomalyAlertService:
         Also sends email on first alert only (not every re-alert minute).
         """
         try:
+            recipient_email = self._resolve_recipient_email(recipient_email, recipient_type)
             room_id = alert_data.get("room_id", "")
             room_name = alert_data.get("room_name", room_id)
             department = alert_data.get("department", "")
@@ -629,6 +682,7 @@ class AnomalyAlertService:
 
             # 1) In-app notification: upsert so re-alerts refresh existing unresolved thread
             if _notify:
+                notif_score = None if recipient_type == "class_rep" else (float(score) if score is not None else None)
                 if is_first_alert:
                     _notify.create_in_app_notification(
                         recipient_email=recipient_email,
@@ -639,7 +693,7 @@ class AnomalyAlertService:
                         title=title,
                         message=message,
                         power=float(power) if power is not None else None,
-                        anomaly_score=float(score) if score is not None else None,
+                        anomaly_score=notif_score,
                     )
                 else:
                     try:
@@ -675,13 +729,18 @@ class AnomalyAlertService:
                                     title=title,
                                     message=message,
                                     power=float(power) if power is not None else None,
-                                    anomaly_score=float(score) if score is not None else None,
+                                    anomaly_score=notif_score,
                                 )
                     except Exception as _ue:
                         print(f"[Notify] Re-alert upsert error: {_ue}")
 
             # 2) Email alert
-            if _alert_mailer and _alert_mailer.is_configured():
+            if _alert_mailer and _alert_mailer.is_configured() and ('@' in recipient_email):
+                role_label = recipient_type.replace('_', ' ').title()
+                resolve_link = (
+                    f"{PUBLIC_BASE_URL}/anomaly-alerts/resolve-alert-link"
+                    f"?room_id={quote(room_id)}&resolved_by={quote(recipient_email)}"
+                )
                 severity_badge = (
                     f"<span style='display:inline-block;padding:4px 10px;border-radius:999px;'"
                     f"background:{severity_color};color:#fff;font-weight:700;'>"
@@ -703,9 +762,9 @@ class AnomalyAlertService:
                           <td style="padding:8px;font-weight:bold;">{department}</td></tr>
                       <tr><td style="padding:8px;color:#666;">Power Reading</td>
                           <td style="padding:8px;font-weight:bold;color:#ff4444;">{power}W</td></tr>
-                      <tr style="background:#f9f9f9;">
+                      {'' if recipient_type == 'class_rep' else f'''<tr style="background:#f9f9f9;">
                           <td style="padding:8px;color:#666;">Anomaly Score</td>
-                          <td style="padding:8px;">{score}</td></tr>
+                          <td style="padding:8px;">{score}</td></tr>'''}
                       <tr><td style="padding:8px;color:#666;">Alert #</td>
                           <td style="padding:8px;">{alert_count}</td></tr>
                     </table>
@@ -713,6 +772,16 @@ class AnomalyAlertService:
                                 padding:12px;margin:20px 0;border-radius:4px;">
                       <strong>Action Required:</strong> {action}
                     </div>
+                                        <div style="margin:22px 0;text-align:center;">
+                                            <a href="{resolve_link}"
+                                                 style="display:inline-block;background:#2e7d32;color:#fff;text-decoration:none;
+                                                                padding:12px 18px;border-radius:8px;font-weight:700;">
+                                                Resolve / Acknowledge {role_label} Alert
+                                            </a>
+                                            <div style="margin-top:8px;color:#666;font-size:12px;">
+                                                Use this to acknowledge the {role_label.lower()} alert for {room_name} and stop further escalation for the room.
+                                            </div>
+                                        </div>
                     <p style="color:#999;font-size:12px;">
                       This is an automated alert from the ENERGIA monitoring system.
                     </p>
@@ -739,7 +808,7 @@ class AnomalyAlertService:
                             print(f"  -> Fallback notify_api email sent to {recipient_type}: {recipient_email}")
                         except Exception as fallback_err:
                             print(f"  -> Fallback notify_api email failed for {recipient_email}: {fallback_err}")
-            elif _notify and _notify.SMTP_PASSWORD:
+            elif _notify and _notify.SMTP_PASSWORD and ('@' in recipient_email):
                 # Legacy path when dedicated mail service is not configured.
                 try:
                     _notify._send_email(
@@ -1015,8 +1084,13 @@ class AnomalyAlertService:
                     "room_id": room_id,
                     "user_id": resolved_by_user_id
                 })
-                
-                print(f"[Anomaly Alert] Resolved alert for room {room_id} by user {resolved_by_user_id}")
+
+            self._mark_notifications_resolved(
+                room_id,
+                f"Resolved via alert link by {resolved_by_user_id}",
+            )
+
+            print(f"[Anomaly Alert] Resolved alert for room {room_id} by user {resolved_by_user_id}")
         
         except Exception as e:
             print(f"[Anomaly Alert] Error resolving alert: {e}")
@@ -1028,6 +1102,7 @@ anomaly_alert_service = AnomalyAlertService()
 
 # FastAPI endpoints for manual control
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 app = FastAPI(title="Anomaly Alert API")
@@ -1055,6 +1130,44 @@ async def resolve_alert(request: ResolveAlertRequest):
     """Mark an anomaly alert as resolved."""
     await anomaly_alert_service.resolve_anomaly_alert(request.room_id, request.resolved_by_user_id)
     return {"status": "success", "message": f"Alert resolved for room {request.room_id}"}
+
+
+@app.get("/resolve-alert-link")
+@app.get("/resolve-alert-link/")
+async def resolve_alert_link(room_id: str, resolved_by: str):
+    """Resolve an alert from a button in an email message."""
+    try:
+        await anomaly_alert_service.resolve_anomaly_alert(room_id, resolved_by)
+        return HTMLResponse(
+            content=(
+                "<html><head><meta charset='utf-8' />"
+                "<meta name='viewport' content='width=device-width,initial-scale=1' />"
+                "<title>Alert Acknowledged</title></head>"
+                "<body style='font-family:Arial,sans-serif;background:#f4f7fb;margin:0;padding:24px;'>"
+                "<div style='max-width:680px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;box-shadow:0 2px 10px rgba(0,0,0,.08);'>"
+                "<h2 style='margin-top:0;color:#2e7d32;'>Alert acknowledged successfully</h2>"
+                f"<p style='font-size:15px;color:#333;'>Room <strong>{room_id}</strong> has been marked resolved by <strong>{resolved_by}</strong>.</p>"
+                "<p style='font-size:14px;color:#666;'>You can now return to the app dashboard."
+                " If this alert reoccurs, a new notification thread will be created automatically.</p>"
+                "</div></body></html>"
+            ),
+            status_code=200,
+        )
+    except Exception as e:
+        return HTMLResponse(
+            content=(
+                "<html><head><meta charset='utf-8' />"
+                "<meta name='viewport' content='width=device-width,initial-scale=1' />"
+                "<title>Unable to Resolve Alert</title></head>"
+                "<body style='font-family:Arial,sans-serif;background:#fff7f7;margin:0;padding:24px;'>"
+                "<div style='max-width:680px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;border:1px solid #ffcdd2;'>"
+                "<h2 style='margin-top:0;color:#c62828;'>Unable to acknowledge this alert</h2>"
+                "<p style='font-size:15px;color:#333;'>Please reopen the link from the latest email or resolve the alert directly in the app.</p>"
+                f"<p style='font-size:13px;color:#777;'>Details: {str(e)}</p>"
+                "</div></body></html>"
+            ),
+            status_code=500,
+        )
 
 
 @app.get("/active-alerts")
