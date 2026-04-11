@@ -22,12 +22,34 @@ from sqlalchemy import create_engine, text
 app = FastAPI(title="Notification Service")
 
 # ── SMTP config ───────────────────────────────────────────────────────────────
-SMTP_HOST     = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT     = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER     = os.environ.get("SMTP_USER", "energia.application.service@gmail.com")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-SMTP_FROM     = os.environ.get("SMTP_FROM", "ENERGIA ALERTS <energia.application.service@gmail.com>")
-SMTP_USE_SSL  = os.environ.get("SMTP_USE_SSL", "0") == "1"
+SMTP_HOST = (
+    os.environ.get("SMTP_HOST")
+    or os.environ.get("MAIL_SERVER")
+    or "smtp.gmail.com"
+)
+SMTP_PORT = int(
+    os.environ.get("SMTP_PORT")
+    or os.environ.get("MAIL_PORT")
+    or "587"
+)
+SMTP_USER = (
+    os.environ.get("SMTP_USER")
+    or os.environ.get("MAIL_USERNAME")
+    or ""
+)
+SMTP_PASSWORD = (
+    os.environ.get("SMTP_PASSWORD")
+    or os.environ.get("MAIL_PASSWORD")
+)
+SMTP_FROM = (
+    os.environ.get("SMTP_FROM")
+    or os.environ.get("MAIL_FROM")
+    or "ENERGIA ALERTS <energia.application@gmail.com>"
+)
+_use_ssl_raw = os.environ.get("SMTP_USE_SSL")
+if _use_ssl_raw is None:
+    _use_ssl_raw = os.environ.get("MAIL_SSL_TLS", "0")
+SMTP_USE_SSL = str(_use_ssl_raw).strip().lower() in {"1", "true", "yes", "on"}
 
 # ── DB config (for in-app notifications) ─────────────────────────────────────
 def _load_cfg():
@@ -63,6 +85,9 @@ def _init_notifications_table():
                 power           FLOAT,
                 anomaly_score   FLOAT,
                 is_read         BOOLEAN     NOT NULL DEFAULT FALSE,
+                is_resolved     BOOLEAN     NOT NULL DEFAULT FALSE,
+                resolved_at      TIMESTAMPTZ,
+                resolution_note  TEXT,
                 created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
@@ -80,6 +105,9 @@ def _init_notifications_table():
         ("power",           "FLOAT"),
         ("anomaly_score",   "FLOAT"),
         ("is_read",         "BOOLEAN DEFAULT FALSE"),
+        ("is_resolved",     "BOOLEAN DEFAULT FALSE"),
+        ("resolved_at",      "TIMESTAMPTZ"),
+        ("resolution_note",  "TEXT"),
         ("created_at",      "TIMESTAMPTZ DEFAULT NOW()"),
     ]
     for col_name, col_type in columns_to_ensure:
@@ -125,18 +153,43 @@ def _send_email(subject: str, body: str, recipients: List[str]):
     msg["To"]      = ", ".join(recipients)
     msg.set_content(body, subtype="html")
     ctx = ssl.create_default_context()
-    try:
-        if SMTP_USE_SSL or SMTP_PORT == 465:
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx) as s:
-                s.login(SMTP_USER, SMTP_PASSWORD)
-                s.send_message(msg)
-        else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-                s.starttls(context=ctx)
-                s.login(SMTP_USER, SMTP_PASSWORD)
-                s.send_message(msg)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {exc}") from exc
+    host_candidates = []
+    for host in [SMTP_HOST, os.environ.get("MAIL_SERVER"), "smtp.gmail.com", "smtp.googlemail.com"]:
+        if host and host not in host_candidates:
+            host_candidates.append(host)
+
+    mode_candidates = []
+    if SMTP_USE_SSL or SMTP_PORT == 465:
+        mode_candidates.extend([(SMTP_PORT, True), (465, True), (587, False)])
+    else:
+        mode_candidates.extend([(SMTP_PORT, False), (587, False), (465, True)])
+
+    dedup_modes = []
+    for mode in mode_candidates:
+        if mode not in dedup_modes:
+            dedup_modes.append(mode)
+
+    errors: List[str] = []
+    for host in host_candidates:
+        for port, use_ssl in dedup_modes:
+            try:
+                if use_ssl:
+                    with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as s:
+                        s.login(SMTP_USER, SMTP_PASSWORD)
+                        s.send_message(msg)
+                else:
+                    with smtplib.SMTP(host, port, timeout=20) as s:
+                        s.ehlo()
+                        s.starttls(context=ctx)
+                        s.ehlo()
+                        s.login(SMTP_USER, SMTP_PASSWORD)
+                        s.send_message(msg)
+                return
+            except Exception as exc:
+                errors.append(f"{host}:{port} ssl={1 if use_ssl else 0} -> {exc}")
+
+    short_errors = " | ".join(errors[:3]) if errors else "unknown SMTP error"
+    raise HTTPException(status_code=500, detail=f"Failed to send email: {short_errors}")
 
 
 # ── In-app notification writer (called by anomaly_alert_service) ──────────────
@@ -230,7 +283,8 @@ def get_notifications(
             rows = conn.execute(text(f"""
                 SELECT id, recipient_email, recipient_type, department,
                        room_id, room_name, title, message,
-                       power, anomaly_score, is_read, created_at
+                      power, anomaly_score, is_read, is_resolved,
+                      resolved_at, resolution_note, created_at
                 FROM notifications
                 {where}
                 ORDER BY created_at DESC
@@ -249,7 +303,10 @@ def get_notifications(
                 "power":          r[8],
                 "anomaly_score":  round(r[9], 4) if r[9] is not None else None,
                 "is_read":        r[10],
-                "created_at":     r[11].isoformat() if r[11] else None,
+                "is_resolved":    r[11],
+                "resolved_at":    r[12].isoformat() if r[12] else None,
+                "resolution_note": r[13],
+                "created_at":     r[14].isoformat() if r[14] else None,
             } for r in rows]
 
             unread_count = sum(1 for n in data if not n["is_read"])

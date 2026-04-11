@@ -27,6 +27,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
   Set<String> _onlineRelayDeviceIds = <String>{};
   Map<String, bool> _relayOnlineById = <String, bool>{};
   Map<String, String> _relayDeviceStateById = {};
+  double? _liveEfficiencyPercent;
   Timer? _refreshTimer;
 
   bool get _isAfterHoursNow {
@@ -67,6 +68,213 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
   DateTime? _parseAnyTimestamp(dynamic value) {
     if (value == null) return null;
     return DateTime.tryParse(value.toString());
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
+
+  double? _computeLiveEfficiencyPercent({
+    required List<Map<String, dynamic>> sensorRows,
+    required List<Map<String, dynamic>> rooms,
+    required Set<String> mappedRoomIds,
+  }) {
+    if (sensorRows.isEmpty) return null;
+
+    final thresholds = <String, double>{};
+    for (final r in rooms) {
+      final roomId = _normalizeRoomId((r['room_id'] ?? '').toString());
+      if (roomId.isEmpty) continue;
+      final threshold = _toDouble(r['threshold']);
+      if (threshold > 0) {
+        thresholds[roomId] = threshold;
+      }
+    }
+
+    final latestByRoom = <String, Map<String, dynamic>>{};
+    for (final row in sensorRows) {
+      final roomId = _normalizeRoomId((row['device_id'] ?? '').toString());
+      if (roomId.isEmpty) continue;
+      if (mappedRoomIds.isNotEmpty && !mappedRoomIds.contains(roomId)) continue;
+
+      final ts = _parseAnyTimestamp(row['timestamp']);
+      final existing = latestByRoom[roomId];
+      final existingTs = existing == null
+          ? null
+          : _parseAnyTimestamp(existing['timestamp']);
+      if (existing == null ||
+          (ts != null && (existingTs == null || ts.isAfter(existingTs)))) {
+        latestByRoom[roomId] = row;
+      }
+    }
+
+    int active = 0;
+    int efficient = 0;
+    for (final entry in latestByRoom.entries) {
+      final roomId = entry.key;
+      final row = entry.value;
+      final power = _toDouble(row['power'] ?? row['value']);
+      if (power <= 0.5) continue; // only currently active usage contributes
+
+      active += 1;
+      final threshold = thresholds[roomId] ?? 100.0;
+      if (power <= threshold) {
+        efficient += 1;
+      }
+    }
+
+    if (active == 0) return 100.0;
+    return (efficient / active) * 100.0;
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  String _deriveAlertReason({
+    required double power,
+    required int occupancy,
+    required double score,
+  }) {
+    // Keep the reason deterministic and tied to live fields + model output.
+    if (occupancy <= 0 && power >= 20) {
+      return 'Usage without occupancy';
+    }
+    if (occupancy > 0 && power > 100) {
+      return 'High usage during occupancy';
+    }
+    if (score < 0) {
+      return 'Model anomaly score below threshold';
+    }
+    return 'Anomalous pattern detected';
+  }
+
+  List<Map<String, dynamic>> _buildLiveActiveAlerts() {
+    final now = DateTime.now();
+    final latestAnomalyByRoom = <String, Map<String, dynamic>>{};
+
+    for (final a in _recentAnomalies) {
+      final roomId = _normalizeRoomId((a['device_id'] ?? '').toString());
+      if (roomId.isEmpty) continue;
+
+      final ts = _parseAnyTimestamp(a['timestamp']);
+      final existing = latestAnomalyByRoom[roomId];
+      final existingTs = existing == null
+          ? null
+          : _parseAnyTimestamp(existing['timestamp']);
+
+      if (existing == null ||
+          (ts != null && (existingTs == null || ts.isAfter(existingTs)))) {
+        latestAnomalyByRoom[roomId] = a;
+      }
+    }
+
+    final out = <Map<String, dynamic>>[];
+    for (final tracking in _alerts) {
+      final roomIdRaw = (tracking['room_id'] ?? '').toString();
+      final roomId = _normalizeRoomId(roomIdRaw);
+      if (roomId.isEmpty) continue;
+
+      final latest = latestAnomalyByRoom[roomId];
+      if (latest == null) {
+        // No supporting live anomaly row -> do not count as live active.
+        continue;
+      }
+
+      final ts = _parseAnyTimestamp(latest['timestamp']);
+      if (ts != null && now.difference(ts).inMinutes > 30) {
+        // Stale anomaly should not be shown as actively raised now.
+        continue;
+      }
+
+      final power = _toDouble(latest['power']);
+      final occupancy = _toInt(latest['occupancy']);
+      final score = _toDouble(latest['score']);
+
+      out.add({
+        'id': latest['id'] ?? tracking['id'],
+        'room_id': roomId,
+        'room_name': tracking['room_name'] ?? roomId,
+        'department': tracking['department'] ?? _profile['department'] ?? 'Unassigned',
+        'power': power,
+        'occupancy': occupancy,
+        'score': score,
+        'timestamp': latest['timestamp'],
+        'reason': _deriveAlertReason(
+          power: power,
+          occupancy: occupancy,
+          score: score,
+        ),
+      });
+    }
+
+    out.sort((a, b) {
+      final t1 = _parseAnyTimestamp(a['timestamp']);
+      final t2 = _parseAnyTimestamp(b['timestamp']);
+      if (t1 == null && t2 == null) return 0;
+      if (t1 == null) return 1;
+      if (t2 == null) return -1;
+      return t2.compareTo(t1);
+    });
+
+    return out;
+  }
+
+  void _showActiveAlertDetails(List<Map<String, dynamic>> liveAlerts) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return AlertDialog(
+          title: Text('Active Alerts (${liveAlerts.length})'),
+          content: SizedBox(
+            width: 680,
+            child: liveAlerts.isEmpty
+                ? const Text('No live active anomalies right now.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: liveAlerts.length,
+                    separatorBuilder: (_, __) => const Divider(height: 16),
+                    itemBuilder: (_, i) {
+                      final a = liveAlerts[i];
+                      final power = _toDouble(a['power']);
+                      final occupancy = _toInt(a['occupancy']);
+                      final score = _toDouble(a['score']);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${a['room_name']} (${a['room_id']})',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text('Department: ${a['department'] ?? 'Unassigned'}'),
+                          Text('Alert Type: ${a['reason']}'),
+                          Text('Severity: ${power >= 3000 ? 'HIGH' : 'MEDIUM'} | Stage: sergeant review'),
+                          Text('Recommendation: Inspect room physically and prepare relay intervention if unresolved.'),
+                          Text('Power: ${power.toStringAsFixed(1)} W | Occupancy: $occupancy | Score: ${score.toStringAsFixed(4)}'),
+                          Text('Raised at: ${a['timestamp'] ?? '-'}'),
+                        ],
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   List<Map<String, dynamic>> _buildAfterHoursRiskRooms() {
@@ -294,10 +502,35 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
         anomalies = [];
       }
 
+      List<Map<String, dynamic>> liveSensorRows = [];
+      try {
+        liveSensorRows = await getRecentSensorData(limit: 400).timeout(const Duration(seconds: 6));
+      } catch (_) {
+        liveSensorRows = [];
+      }
+
+      List<Map<String, dynamic>> roomsCatalog = [];
+      try {
+        roomsCatalog = await getRoomsCatalog().timeout(const Duration(seconds: 6));
+      } catch (_) {
+        roomsCatalog = [];
+      }
+
       final profile = Map<String, dynamic>.from(criticalData[0] as Map<String, dynamic>);
       final overview = Map<String, dynamic>.from(criticalData[1] as Map<String, dynamic>);
       final mappings = List<Map<String, dynamic>>.from(criticalData[2] as List<Map<String, dynamic>>);
       final logs = List<Map<String, dynamic>>.from(criticalData[3] as List<Map<String, dynamic>>);
+
+      final mappedRoomIds = mappings
+          .map((m) => _normalizeRoomId((m['room_id'] ?? '').toString()))
+          .where((id) => id.isNotEmpty)
+          .toSet();
+
+      final liveEfficiency = _computeLiveEfficiencyPercent(
+        sensorRows: liveSensorRows,
+        rooms: roomsCatalog,
+        mappedRoomIds: mappedRoomIds,
+      );
 
       final latestByRoom = <String, String>{};
       for (final log in logs) {
@@ -319,6 +552,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
         _onlineRelayDeviceIds = onlineRelayDeviceIds;
         _relayOnlineById = relayOnlineById;
         _relayDeviceStateById = relayDeviceStateById;
+        _liveEfficiencyPercent = liveEfficiency;
         _isLoading = false;
         _errorMessage = null;
       });
@@ -441,6 +675,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
     final activeMappedRooms = _activeMappedRooms();
     final riskRooms = _buildAfterHoursRiskRooms();
+    final liveActiveAlerts = _buildLiveActiveAlerts();
     final grouped = <String, List<Map<String, dynamic>>>{};
     for (final room in activeMappedRooms) {
       final department = (room['department'] ?? 'Unassigned').toString();
@@ -577,10 +812,12 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                       const SizedBox(height: 10),
                       Card(
                         child: ListTile(
+                          onTap: () => _showActiveAlertDetails(liveActiveAlerts),
                           leading: Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700),
                           title: const Text('Active anomaly alerts'),
+                          subtitle: const Text('Tap to view room-wise details and reason'),
                           trailing: Text(
-                            '${_alerts.length}',
+                            '${liveActiveAlerts.length}',
                             style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
                           ),
                         ),
@@ -667,6 +904,9 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                                     leading: Icon(Icons.report_problem, color: Colors.orange.shade700),
                                     title: Text(roomId),
                                     subtitle: Text(
+                                      'Alert Type: ${risk['reason'] ?? 'Anomalous pattern detected'} | '
+                                      'Severity: ${power >= 3000 ? 'HIGH' : 'MEDIUM'} | '
+                                      'Stage: sergeant review\n'
                                       'Power: ${power.toStringAsFixed(1)}W | Occupancy: $occupancy'
                                       '${score != null ? ' | Score: ${score.toStringAsFixed(2)}' : ''}',
                                     ),
@@ -762,7 +1002,8 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     final totalUsage = _overview['total_usage_kwh']?.toString() ?? '0';
     final activeRooms = _overview['active_rooms']?.toString() ?? '0';
     final totalRooms = _overview['total_rooms']?.toString() ?? '0';
-    final efficiency = _overview['efficiency_percent']?.toString() ?? '0';
+    final efficiency = (_liveEfficiencyPercent ?? (_overview['efficiency_percent'] as num?)?.toDouble() ?? 0.0)
+      .toStringAsFixed(1);
 
     // Show only live mapped rooms (online + known state).
     final hasRelayMappings = mappedRelayCount > 0;
