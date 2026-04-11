@@ -256,10 +256,10 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                           ),
                           const SizedBox(height: 4),
                           Text('Department: ${a['department'] ?? 'Unassigned'}'),
-                          Text('Reason: ${a['reason']}'),
-                          Text('Power: ${power.toStringAsFixed(1)} W'),
-                          Text('Occupancy: $occupancy'),
-                          Text('Model score: ${score.toStringAsFixed(4)}'),
+                          Text('Alert Type: ${a['reason']}'),
+                          Text('Severity: ${power >= 3000 ? 'HIGH' : 'MEDIUM'} | Stage: sergeant review'),
+                          Text('Recommendation: Inspect room physically and prepare relay intervention if unresolved.'),
+                          Text('Power: ${power.toStringAsFixed(1)} W | Occupancy: $occupancy | Score: ${score.toStringAsFixed(4)}'),
                           Text('Raised at: ${a['timestamp'] ?? '-'}'),
                         ],
                       );
@@ -904,6 +904,9 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
                                     leading: Icon(Icons.report_problem, color: Colors.orange.shade700),
                                     title: Text(roomId),
                                     subtitle: Text(
+                                      'Alert Type: ${risk['reason'] ?? 'Anomalous pattern detected'} | '
+                                      'Severity: ${power >= 3000 ? 'HIGH' : 'MEDIUM'} | '
+                                      'Stage: sergeant review\n'
                                       'Power: ${power.toStringAsFixed(1)}W | Occupancy: $occupancy'
                                       '${score != null ? ' | Score: ${score.toStringAsFixed(2)}' : ''}',
                                     ),

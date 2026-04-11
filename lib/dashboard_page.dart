@@ -2114,11 +2114,17 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
 
           Map<String, Map<String, dynamic>> notifsByRoom = {};
           final email = widget.userEmail?.trim() ?? '';
-          if (email.isNotEmpty) {
+          if (email.isNotEmpty || (widget.department != null && widget.department!.isNotEmpty)) {
             try {
+              String notifUrl = '$base/notify/notifications?limit=100';
+              if (email.isNotEmpty) {
+                notifUrl += '&email=${Uri.encodeComponent(email)}';
+              } else {
+                notifUrl += '&department=${Uri.encodeComponent(widget.department!)}';
+              }
               final notifResp = await http
                   .get(
-                    Uri.parse('$base/notify/notifications?email=${Uri.encodeComponent(email)}&limit=100'),
+                    Uri.parse(notifUrl),
                     headers: {'Content-Type': 'application/json'},
                   )
                   .timeout(const Duration(seconds: 6));
@@ -2131,6 +2137,13 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
                   final mapN = n as Map<String, dynamic>;
                   notifsByRoom[roomId] = mapN;
                   notifsByRoom[roomId.toUpperCase()] = mapN;
+                  final bareRoom = roomId.replaceFirst(RegExp(r'^ESP32-', caseSensitive: false), '');
+                  if (bareRoom.isNotEmpty) {
+                    notifsByRoom[bareRoom] = mapN;
+                    notifsByRoom[bareRoom.toUpperCase()] = mapN;
+                    notifsByRoom['ESP32-$bareRoom'] = mapN;
+                    notifsByRoom['ESP32-${bareRoom.toUpperCase()}'] = mapN;
+                  }
                 }
               }
             } catch (_) {
@@ -2212,12 +2225,18 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
+          'Alert Type: ${((alert['occupancy'] ?? 0) is num && (alert['occupancy'] as num) <= 0) ? 'Usage without occupancy' : 'High/unrecognized usage'}. '
+          'Severity: ${((alert['power'] ?? 0) is num && (alert['power'] as num) > 3000) ? 'HIGH' : 'MEDIUM'}. '
+          'Stage: live monitoring.',
           style: theme.textTheme.bodySmall,
         ),
         Text(
-          'Score: ${alert['score']}',
-          style: theme.textTheme.bodySmall,
+          'Recommendation: Check the room immediately, reduce unnecessary load, and mark resolved after confirmation.',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+        ),
+        Text(
+          'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}  |  Score: ${alert['score']}',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade500),
         ),
       ],
     );
