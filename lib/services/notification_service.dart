@@ -1,6 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'api.dart';
+import 'package:http/http.dart' as http;
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -96,12 +97,50 @@ class NotificationService {
     required String body,
   }) async {
     try {
-      await sendPushToAll(title: title, body: body);
+      await _sendPushToAll(title: title, body: body);
       print('[Notification] Quick send succeeded');
       return true;
     } catch (e) {
       print('[Notification] Quick send failed: $e');
       return false;
     }
+  }
+
+  Future<void> _sendPushToAll({
+    required String title,
+    required String body,
+  }) async {
+    const candidates = <String>[
+      'http://localhost:5000',
+      'http://127.0.0.1:5000',
+      'http://10.0.2.2:5000',
+      'http://192.168.160.1:5000',
+    ];
+
+    Object? lastError;
+    for (final base in candidates) {
+      final uri = Uri.parse('$base/fcm/send-to-all');
+      try {
+        final resp = await http
+            .post(
+              uri,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'title': title,
+                'body': body,
+                'data': <String, dynamic>{},
+              }),
+            )
+            .timeout(const Duration(seconds: 8));
+
+        if (resp.statusCode == 200) {
+          return;
+        }
+      } catch (e) {
+        lastError = e;
+      }
+    }
+
+    throw Exception('Push broadcast failed. Last error: $lastError');
   }
 }

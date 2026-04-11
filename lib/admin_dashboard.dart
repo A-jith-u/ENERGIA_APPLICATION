@@ -2039,7 +2039,13 @@ class _AddUserPageState extends State<AddUserPage> {
   String _role = 'Class Representative';
   String _department = 'CSE';
   String _year = '2';
-  String _classGroup = 'CSE - A';
+  bool _isProxy = false;
+  bool _loadingProxyCandidates = false;
+  String? _selectedProxyEmail;
+  List<Map<String, dynamic>> _proxyCandidates = const [];
+  bool _loadingRooms = false;
+  String? _selectedRoomId;
+  List<Map<String, dynamic>> _connectedRooms = const [];
 
   static const roles = [
     'Class Representative',
@@ -2047,6 +2053,170 @@ class _AddUserPageState extends State<AddUserPage> {
     'Sergeant',
   ];
   static const departments = ['CSE', 'ECE', 'ME', 'IT', 'RA','EEE'];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConnectedRooms();
+  }
+
+  Future<void> _loadConnectedRooms() async {
+    if (!mounted) return;
+    setState(() => _loadingRooms = true);
+    try {
+      List<Map<String, dynamic>> rooms = const [];
+
+      final connectedUri = Uri.parse(
+        'http://localhost:5000/rooms/connected-assignable?active_window_minutes=15&department=${Uri.encodeComponent(_department)}',
+      );
+      final connectedResp = await http.get(connectedUri).timeout(const Duration(seconds: 10));
+      if (connectedResp.statusCode == 200) {
+        final payload = jsonDecode(connectedResp.body);
+        final raw = (payload is Map<String, dynamic>) ? (payload['data'] as List<dynamic>? ?? const []) : const [];
+        rooms = raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      }
+
+      // Department-specific fallback: keep mapping aligned with selected dept.
+      if (rooms.isEmpty) {
+        final deptRoomsUri = Uri.parse(
+          'http://localhost:5000/rooms?department=${Uri.encodeComponent(_department)}',
+        );
+        final deptRoomsResp = await http.get(deptRoomsUri).timeout(const Duration(seconds: 10));
+        if (deptRoomsResp.statusCode == 200) {
+          final payload = jsonDecode(deptRoomsResp.body);
+          final raw = (payload is Map<String, dynamic>) ? (payload['data'] as List<dynamic>? ?? const []) : const [];
+          rooms = raw.map((e) {
+            final m = Map<String, dynamic>.from(e as Map);
+            m.putIfAbsent('available_slots', () => 1);
+            return m;
+          }).toList();
+        }
+      }
+
+      // Deployment policy: for CSE this installation has one operational room only.
+      if (_department.trim().toUpperCase() == 'CSE') {
+        rooms = rooms.where((r) {
+          final rid = (r['room_id'] ?? '').toString().trim().toUpperCase();
+          return rid == 'CS-201' || rid == 'CS-C201';
+        }).map((r) {
+          final m = Map<String, dynamic>.from(r);
+          // Keep real room_id for backend payload; use friendly label for admins.
+          m['room_name'] = 'CS-201';
+          return m;
+        }).toList();
+
+        if (rooms.isEmpty) {
+          rooms = [
+            {
+              'room_id': 'CS-201',
+              'room_name': 'CS-201',
+              'department': 'CSE',
+              'available_slots': 1,
+            }
+          ];
+        }
+      }
+
+      String? nextSelected = _selectedRoomId;
+      final hasCurrent = rooms.any((r) => (r['room_id']?.toString() ?? '') == nextSelected);
+      if (!hasCurrent) {
+        nextSelected = rooms.isNotEmpty ? rooms.first['room_id']?.toString() : null;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _connectedRooms = rooms;
+        _selectedRoomId = nextSelected;
+      });
+
+      if (_isProxy && (_role == 'Class Representative' || _role == 'Coordinator')) {
+        await _loadProxyCandidates();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _connectedRooms = const [];
+        _selectedRoomId = null;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingRooms = false);
+      }
+    }
+  }
+
+  Future<void> _loadProxyCandidates() async {
+    if (!mounted || !_isProxy) return;
+
+    setState(() => _loadingProxyCandidates = true);
+    try {
+      final selectedDepartment = _department.trim().toUpperCase();
+      final selectedRoom = (_selectedRoomId ?? '').trim().toUpperCase();
+      final enteredEmail = _emailCtl.text.trim().toUpperCase();
+
+      List<Map<String, dynamic>> source = const [];
+      if (_role == 'Class Representative') {
+        source = await api.getClassRepresentatives();
+      } else if (_role == 'Coordinator') {
+        source = await api.getCoordinators();
+      }
+
+      final filtered = source.where((u) {
+        final isProxyUser = (u['is_proxy'] ?? false) == true;
+        if (isProxyUser) return false;
+
+        final email = ((u['email'] ?? u['username'] ?? '').toString()).trim();
+        if (email.isEmpty) return false;
+        if (enteredEmail.isNotEmpty && enteredEmail == email.toUpperCase()) {
+          return false;
+        }
+
+        final dept = (u['department'] ?? '').toString().trim().toUpperCase();
+        if (dept != selectedDepartment) return false;
+
+        if (selectedRoom.isNotEmpty) {
+          final room = (u['assigned_room_id'] ?? '').toString().trim().toUpperCase();
+          if (room.isNotEmpty && room != selectedRoom) {
+            return false;
+          }
+        }
+
+        return true;
+      }).map((u) {
+        final email = ((u['email'] ?? u['username'] ?? '').toString()).trim();
+        final name = (u['name'] ?? email).toString().trim();
+        return {
+          ...u,
+          'email': email,
+          'display_name': name.isEmpty ? email : name,
+        };
+      }).toList();
+
+      String? nextSelected = _selectedProxyEmail;
+      final hasCurrent = nextSelected != null && filtered.any(
+        (u) => u['email'].toString().toUpperCase() == nextSelected!.toUpperCase(),
+      );
+      if (!hasCurrent) {
+        nextSelected = filtered.isNotEmpty ? filtered.first['email'].toString() : null;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _proxyCandidates = filtered;
+        _selectedProxyEmail = nextSelected;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _proxyCandidates = const [];
+        _selectedProxyEmail = null;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingProxyCandidates = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -2057,29 +2227,21 @@ class _AddUserPageState extends State<AddUserPage> {
     super.dispose();
   }
 
-  /*void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    final user = {
-      'name': _nameCtl.text.trim(),
-      'email': _emailCtl.text.trim(),
-      'phone': _phoneCtl.text.trim(),
-      'role': _role,
-      if (_role == 'Class Representative') ...{
-        'department': _department,
-        'year': _year,
-        'semester': _semester,
-        'class': _classGroup,
-        'admissionNo': _admissionCtl.text.trim(),
-      },
-    };
-
-    // TODO: wire this to backend / persistence. For now show confirmation and return user data.
-    AppNotifier.showSuccess(context, 'Created ${user['role']}: ${user['name']}');
-    Navigator.of(context).pop(user);
-  }*/
 // Inside _AddUserPageState in admin_dashboard.dart
 Future<void> _submit() async {
   if (!_formKey.currentState!.validate()) return;
+  if ((_role == 'Class Representative' || _role == 'Coordinator') && (_selectedRoomId == null || _selectedRoomId!.isEmpty)) {
+    AppNotifier.showError(context, 'Select a room mapping before creating this user.');
+    return;
+  }
+  if (_isProxy && (_selectedProxyEmail == null || _selectedProxyEmail!.trim().isEmpty)) {
+    AppNotifier.showError(context, 'Select a primary user for proxy creation.');
+    return;
+  }
+  if (_isProxy && _proxyCandidates.isEmpty) {
+    AppNotifier.showError(context, 'No eligible primary users found for this department and room.');
+    return;
+  }
 
   showDialog(
     context: context,
@@ -2146,16 +2308,45 @@ Future<void> _submit() async {
       return;
     }
 
-    final response = await api.inviteUserAsAdmin(
-      username: _emailCtl.text.trim(),
-      role: _role,
-      name: _nameCtl.text.trim(),
-      department: _department,
-      year: _role == 'Class Representative' ? _year : null,
-      ktuId: _role == 'Class Representative' ? _admissionCtl.text.trim() : null,
-      email: _emailCtl.text.trim(),
-      token: token,
-    );
+    final payload = <String, dynamic>{
+      'username': _emailCtl.text.trim(),
+      'role': _role,
+      'name': _nameCtl.text.trim(),
+      'department': _department,
+      if (_role == 'Class Representative') 'year': _year,
+      if (_role == 'Class Representative') 'ktu_id': _admissionCtl.text.trim(),
+      'email': _emailCtl.text.trim(),
+      if ((_role == 'Class Representative' || _role == 'Coordinator') && _selectedRoomId != null) 'room_id': _selectedRoomId,
+      if (_isProxy) 'is_proxy': true,
+      if (_isProxy) 'proxy_for_email': _selectedProxyEmail,
+    };
+
+    final inviteResp = await http
+        .post(
+          Uri.parse('http://localhost:5000/admin/invite-user'),
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(payload),
+        )
+        .timeout(const Duration(seconds: 12));
+
+    if (inviteResp.statusCode != 200) {
+      String err = 'Invite failed (${inviteResp.statusCode})';
+      try {
+        final decoded = jsonDecode(inviteResp.body);
+        if (decoded is Map<String, dynamic>) {
+          err = (decoded['detail'] ?? decoded['message'] ?? err).toString();
+        }
+      } catch (_) {
+        // keep fallback
+      }
+      throw api.ApiError(err);
+    }
+
+    final decoded = jsonDecode(inviteResp.body);
+    final response = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
 
     if (!mounted) return;
     Navigator.pop(context);
@@ -2230,7 +2421,19 @@ Future<void> _submit() async {
                               (r) => DropdownMenuItem(value: r, child: Text(r)),
                             )
                             .toList(),
-                    onChanged: (v) => setState(() => _role = v!),
+                    onChanged: (v) {
+                      if (v == null) return;
+                      setState(() {
+                        _role = v;
+                        _selectedRoomId = null;
+                        _isProxy = false;
+                        _selectedProxyEmail = null;
+                        _proxyCandidates = const [];
+                      });
+                      if (_role == 'Class Representative' || _role == 'Coordinator') {
+                        _loadConnectedRooms();
+                      }
+                    },
                   ),
 
                   // Extra fields shown when role requires academic context
@@ -2248,9 +2451,99 @@ Future<void> _submit() async {
                                     DropdownMenuItem(value: d, child: Text(d)),
                               )
                               .toList(),
-                      onChanged: (v) => setState(() => _department = v!),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() {
+                          _department = v;
+                          _selectedRoomId = null;
+                          _selectedProxyEmail = null;
+                          _proxyCandidates = const [];
+                        });
+                        _loadConnectedRooms();
+                      },
                     ),
                     const SizedBox(height: 8),
+                  ],
+
+                  if (_role == 'Class Representative' || _role == 'Coordinator') ...[
+                    DropdownButtonFormField<String>(
+                      value: _selectedRoomId,
+                      decoration: InputDecoration(
+                        labelText: _loadingRooms ? 'Room Mapping (loading...)' : 'Room Mapping',
+                        helperText: 'Active connected rooms are prioritized.',
+                      ),
+                      items: _connectedRooms
+                          .map(
+                            (r) => DropdownMenuItem<String>(
+                              value: r['room_id']?.toString(),
+                              child: Text('${r['room_name'] ?? r['room_id']} (${r['room_id']})'),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: _loadingRooms
+                          ? null
+                          : (v) {
+                              setState(() => _selectedRoomId = v);
+                              if (_isProxy) {
+                                _loadProxyCandidates();
+                              }
+                            },
+                      validator: (v) {
+                        if ((_role == 'Class Representative' || _role == 'Coordinator') && (v == null || v.isEmpty)) {
+                          return 'Room mapping is required';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
+                  if (_role == 'Class Representative' || _role == 'Coordinator') ...[
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Create as Proxy User'),
+                      subtitle: const Text('Proxy gets the same room/department anomaly scope as primary user.'),
+                      value: _isProxy,
+                      onChanged: (v) {
+                        setState(() {
+                          _isProxy = v;
+                          _selectedProxyEmail = null;
+                          _proxyCandidates = const [];
+                        });
+                        if (v) {
+                          _loadProxyCandidates();
+                        }
+                      },
+                    ),
+                    if (_isProxy) ...[
+                      DropdownButtonFormField<String>(
+                        value: _selectedProxyEmail,
+                        decoration: InputDecoration(
+                          labelText: _loadingProxyCandidates
+                              ? 'Primary User (loading...)'
+                              : 'Primary User',
+                          helperText: 'Select an existing non-proxy user from the same department/room.',
+                        ),
+                        items: _proxyCandidates
+                            .map(
+                              (u) => DropdownMenuItem<String>(
+                                value: u['email'].toString(),
+                                child: Text('${u['display_name']} (${u['email']})'),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _loadingProxyCandidates
+                            ? null
+                            : (v) => setState(() => _selectedProxyEmail = v),
+                        validator: (v) {
+                          if (_isProxy && (v == null || v.trim().isEmpty)) {
+                            return 'Primary user selection is required for proxy';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                   ],
 
                   // Class Rep–specific details
@@ -2268,17 +2561,6 @@ Future<void> _submit() async {
                               )
                               .toList(),
                       onChanged: (v) => setState(() => _year = v!),
-                    ),
-                    const SizedBox(height: 8),
-                    TextFormField(
-                      initialValue: _classGroup,
-                      decoration: const InputDecoration(
-                        labelText: 'Class',
-                        hintText: 'CSE - A',
-                      ),
-                      onChanged: (v) => _classGroup = v,
-                      validator:
-                          (v) => (v ?? '').trim().isEmpty ? 'Required' : null,
                     ),
                     const SizedBox(height: 8),
                     TextFormField(

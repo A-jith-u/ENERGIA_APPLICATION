@@ -16,7 +16,7 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import 'dart:convert'; // Fixes 'jsonEncode'
 import 'package:http/http.dart' as http; // Fixes 'http'
 import 'dart:async';
-import 'anomaly_reminder_service.dart';
+import 'alert_reminder_service.dart';
 import 'dart:math';
 
 class DashboardPage extends StatefulWidget {
@@ -29,14 +29,15 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   int _index = 0;
   String? _authToken;
+  String? _userEmail;
   String? _department; // decoded from JWT, used to filter anomaly alerts
+  String? _assignedRoomId; // decoded from JWT, used to scope class-rep data
 
   // ── Badge notification state ───────────────────────────────────────────────
-  final Set<String> _seenAnomalyIds = {};
-  int _unseenAnomalyCount = 0;
   List<Map<String, dynamic>> _anomalies = [];
   Timer? _badgePollingTimer;
-  final AnomalyReminderService _reminders = AnomalyReminderService();
+  late AlertReminderService _reminderService;
+  int _badgeCount = 0;
 
   static const List<String> _baseUrls = [
     'http://127.0.0.1:5000',   // Windows desktop app
@@ -61,34 +62,24 @@ class _DashboardPageState extends State<DashboardPage> {
       const Duration(seconds: 8),
       (_) => _pollForNewAnomalies(),
     );
-    // Wire reminder service
-    _reminders.mount();
-    _reminders.onShowPopup = (alert, reminderNum) {
-      if (!mounted) return;
-      AnomalyReminderPopup.show(
-        context,
-        alert: alert,
-        reminderNumber: reminderNum,
-        onViewAlerts: () {
-          setState(() => _index = 2);
-          _fetchAnomalies();
-          _clearAlertBadge();
-        },
-        onResolve: (a) async {
-          _reminders.onAlertResolved(a);
-          await _resolveAlertById(a['id'] ?? a['_id']);
-        },
-      );
-    };
-    _reminders.onBadgeUpdate = (count) {
-      if (mounted) setState(() => _unseenAnomalyCount = count);
-    };
+    // ── In-app reminder service ──────────────────────────────────────────
+    _reminderService = AlertReminderService(
+      contextGetter: () => context,
+      onBadgeUpdate: (count) {
+        if (mounted) setState(() => _badgeCount = count);
+      },
+      onResolve: (alertId) => _resolveAlertById(alertId),
+      onViewAlerts: () {
+        if (mounted) setState(() => _index = 2);
+        _fetchAnomalies();
+      },
+    );
   }
 
   @override
   void dispose() {
     _badgePollingTimer?.cancel();
-    _reminders.dispose();
+    _reminderService.dispose();
     super.dispose();
   }
 
@@ -100,7 +91,9 @@ class _DashboardPageState extends State<DashboardPage> {
         final decoded = JwtDecoder.decode(token);
         setState(() {
           _authToken = token;
+          _userEmail = decoded['username'] as String?;
           _department = decoded['department'] as String?;
+          _assignedRoomId = decoded['assigned_room_id'] as String?;
         });
       } catch (_) {
         setState(() => _authToken = token);
@@ -120,8 +113,15 @@ class _DashboardPageState extends State<DashboardPage> {
     for (final base in _baseUrls) {
       try {
         var url = '$base/anomalies';
+        final query = <String>[];
         if (_department != null && _department!.isNotEmpty) {
-          url += '?department=${Uri.encodeComponent(_department!)}';
+          query.add('department=${Uri.encodeComponent(_department!)}');
+        }
+        if (_assignedRoomId != null && _assignedRoomId!.isNotEmpty) {
+          query.add('room_id=${Uri.encodeComponent(_assignedRoomId!)}');
+        }
+        if (query.isNotEmpty) {
+          url += '?${query.join('&')}';
         }
         final resp = await http
             .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
@@ -132,13 +132,8 @@ class _DashboardPageState extends State<DashboardPage> {
           final fetched = List<Map<String, dynamic>>.from(
               raw.whereType<Map<String, dynamic>>());
           if (!mounted) return;
-          setState(() {
-            _anomalies = fetched;
-            if (seedSeen && _seenAnomalyIds.isEmpty) {
-              _seenAnomalyIds.addAll(fetched.map(_anomalyKey));
-            }
-          });
-          if (!seedSeen) _reminders.onAnomaliesUpdated(fetched);
+          setState(() { _anomalies = fetched; });
+          _reminderService.syncAlerts(fetched);
           return;
         }
       } catch (_) {
@@ -151,8 +146,15 @@ class _DashboardPageState extends State<DashboardPage> {
     for (final base in _baseUrls) {
       try {
         var url = '$base/anomalies';
+        final query = <String>[];
         if (_department != null && _department!.isNotEmpty) {
-          url += '?department=${Uri.encodeComponent(_department!)}';
+          query.add('department=${Uri.encodeComponent(_department!)}');
+        }
+        if (_assignedRoomId != null && _assignedRoomId!.isNotEmpty) {
+          query.add('room_id=${Uri.encodeComponent(_assignedRoomId!)}');
+        }
+        if (query.isNotEmpty) {
+          url += '?${query.join('&')}';
         }
         final resp = await http
             .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
@@ -163,23 +165,9 @@ class _DashboardPageState extends State<DashboardPage> {
           final fetched = List<Map<String, dynamic>>.from(
               raw.whereType<Map<String, dynamic>>());
           if (!mounted) return;
-          if (_index == 2) {
-            // User is already on Alerts tab — refresh silently, clear badge
-            setState(() {
-              _anomalies = fetched;
-              _unseenAnomalyCount = 0;
-              _seenAnomalyIds.addAll(fetched.map(_anomalyKey));
-            });
-            _reminders.onAnomaliesUpdated(fetched);
-          } else {
-            final newOnes = fetched
-                .where((a) => !_seenAnomalyIds.contains(_anomalyKey(a)))
-                .length;
-            setState(() {
-              _anomalies = fetched;
-              _unseenAnomalyCount = newOnes;
-            });
-          }
+          setState(() { _anomalies = fetched; });
+          _reminderService.syncAlerts(fetched);
+          if (_index == 2) _reminderService.clearBadge();
           return;
         }
       } catch (_) {
@@ -190,10 +178,7 @@ class _DashboardPageState extends State<DashboardPage> {
 
   void _clearAlertBadge() {
     if (!mounted) return;
-    setState(() {
-      _unseenAnomalyCount = 0;
-      _seenAnomalyIds.addAll(_anomalies.map(_anomalyKey));
-    });
+    _reminderService.clearBadge();
   }
 
   List<BottomNavigationBarItem> _buildNavItems() {
@@ -211,11 +196,11 @@ class _DashboardPageState extends State<DashboardPage> {
       BottomNavigationBarItem(
         icon: _CRBadgeIcon(
           icon: Icons.notifications_outlined,
-          count: _unseenAnomalyCount,
+          count: _badgeCount,
         ),
         activeIcon: _CRBadgeIcon(
           icon: Icons.notifications,
-          count: _unseenAnomalyCount,
+          count: _badgeCount,
         ),
         label: 'Alerts',
       ),
@@ -294,13 +279,18 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
-        return _WelcomeSection(scheme: scheme);
+        return _WelcomeSection(
+          scheme: scheme,
+          assignedRoomId: _assignedRoomId,
+        );
       case 1:
         return _ReportsSection(scheme: scheme, userToken: _authToken);
       case 2:
         return _CRAlertsSection(
           anomalies: _anomalies,
           department: _department,
+          roomId: _assignedRoomId,
+          userEmail: _userEmail,
           baseUrls: _baseUrls,
           onRefresh: () async {
             await _fetchAnomalies();
@@ -1095,7 +1085,12 @@ class _ProfileInfoTile extends StatelessWidget {
 
 class _WelcomeSection extends StatefulWidget {
   final ColorScheme scheme;
-  const _WelcomeSection({required this.scheme});
+  final String? assignedRoomId;
+
+  const _WelcomeSection({
+    required this.scheme,
+    this.assignedRoomId,
+  });
 
   @override
   State<_WelcomeSection> createState() => _WelcomeSectionState();
@@ -1123,7 +1118,10 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   Timer? _refreshTimer;
   String? _preferredBaseUrl;
 
-  static const String _roomDeviceId = 'ESP32-CS-C201';
+  String get _roomDeviceId =>
+      (widget.assignedRoomId == null || widget.assignedRoomId!.trim().isEmpty)
+          ? 'CS-201'
+          : widget.assignedRoomId!.trim();
 
   // Getter for power in kW
   double get _currentPowerKw => _currentPowerW / 1000.0;
@@ -1133,7 +1131,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
     super.initState();
     _loadLiveData();
     _refreshTimer = Timer.periodic(
-      const Duration(seconds: 60),
+      const Duration(seconds: 10),
       (_) => _loadLiveData(),
     );
   }
@@ -1167,11 +1165,8 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             '$baseUrl/sensor-data?limit=36&device_id=${Uri.encodeComponent(_roomDeviceId)}',
           );
 
-          // Fallback endpoint when room-specific query yields nothing.
-          final fallbackUri = Uri.parse('$baseUrl/sensor-data?limit=36');
-
           // Use a smaller timeout to keep UI responsive even when a host is down.
-          final response = await http
+          final finalResponse = await http
               .get(roomUri, headers: {'Content-Type': 'application/json'})
               .timeout(
                 const Duration(seconds: 4),
@@ -1179,18 +1174,6 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                   throw TimeoutException('Request timed out');
                 },
               );
-
-          http.Response finalResponse = response;
-          if (response.statusCode != 200) {
-            finalResponse = await http
-                .get(fallbackUri, headers: {'Content-Type': 'application/json'})
-                .timeout(
-                  const Duration(seconds: 4),
-                  onTimeout: () {
-                    throw TimeoutException('Request timed out');
-                  },
-                );
-          }
 
           if (finalResponse.statusCode != 200) continue;
 
@@ -1493,7 +1476,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Welcome to CS-201! 💡',
+                      'Welcome to ${_roomDeviceId}! 💡',
                       style: theme.textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.w900,
                         color: Colors.white,
@@ -2054,6 +2037,8 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
 class _CRAlertsSection extends StatefulWidget {
   final List<Map<String, dynamic>> anomalies;
   final String? department;
+  final String? roomId;
+  final String? userEmail;
   final List<String> baseUrls;
   final Future<void> Function() onRefresh;
 
@@ -2062,6 +2047,8 @@ class _CRAlertsSection extends StatefulWidget {
     required this.baseUrls,
     required this.onRefresh,
     this.department,
+    this.roomId,
+    this.userEmail,
   });
 
   @override
@@ -2071,6 +2058,7 @@ class _CRAlertsSection extends StatefulWidget {
 class _CRAlertsSectionState extends State<_CRAlertsSection> {
   late List<Map<String, dynamic>> _localAnomalies;
   final Set<dynamic> _resolvingIds = {};
+  Map<String, Map<String, dynamic>> _notificationsByRoom = {};
   Timer? _selfRefreshTimer;
 
   @override
@@ -2105,8 +2093,15 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
     for (final base in widget.baseUrls) {
       try {
         var url = '$base/anomalies';
+        final query = <String>[];
         if (widget.department != null && widget.department!.isNotEmpty) {
-          url += '?department=${Uri.encodeComponent(widget.department!)}';
+          query.add('department=${Uri.encodeComponent(widget.department!)}');
+        }
+        if (widget.roomId != null && widget.roomId!.isNotEmpty) {
+          query.add('room_id=${Uri.encodeComponent(widget.roomId!)}');
+        }
+        if (query.isNotEmpty) {
+          url += '?${query.join('&')}';
         }
         final resp = await http
             .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
@@ -2116,11 +2111,52 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
           final raw = body is List ? body : (body['anomalies'] as List? ?? []);
           final fetched = List<Map<String, dynamic>>.from(
               raw.whereType<Map<String, dynamic>>());
+
+          Map<String, Map<String, dynamic>> notifsByRoom = {};
+          final email = widget.userEmail?.trim() ?? '';
+          if (email.isNotEmpty || (widget.department != null && widget.department!.isNotEmpty)) {
+            try {
+              String notifUrl = '$base/notify/notifications?limit=100';
+              if (email.isNotEmpty) {
+                notifUrl += '&email=${Uri.encodeComponent(email)}';
+              } else {
+                notifUrl += '&department=${Uri.encodeComponent(widget.department!)}';
+              }
+              final notifResp = await http
+                  .get(
+                    Uri.parse(notifUrl),
+                    headers: {'Content-Type': 'application/json'},
+                  )
+                  .timeout(const Duration(seconds: 6));
+              if (notifResp.statusCode == 200) {
+                final notifBody = jsonDecode(notifResp.body) as Map<String, dynamic>;
+                final notifications = notifBody['notifications'] as List? ?? [];
+                for (final n in notifications) {
+                  final roomId = (n['room_id'] ?? n['device_id'] ?? '').toString().trim();
+                  if (roomId.isEmpty) continue;
+                  final mapN = n as Map<String, dynamic>;
+                  notifsByRoom[roomId] = mapN;
+                  notifsByRoom[roomId.toUpperCase()] = mapN;
+                  final bareRoom = roomId.replaceFirst(RegExp(r'^ESP32-', caseSensitive: false), '');
+                  if (bareRoom.isNotEmpty) {
+                    notifsByRoom[bareRoom] = mapN;
+                    notifsByRoom[bareRoom.toUpperCase()] = mapN;
+                    notifsByRoom['ESP32-$bareRoom'] = mapN;
+                    notifsByRoom['ESP32-${bareRoom.toUpperCase()}'] = mapN;
+                  }
+                }
+              }
+            } catch (_) {
+              // Best effort only.
+            }
+          }
+
           if (!mounted) return;
           setState(() {
             _localAnomalies = fetched
                 .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
                 .toList();
+            _notificationsByRoom = notifsByRoom;
           });
           return;
         }
@@ -2128,6 +2164,82 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
         continue;
       }
     }
+  }
+
+  Widget _buildAlertMessageContent(Map<String, dynamic> alert) {
+    final roomId = (alert['room_id'] ?? alert['device_id'] ?? '').toString().trim();
+    final notification =
+        _notificationsByRoom[roomId] ?? _notificationsByRoom[roomId.toUpperCase()];
+    final theme = Theme.of(context);
+
+    if (notification != null) {
+      final title = (notification['title'] ?? '').toString();
+      final message = (notification['message'] ?? '').toString();
+      final notifPowerRaw = notification['power'];
+      final notifPower = notifPowerRaw is num
+          ? notifPowerRaw.toDouble()
+          : double.tryParse('${notifPowerRaw ?? ''}');
+      final rawPower = alert['power'];
+      final anomalyPower = rawPower is num ? rawPower.toDouble() : double.tryParse('${rawPower ?? ''}');
+      final powerText = notifPower != null
+          ? '${notifPower.toStringAsFixed(1)}W'
+          : (anomalyPower != null ? '${anomalyPower.toStringAsFixed(1)}W' : 'N/A');
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (title.isNotEmpty)
+            Text(
+              title,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade700,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (title.isNotEmpty) const SizedBox(height: 4),
+          if (message.isNotEmpty)
+            Text(
+              message,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: Colors.grey.shade700,
+                height: 1.35,
+              ),
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (message.isNotEmpty) const SizedBox(height: 4),
+          Text(
+            'Power: $powerText',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: Colors.grey.shade500,
+              fontSize: 11,
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Alert Type: ${((alert['occupancy'] ?? 0) is num && (alert['occupancy'] as num) <= 0) ? 'Usage without occupancy' : 'High/unrecognized usage'}. '
+          'Severity: ${((alert['power'] ?? 0) is num && (alert['power'] as num) > 3000) ? 'HIGH' : 'MEDIUM'}. '
+          'Stage: live monitoring.',
+          style: theme.textTheme.bodySmall,
+        ),
+        Text(
+          'Recommendation: Check the room immediately, reduce unnecessary load, and mark resolved after confirmation.',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+        ),
+        Text(
+          'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}  |  Score: ${alert['score']}',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade500),
+        ),
+      ],
+    );
   }
 
   Future<void> _resolveAlert(int index) async {
@@ -2301,20 +2413,13 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Anomaly in ${alert['device_id']}',
+                                'Anomaly in ${alert['room_id'] ?? alert['device_id'] ?? 'Unknown room'}',
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 14),
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                              Text(
-                                'Score: ${alert['score']}',
-                                style: theme.textTheme.bodySmall,
-                              ),
+                              _buildAlertMessageContent(alert),
                             ],
                           ),
                         ),

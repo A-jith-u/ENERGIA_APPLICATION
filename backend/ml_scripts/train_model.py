@@ -8,8 +8,10 @@ from sklearn.ensemble import IsolationForest
 # 1. CONFIGURATION & PATHS
 # ==========================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Preprocessed data is in the backend/ folder (two levels up from ml_scripts)
-DATA_PATH = os.path.abspath(os.path.join(SCRIPT_DIR, "..",  "preprocessed_energy_data.csv"))
+# Preprocessed data is kept in a dedicated training dataset folder.
+BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+DATA_PATH = os.path.join(BACKEND_DIR, "datasets", "preprocessed_energy_data.csv")
+LEGACY_DATA_PATH = os.path.join(BACKEND_DIR, "preprocessed_energy_data.csv")
 # Models folder
 SAVE_DIR = os.path.join(SCRIPT_DIR, "..", "models")
 
@@ -17,12 +19,13 @@ def run_anomaly_pipeline():
     # ==========================================================
     # 2. LOAD PREPROCESSED DATA
     # ==========================================================
-    print(f"Loading preprocessed data from: {DATA_PATH}")
-    if not os.path.exists(DATA_PATH):
+    data_path = DATA_PATH if os.path.exists(DATA_PATH) else LEGACY_DATA_PATH
+    print(f"Loading preprocessed data from: {data_path}")
+    if not os.path.exists(data_path):
         print("❌ Error: Preprocessed CSV not found. Run preprocess_data.py first.")
         return
         
-    df = pd.read_csv(DATA_PATH)
+    df = pd.read_csv(data_path)
     
     if len(df) < 10:
         print("⚠️ Warning: Not enough data points to train a reliable model.")

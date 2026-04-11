@@ -317,6 +317,29 @@ Future<List<Map<String, dynamic>>> getRecentAnomalies({int limit = 100}) async {
   return const [];
 }
 
+Future<List<Map<String, dynamic>>> getRecentSensorData({
+  int limit = 300,
+  String? department,
+}) async {
+  final qs = StringBuffer('limit=$limit');
+  if (department != null && department.trim().isNotEmpty) {
+    qs.write('&department=${Uri.encodeComponent(department.trim())}');
+  }
+
+  final response = await _getJson('/sensor-data?$qs');
+  final raw = response['data'] as List<dynamic>? ?? const [];
+  return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+}
+
+Future<List<Map<String, dynamic>>> getRoomsCatalog({String? department}) async {
+  final path = (department != null && department.trim().isNotEmpty)
+      ? '/rooms?department=${Uri.encodeComponent(department.trim())}'
+      : '/rooms';
+  final response = await _getJson(path);
+  final raw = response['data'] as List<dynamic>? ?? const [];
+  return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+}
+
 Future<Map<String, dynamic>> updateSergeantProfile(
   String token, {
   String? name,

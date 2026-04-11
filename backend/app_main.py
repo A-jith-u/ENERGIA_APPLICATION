@@ -55,17 +55,17 @@ try:
     if os.path.exists(MODEL_PATH):
         model = joblib.load(MODEL_PATH)
         model_features = joblib.load(FEATURES_PATH)
-        print("✅ Anomaly Detection Model Loaded Successfully")
+        print("[OK] Anomaly Detection Model Loaded Successfully")
 except Exception as e:
-    print(f"❌ Error loading AI model: {e}")
+    print(f"[ERROR] Error loading AI model: {e}")
 
 # --- 2. AUTO-PREPROCESSING ---
 try:
     from ml_scripts import preprocess 
     preprocess.run_preprocessing()
-    print("✅ Preprocessed CSV updated on startup.")
+    print("[OK] Preprocessed CSV updated on startup.")
 except Exception as e:
-    print(f"⚠️ Preprocessing skipped: {e}")
+    print(f"[WARN] Preprocessing skipped: {e}")
 
 app = FastAPI(title="ENERGIA Backend")
 
@@ -135,7 +135,7 @@ app.include_router(monthly_report_api_module.app.router, prefix="/reports", tags
 try:
     notify_api_module = _load_sibling_module("notify_api")
     app.include_router(notify_api_module.app.router, prefix="/notify", tags=["Notifications"])
-    print("[app_main] notify_api mounted at /notify ✅")
+    print("[app_main] notify_api mounted at /notify [OK]")
 except Exception as _e:
     notify_api_module = None
     print(f"[app_main] notify_api not available: {_e}")
@@ -169,7 +169,7 @@ app.include_router(relay_control_api_module.app.router, prefix="/api/relay", tag
 try:
     anomaly_alert_service_module = _load_sibling_module("anomaly_alert_service")
     app.include_router(anomaly_alert_service_module.app.router, prefix="/anomaly-alerts", tags=["Anomaly Alerts"])
-    print("[app_main] anomaly_alert_service mounted at /anomaly-alerts ✅")
+    print("[app_main] anomaly_alert_service mounted at /anomaly-alerts [OK]")
 except Exception as _e:
     anomaly_alert_service_module = None
     print(f"[app_main] anomaly_alert_service not available: {_e}")
@@ -206,6 +206,92 @@ except Exception as mixed_error:
         print("Prophet model serving API mounted at /model (fallback)")
     except Exception as prophet_error:
         print(f"Warning: Could not load Prophet model serving API fallback: {prophet_error}")
+
+# --- STARTUP EVENT: Start anomaly alert background service ---
+import asyncio
+from contextlib import asynccontextmanager
+
+# Global variable to track background tasks
+_background_tasks = []
+_anomaly_alert_service = None
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    """
+    Lifespan context manager for app startup and shutdown.
+    Starts the anomaly alert background service on startup.
+    """
+    global _background_tasks, _anomaly_alert_service
+    
+    # Startup
+    print("[app_main] Starting background services...")
+    
+    if anomaly_alert_service_module:
+        try:
+            _anomaly_alert_service = anomaly_alert_service_module.anomaly_alert_service
+            # Create background task for alert escalation
+            task = asyncio.create_task(_anomaly_alert_service.start())
+            _background_tasks.append(task)
+            print("[app_main] Anomaly alert background service STARTED [OK]")
+        except Exception as e:
+            print(f"[app_main] Failed to start anomaly alert service: {e}")
+    
+    yield  # App runs here
+    
+    # Shutdown
+    print("[app_main] Shutting down background services...")
+    if _anomaly_alert_service:
+        _anomaly_alert_service.stop()
+    for task in _background_tasks:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    print("[app_main] Background services stopped")
+
+# Set the lifespan handler
+app.router.lifespan_context = lifespan
+
+# Alternatively, use startup event (for uvicorn compatibility)
+@app.on_event("startup")
+async def startup_event():
+    """Start the anomaly alert service background loop on app startup."""
+    global _background_tasks, _anomaly_alert_service
+    
+    print("[app_main] Startup event: initializing background services...")
+    
+    if anomaly_alert_service_module:
+        try:
+            _anomaly_alert_service = anomaly_alert_service_module.anomaly_alert_service
+            # Create background task for alert escalation loop
+            task = asyncio.create_task(_anomaly_alert_service.start())
+            _background_tasks.append(task)
+            print("[app_main] Anomaly alert escalation service RUNNING [OK]")
+            print("[app_main] Alert escalation scheduled: class rep 0-5min → coordinator 5-10min → sergeant 10-15min → auto-cutoff")
+        except Exception as e:
+            print(f"[app_main] ERROR: Failed to start anomaly alert service: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the anomaly alert service on app shutdown."""
+    global _background_tasks, _anomaly_alert_service
+    
+    print("[app_main] Shutdown event: stopping background services...")
+    
+    if _anomaly_alert_service:
+        _anomaly_alert_service.stop()
+        print("[app_main] Anomaly alert service stopped")
+    
+    # Cancel any background tasks
+    for task in _background_tasks:
+        if not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
 
 # --- START SERVER ---
 if __name__ == "__main__":
