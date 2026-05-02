@@ -176,7 +176,7 @@ async def control_relay(request: RelayControlRequest, authorization: Optional[st
                     detail=f"No relay mapping found for room {request.room_id}"
                 )
             
-            device_id, channel, pin = mapping
+            device_id, channel, pin, canonical_room_id = mapping
 
             # Coordinators can control only rooms in their own department.
             if user["role"] == "coordinator":
