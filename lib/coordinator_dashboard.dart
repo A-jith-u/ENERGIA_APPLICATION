@@ -44,15 +44,16 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       DepartmentCustomizationService();
   List<String> _accessibleRooms = [];
   List<Map<String, dynamic>> _anomalies = [];
-  Map<String, Map<String, dynamic>> _notificationsByRoom = {}; // roomId -> notification data
+  Map<String, Map<String, dynamic>> _notificationsByRoom =
+      {}; // roomId -> notification data
   int _badgeCount = 0;
   late AlertReminderService _reminderService;
 
-// 1. COMBINED INITSTATE (Fixes error G351DE6FA)
+  // 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
   void initState() {
     super.initState();
-    
+
     // Extract department from the passed user or from saved preferences
     _currentUser = widget.user;
     if (_currentUser?.department != null) {
@@ -61,12 +62,12 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       // Fallback to shared preferences if available
       _loadUserDepartmentFromPrefs();
     }
-    
+
     // Load initial data for both room view and analytics
-    _loadLiveData(); 
+    _loadLiveData();
     _loadDepartmentAnalyticsData();
-    _fetchAnomalyAlerts(); 
-    
+    _fetchAnomalyAlerts();
+
     // Setup the periodic timer for live updates.
     _liveTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _loadLiveData();
@@ -86,7 +87,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       },
     );
   }
-  
+
   Future<void> _loadUserDepartmentFromPrefs() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -116,7 +117,8 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
         try {
           String queryString = '/sensor-data?limit=100';
           if (_userDepartment != null && _userDepartment!.isNotEmpty) {
-            queryString += '&department=${Uri.encodeComponent(_userDepartment!)}';
+            queryString +=
+                '&department=${Uri.encodeComponent(_userDepartment!)}';
           }
 
           final resp = await http
@@ -129,7 +131,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
           if (resp.statusCode == 200) {
             final data = jsonDecode(resp.body);
             final readings = data['data'] as List? ?? [];
-            
+
             if (readings.isNotEmpty && mounted) {
               setState(() {
                 _sensorData = readings.first as Map<String, dynamic>;
@@ -160,33 +162,89 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   // Dynamic active rooms tracking
   final List<Map<String, dynamic>> _allRooms = [
     {'room': 'CS-404', 'status': 'Normal', 'usage': '5.2 kW', 'isActive': true},
-    {'room': 'CS-Lab 1', 'status': 'High Usage', 'usage': '8.6 kW', 'isActive': true},
-    {'room': 'CS-Lab 2', 'status': 'Moderate', 'usage': '3.4 kW', 'isActive': true},
-    {'room': 'Server Room', 'status': 'Critical System', 'usage': '4.5 kW', 'isActive': true},
-    {'room': 'CS-Faculty Room', 'status': 'Low Usage', 'usage': '5.2 kW', 'isActive': true},
-    {'room': 'CS-Seminar Hall', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
-    {'room': 'CS-405', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
-    {'room': 'CS-Lab 3', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
-    {'room': 'CS-Study Area', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
-    {'room': 'CS-Conference', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
-    {'room': 'CS-406', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
-    {'room': 'CS-Library', 'status': 'Offline', 'usage': '0.0 kW', 'isActive': false},
+    {
+      'room': 'CS-Lab 1',
+      'status': 'High Usage',
+      'usage': '8.6 kW',
+      'isActive': true,
+    },
+    {
+      'room': 'CS-Lab 2',
+      'status': 'Moderate',
+      'usage': '3.4 kW',
+      'isActive': true,
+    },
+    {
+      'room': 'Server Room',
+      'status': 'Critical System',
+      'usage': '4.5 kW',
+      'isActive': true,
+    },
+    {
+      'room': 'CS-Faculty Room',
+      'status': 'Low Usage',
+      'usage': '5.2 kW',
+      'isActive': true,
+    },
+    {
+      'room': 'CS-Seminar Hall',
+      'status': 'Offline',
+      'usage': '0.0 kW',
+      'isActive': false,
+    },
+    {
+      'room': 'CS-405',
+      'status': 'Offline',
+      'usage': '0.0 kW',
+      'isActive': false,
+    },
+    {
+      'room': 'CS-Lab 3',
+      'status': 'Offline',
+      'usage': '0.0 kW',
+      'isActive': false,
+    },
+    {
+      'room': 'CS-Study Area',
+      'status': 'Offline',
+      'usage': '0.0 kW',
+      'isActive': false,
+    },
+    {
+      'room': 'CS-Conference',
+      'status': 'Offline',
+      'usage': '0.0 kW',
+      'isActive': false,
+    },
+    {
+      'room': 'CS-406',
+      'status': 'Offline',
+      'usage': '0.0 kW',
+      'isActive': false,
+    },
+    {
+      'room': 'CS-Library',
+      'status': 'Offline',
+      'usage': '0.0 kW',
+      'isActive': false,
+    },
   ];
 
-Widget _buildAnomalyTab() {
-  return _DepartmentAlertsSection(
-    anomalies: _anomalies,
-    onRefresh: _fetchAnomalyAlerts,
-    department: _userDepartment,
-    notificationsByRoom: _notificationsByRoom,
-    baseUrls: const [
-      'http://127.0.0.1:5000',
-      'http://localhost:5000',
-      'http://10.0.2.2:5000',
-      'http://192.168.160.1:5000',
-    ],
-  );
-}
+  Widget _buildAnomalyTab() {
+    return _DepartmentAlertsSection(
+      anomalies: _anomalies,
+      onRefresh: _fetchAnomalyAlerts,
+      department: _userDepartment,
+      notificationsByRoom: _notificationsByRoom,
+      baseUrls: const [
+        'http://127.0.0.1:5000',
+        'http://localhost:5000',
+        'http://10.0.2.2:5000',
+        'http://192.168.160.1:5000',
+      ],
+    );
+  }
+
   Future<void> _loadLiveData() async {
     try {
       // Determine which room to load data for
@@ -231,11 +289,11 @@ Widget _buildAnomalyTab() {
       try {
         // Build query with device_id and department if provided
         String queryString = '/sensor-data?limit=24';
-        
+
         if (deviceId != null) {
           queryString += '&device_id=$deviceId';
         }
-        
+
         if (_userDepartment != null && _userDepartment!.isNotEmpty) {
           queryString += '&department=${Uri.encodeComponent(_userDepartment!)}';
         }
@@ -286,9 +344,10 @@ Widget _buildAnomalyTab() {
           // 1. Fetch anomalies
           String queryString = '/anomalies';
           if (_userDepartment != null && _userDepartment!.isNotEmpty) {
-            queryString += '?department=${Uri.encodeComponent(_userDepartment!)}';
+            queryString +=
+                '?department=${Uri.encodeComponent(_userDepartment!)}';
           }
-          
+
           final anomResp = await http
               .get(
                 Uri.parse('$baseUrl$queryString'),
@@ -298,8 +357,11 @@ Widget _buildAnomalyTab() {
 
           if (anomResp.statusCode == 200) {
             final anomData = jsonDecode(anomResp.body);
-            final anomalies = anomData is List ? anomData : (anomData['anomalies'] as List? ?? []);
-            
+            final anomalies =
+                anomData is List
+                    ? anomData
+                    : (anomData['anomalies'] as List? ?? []);
+
             // 2. Fetch notifications for this coordinator
             String coordEmail = (_currentUser?.email ?? '').trim();
             if (coordEmail.isEmpty) {
@@ -309,14 +371,16 @@ Widget _buildAnomalyTab() {
               }
             }
             Map<String, Map<String, dynamic>> notifsByRoom = {};
-            
-            if (coordEmail.isNotEmpty || (_userDepartment != null && _userDepartment!.isNotEmpty)) {
+
+            if (coordEmail.isNotEmpty ||
+                (_userDepartment != null && _userDepartment!.isNotEmpty)) {
               try {
                 String notifUrl = '$baseUrl/notify/notifications?limit=100';
                 if (coordEmail.isNotEmpty) {
                   notifUrl += '&email=${Uri.encodeComponent(coordEmail)}';
                 } else {
-                  notifUrl += '&department=${Uri.encodeComponent(_userDepartment!)}';
+                  notifUrl +=
+                      '&department=${Uri.encodeComponent(_userDepartment!)}';
                 }
                 final notifResp = await http
                     .get(
@@ -324,24 +388,32 @@ Widget _buildAnomalyTab() {
                       headers: {'Content-Type': 'application/json'},
                     )
                     .timeout(const Duration(seconds: 6));
-                
+
                 if (notifResp.statusCode == 200) {
                   final notifData = jsonDecode(notifResp.body);
-                  final notifications = notifData['notifications'] as List? ?? [];
-                  
+                  final notifications =
+                      notifData['notifications'] as List? ?? [];
+
                   // Index notifications by room_id
                   for (final notif in notifications) {
-                    final roomId = (notif['room_id'] ?? notif['device_id'] ?? '').toString().trim();
+                    final roomId =
+                        (notif['room_id'] ?? notif['device_id'] ?? '')
+                            .toString()
+                            .trim();
                     if (roomId.isNotEmpty) {
                       final mapNotif = notif as Map<String, dynamic>;
                       notifsByRoom[roomId] = mapNotif;
                       notifsByRoom[roomId.toUpperCase()] = mapNotif;
-                      final bareRoom = roomId.replaceFirst(RegExp(r'^ESP32-', caseSensitive: false), '');
+                      final bareRoom = roomId.replaceFirst(
+                        RegExp(r'^ESP32-', caseSensitive: false),
+                        '',
+                      );
                       if (bareRoom.isNotEmpty) {
                         notifsByRoom[bareRoom] = mapNotif;
                         notifsByRoom[bareRoom.toUpperCase()] = mapNotif;
                         notifsByRoom['ESP32-$bareRoom'] = mapNotif;
-                        notifsByRoom['ESP32-${bareRoom.toUpperCase()}'] = mapNotif;
+                        notifsByRoom['ESP32-${bareRoom.toUpperCase()}'] =
+                            mapNotif;
                       }
                     }
                   }
@@ -350,12 +422,12 @@ Widget _buildAnomalyTab() {
                 // Silently skip if notifications fail
               }
             }
-            
+
             if (mounted) {
               final fetched = List<Map<String, dynamic>>.from(
                 anomalies.whereType<Map<String, dynamic>>(),
               );
-              setState(() { 
+              setState(() {
                 _anomalies = fetched;
                 _notificationsByRoom = notifsByRoom;
               });
@@ -449,8 +521,14 @@ Widget _buildAnomalyTab() {
           label: 'Analytics',
         ),
         BottomNavigationBarItem(
-          icon: AlertBadgeIcon(icon: Icons.notifications_outlined, count: _badgeCount),
-          activeIcon: AlertBadgeIcon(icon: Icons.notifications, count: _badgeCount),
+          icon: AlertBadgeIcon(
+            icon: Icons.notifications_outlined,
+            count: _badgeCount,
+          ),
+          activeIcon: AlertBadgeIcon(
+            icon: Icons.notifications,
+            count: _badgeCount,
+          ),
           label: 'Alerts',
         ),
       ],
@@ -466,16 +544,20 @@ Widget _buildAnomalyTab() {
     ];
     for (final base in candidates) {
       try {
-        final r = await http.put(
-          Uri.parse('$base/anomalies/$alertId/resolve'),
-          headers: {'Content-Type': 'application/json'},
-          body: '{"status":"resolved"}',
-        ).timeout(const Duration(seconds: 8));
+        final r = await http
+            .put(
+              Uri.parse('$base/anomalies/$alertId/resolve'),
+              headers: {'Content-Type': 'application/json'},
+              body: '{"status":"resolved"}',
+            )
+            .timeout(const Duration(seconds: 8));
         if (r.statusCode == 200 || r.statusCode == 204) {
           await _fetchAnomalyAlerts();
           return;
         }
-      } catch (_) { continue; }
+      } catch (_) {
+        continue;
+      }
     }
   }
 
@@ -488,62 +570,11 @@ Widget _buildAnomalyTab() {
 
   @override
   Widget build(BuildContext context) {
-    // Keep coordinator page on the app-wide theme so it matches other dashboards.
     final colorScheme = Theme.of(context).colorScheme;
-    return DashboardScaffold(
-      title: 'Coordinator Dashboard',
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.logout),
-          tooltip: 'Logout',
-          onPressed: _performLogout,
-        ),
-      ],
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 300),
-        child: _buildPage(_currentIndex, colorScheme),
-      ),
-      currentIndex: _currentIndex,
-     onBottomNavTapped: (index) {
-        if (index == 4) {
-           _performLogout();
-        } else {
-           setState(() {
-             _currentIndex = index;
-           });
-           if (index == 3) {
-             _fetchAnomalyAlerts();
-             setState(() => _badgeCount = 0);
-            _reminderService.clearBadge();
-           }
-        }
-      },
-      bottomNavItems: [
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.dashboard_outlined),
-          activeIcon: Icon(Icons.dashboard),
-          label: 'Overview',
-        ),
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.room_outlined),
-          activeIcon: Icon(Icons.room),
-          label: 'Rooms',
-        ),
-        const BottomNavigationBarItem(
-          icon: Icon(Icons.analytics_outlined),
-          activeIcon: Icon(Icons.analytics),
-          label: 'Analytics',
-        ),
-        BottomNavigationBarItem(
-          icon: AlertBadgeIcon(icon: Icons.notifications_outlined, count: _badgeCount),
-          activeIcon: AlertBadgeIcon(icon: Icons.notifications, count: _badgeCount),
-          label: 'Alerts',
-        ),
-      ],
-    );
+    return _buildDepartmentDashboard(colorScheme);
   }
 
-Widget _buildPage(int index, ColorScheme scheme) {
+  Widget _buildPage(int index, ColorScheme scheme) {
     switch (index) {
       case 0:
         return _CoordinatorOverviewPage(
@@ -633,10 +664,11 @@ class _CoordinatorOverviewPage extends StatelessWidget {
     final latestPower = sensorData?['power']?.toDouble() ?? 0.0;
     final liveLoading = loadingData;
     final normalizedDepartmentName =
-      departmentName.trim().isEmpty || departmentName.trim().toLowerCase() == 'admin'
-        ? 'Department'
-        : departmentName.trim();
-   
+        departmentName.trim().isEmpty ||
+                departmentName.trim().toLowerCase() == 'admin'
+            ? 'Department'
+            : departmentName.trim();
+
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -1028,7 +1060,10 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                     currentPower: latestPower,
                     maxCapacity: 10.0,
                     label: 'CS-Lab 1',
-                    status: liveLoading ? 'Loading...' : (latestPower > 0 ? 'Active Usage' : 'Idle'),
+                    status:
+                        liveLoading
+                            ? 'Loading...'
+                            : (latestPower > 0 ? 'Active Usage' : 'Idle'),
                     showTrend: true,
                     trendPercentage: latestPower > 5 ? 5 : -2,
                   ),
@@ -1039,7 +1074,10 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                     currentPower: latestPower,
                     maxCapacity: 8.0,
                     label: 'Server Room',
-                    status: liveLoading ? 'Loading...' : (latestPower > 0 ? 'Active Usage' : 'Idle'),
+                    status:
+                        liveLoading
+                            ? 'Loading...'
+                            : (latestPower > 0 ? 'Active Usage' : 'Idle'),
                     showTrend: true,
                     trendPercentage: latestPower > 5 ? 5 : -2,
                   ),
@@ -1047,7 +1085,13 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                 SizedBox(
                   width: cardWidth,
                   child: EnergyDistributionDonut(
-                    labels: const ['AC Systems', 'Lighting', 'Lab Equipment', 'Server', 'Other'],
+                    labels: const [
+                      'AC Systems',
+                      'Lighting',
+                      'Lab Equipment',
+                      'Server',
+                      'Other',
+                    ],
                     values: const [32.5, 18.3, 28.7, 15.2, 5.3],
                     title: 'Department Energy Distribution',
                   ),
@@ -1055,8 +1099,24 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                 SizedBox(
                   width: cardWidth,
                   child: ComparativeBarChart(
-                    labels: const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-                    values: const [156.2, 162.4, 158.9, 171.3, 165.8, 98.4, 102.6],
+                    labels: const [
+                      'Mon',
+                      'Tue',
+                      'Wed',
+                      'Thu',
+                      'Fri',
+                      'Sat',
+                      'Sun',
+                    ],
+                    values: const [
+                      156.2,
+                      162.4,
+                      158.9,
+                      171.3,
+                      165.8,
+                      98.4,
+                      102.6,
+                    ],
                     title: 'Weekly Department Usage (kWh)',
                     unit: 'kWh',
                     maxY: 180.0,
@@ -1072,18 +1132,38 @@ class _CoordinatorOverviewPage extends StatelessWidget {
                         children: [
                           Text(
                             'Department Energy Flow (Last 24 Hours)',
-                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           const SizedBox(height: 12),
                           ResponsiveLineChart(
                             spots: const [
-                                  FlSpot(0, 8.5), FlSpot(1, 9.2), FlSpot(2, 8.8), FlSpot(3, 12.5),
-                                  FlSpot(4, 15.2), FlSpot(5, 18.4), FlSpot(6, 19.5), FlSpot(7, 17.8),
-                                  FlSpot(8, 16.2), FlSpot(9, 14.5), FlSpot(10, 13.2), FlSpot(11, 12.8),
-                                  FlSpot(12, 14.5), FlSpot(13, 15.8), FlSpot(14, 16.2), FlSpot(15, 17.1),
-                                  FlSpot(16, 18.4), FlSpot(17, 16.9), FlSpot(18, 15.3), FlSpot(19, 13.5),
-                                  FlSpot(20, 12.2), FlSpot(21, 10.8), FlSpot(22, 9.5), FlSpot(23, 8.8),
-                                ],
+                              FlSpot(0, 8.5),
+                              FlSpot(1, 9.2),
+                              FlSpot(2, 8.8),
+                              FlSpot(3, 12.5),
+                              FlSpot(4, 15.2),
+                              FlSpot(5, 18.4),
+                              FlSpot(6, 19.5),
+                              FlSpot(7, 17.8),
+                              FlSpot(8, 16.2),
+                              FlSpot(9, 14.5),
+                              FlSpot(10, 13.2),
+                              FlSpot(11, 12.8),
+                              FlSpot(12, 14.5),
+                              FlSpot(13, 15.8),
+                              FlSpot(14, 16.2),
+                              FlSpot(15, 17.1),
+                              FlSpot(16, 18.4),
+                              FlSpot(17, 16.9),
+                              FlSpot(18, 15.3),
+                              FlSpot(19, 13.5),
+                              FlSpot(20, 12.2),
+                              FlSpot(21, 10.8),
+                              FlSpot(22, 9.5),
+                              FlSpot(23, 8.8),
+                            ],
                             title: 'Department Load Profile',
                             unit: 'kW',
                             maxY: 25.0,
@@ -1187,7 +1267,7 @@ class _CoordinatorOverviewPage extends StatelessWidget {
   ) {
     final theme = Theme.of(context);
     final cardWidth = (MediaQuery.of(context).size.width / 2) - 28;
-    
+
     return SizedBox(
       width: cardWidth,
       child: Card(
@@ -1197,10 +1277,7 @@ class _CoordinatorOverviewPage extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             gradient: LinearGradient(
-              colors: [
-                color.withOpacity(0.08),
-                color.withOpacity(0.02),
-              ],
+              colors: [color.withOpacity(0.08), color.withOpacity(0.02)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -1263,8 +1340,6 @@ class _CoordinatorOverviewPage extends StatelessWidget {
     if (timeSeriesData == null || timeSeriesData!.isEmpty) {
       return const SizedBox.shrink();
     }
-
-
 
     final List<FlSpot> powerSpots = [];
     final List<FlSpot> currentSpots = [];
@@ -1473,19 +1548,23 @@ class _DepartmentRoomsSection extends StatefulWidget {
   });
 
   @override
-  State<_DepartmentRoomsSection> createState() => _DepartmentRoomsSectionState();
+  State<_DepartmentRoomsSection> createState() =>
+      _DepartmentRoomsSectionState();
 }
 
 class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
   final TextEditingController _searchController = TextEditingController();
-  final TextEditingController _thresholdController = TextEditingController();
+  final TextEditingController _lowerThresholdController =
+      TextEditingController();
+  final TextEditingController _upperThresholdController =
+      TextEditingController();
 
   List<Map<String, dynamic>> _rooms = [];
   List<Map<String, dynamic>> _filteredRooms = [];
   List<int> _floors = [];
   String _selectedFloor = 'all';
   bool _loading = true;
-  
+
   // Live data tracking for each room
   Map<String, Map<String, dynamic>> _roomLiveData = {};
   Map<String, Map<String, dynamic>> _relayMappingByRoom = {};
@@ -1509,7 +1588,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     _loadRooms();
     _searchController.addListener(_applyFilters);
     _loadAuthToken();
-    
+
     // Setup live data refresh timer
     _liveDataTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _fetchLiveDataForDepartment();
@@ -1520,7 +1599,8 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
   @override
   void dispose() {
     _searchController.dispose();
-    _thresholdController.dispose();
+    _lowerThresholdController.dispose();
+    _upperThresholdController.dispose();
     _liveDataTimer?.cancel();
     super.dispose();
   }
@@ -1545,9 +1625,10 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
       try {
         String queryString = '/rooms';
         if (widget.department != null && widget.department!.isNotEmpty) {
-          queryString += '?department=${Uri.encodeComponent(widget.department!)}';
+          queryString +=
+              '?department=${Uri.encodeComponent(widget.department!)}';
         }
-        
+
         final resp = await http
             .get(
               Uri.parse('$baseUrl$queryString'),
@@ -1557,18 +1638,20 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
 
         if (resp.statusCode == 200) {
           final payload = jsonDecode(resp.body) as Map<String, dynamic>;
-          final list = (payload['data'] as List? ?? const [])
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
+          final list =
+              (payload['data'] as List? ?? const [])
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList();
 
-          final floors = list
-              .map((r) => r['floor_number'])
-              .whereType<num>()
-              .map((v) => v.toInt())
-              .toSet()
-              .toList()
-            ..sort();
+          final floors =
+              list
+                  .map((r) => r['floor_number'])
+                  .whereType<num>()
+                  .map((v) => v.toInt())
+                  .toSet()
+                  .toList()
+                ..sort();
 
           if (!mounted) return;
           setState(() {
@@ -1577,7 +1660,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
             _applyFilters();
             _loading = false;
           });
-          
+
           // Fetch live data for all rooms
           await _fetchLiveDataForDepartment();
           await _fetchRelayConnectivity();
@@ -1599,11 +1682,12 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
 
   Future<void> _fetchLiveDataForDepartment() async {
     if (widget.department == null || widget.department!.isEmpty) return;
-    
+
     for (final baseUrl in _apiCandidates) {
       try {
-        final queryString = '/sensor-data?limit=100&department=${Uri.encodeComponent(widget.department!)}';
-        
+        final queryString =
+            '/sensor-data?limit=100&department=${Uri.encodeComponent(widget.department!)}';
+
         final resp = await http
             .get(
               Uri.parse('$baseUrl$queryString'),
@@ -1613,10 +1697,11 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
 
         if (resp.statusCode == 200) {
           final payload = jsonDecode(resp.body) as Map<String, dynamic>;
-          final readings = (payload['data'] as List? ?? const [])
-              .whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList();
+          final readings =
+              (payload['data'] as List? ?? const [])
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList();
 
           // Group readings by device_id (room)
           Map<String, Map<String, dynamic>> groupedData = {};
@@ -1673,17 +1758,21 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
           continue;
         }
 
-        final mappingPayload = jsonDecode(mappingsResp.body) as Map<String, dynamic>;
-        final statusPayload = jsonDecode(statusResp.body) as Map<String, dynamic>;
+        final mappingPayload =
+            jsonDecode(mappingsResp.body) as Map<String, dynamic>;
+        final statusPayload =
+            jsonDecode(statusResp.body) as Map<String, dynamic>;
 
-        final rawMappings = (mappingPayload['data'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
-        final rawStatuses = (statusPayload['devices'] as List? ?? const [])
-            .whereType<Map>()
-            .map((e) => Map<String, dynamic>.from(e))
-            .toList();
+        final rawMappings =
+            (mappingPayload['data'] as List? ?? const [])
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+        final rawStatuses =
+            (statusPayload['devices'] as List? ?? const [])
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
 
         final mappingByRoom = <String, Map<String, dynamic>>{};
         for (final row in rawMappings) {
@@ -1696,9 +1785,11 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
         final relayStateByDevice = <String, String>{};
         final onlineDeviceIds = <String>{};
         for (final device in rawStatuses) {
-          final deviceId = (device['device_id'] ?? '').toString().trim().toUpperCase();
+          final deviceId =
+              (device['device_id'] ?? '').toString().trim().toUpperCase();
           final isOnline = device['is_online'] == true;
-          final state = (device['state'] ?? 'UNKNOWN').toString().trim().toUpperCase();
+          final state =
+              (device['state'] ?? 'UNKNOWN').toString().trim().toUpperCase();
           if (deviceId.isEmpty) continue;
           relayOnlineByDevice[deviceId] = isOnline;
           relayStateByDevice[deviceId] = state;
@@ -1725,19 +1816,24 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     final mapping = _relayMappingByRoom[roomId];
     if (mapping == null) return false;
 
-    final relayDeviceId = (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
-    final relayChannel = int.tryParse((mapping['relay_channel'] ?? '').toString());
+    final relayDeviceId =
+        (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    final relayChannel = int.tryParse(
+      (mapping['relay_channel'] ?? '').toString(),
+    );
     if (relayDeviceId.isEmpty || (relayChannel != 1 && relayChannel != 2)) {
       return false;
     }
 
     final isOnline = _relayOnlineByDevice[relayDeviceId] == true;
-    final state = (_relayStateByDevice[relayDeviceId] ?? 'UNKNOWN').toUpperCase();
+    final state =
+        (_relayStateByDevice[relayDeviceId] ?? 'UNKNOWN').toUpperCase();
     if (!isOnline || state == 'UNKNOWN') {
       return false;
     }
 
-    if (_onlineRelayDeviceIds.isNotEmpty && !_onlineRelayDeviceIds.contains(relayDeviceId)) {
+    if (_onlineRelayDeviceIds.isNotEmpty &&
+        !_onlineRelayDeviceIds.contains(relayDeviceId)) {
       return false;
     }
 
@@ -1748,16 +1844,19 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     final mapping = _relayMappingByRoom[roomId];
     if (mapping == null) return 'Relay: Not configured';
 
-    final relayDeviceId = (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    final relayDeviceId =
+        (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
     final relayChannel = (mapping['relay_channel'] ?? '').toString();
-    final state = (_relayStateByDevice[relayDeviceId] ?? 'UNKNOWN').toUpperCase();
+    final state =
+        (_relayStateByDevice[relayDeviceId] ?? 'UNKNOWN').toUpperCase();
     final isActive = _hasActiveRelayConnectionForRoom(roomId);
     if (!isActive) {
       return 'Relay: Offline/unknown (Device $relayDeviceId, CH$relayChannel)';
     }
 
     final localAction = (_lastRelayActionByRoom[roomId] ?? '').toUpperCase();
-    final effectiveState = (localAction == 'ON' || localAction == 'OFF') ? localAction : state;
+    final effectiveState =
+        (localAction == 'ON' || localAction == 'OFF') ? localAction : state;
     return 'Relay: Active (Device $relayDeviceId, CH$relayChannel, State $effectiveState)';
   }
 
@@ -1766,7 +1865,8 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     _lastRelayActionByRoom[roomId] = normalized;
     final mapping = _relayMappingByRoom[roomId];
     if (mapping == null) return;
-    final relayDeviceId = (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    final relayDeviceId =
+        (mapping['relay_device_id'] ?? '').toString().trim().toUpperCase();
     if (relayDeviceId.isNotEmpty) {
       _relayStateByDevice[relayDeviceId] = normalized;
     }
@@ -1805,7 +1905,11 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
             _setLocalRelayRoomState(roomId, action);
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Room $roomId power set to ${action.toUpperCase()}')),
+            SnackBar(
+              content: Text(
+                'Room $roomId power set to ${action.toUpperCase()}',
+              ),
+            ),
           );
           return;
         }
@@ -1816,7 +1920,9 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Failed to set $roomId to ${action.toUpperCase()}')),
+      SnackBar(
+        content: Text('Failed to set $roomId to ${action.toUpperCase()}'),
+      ),
     );
   }
 
@@ -1824,17 +1930,20 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     final query = _searchController.text.trim().toLowerCase();
     final floorFilter = _selectedFloor;
 
-    _filteredRooms = _rooms.where((room) {
-      final roomName = (room['room_name'] ?? '').toString().toLowerCase();
-      final roomId = (room['room_id'] ?? '').toString().toLowerCase();
-      final floorNum = (room['floor_number'] ?? '').toString();
+    _filteredRooms =
+        _rooms.where((room) {
+          final roomName = (room['room_name'] ?? '').toString().toLowerCase();
+          final roomId = (room['room_id'] ?? '').toString().toLowerCase();
+          final floorNum = (room['floor_number'] ?? '').toString();
 
-      final matchesFloor = floorFilter == 'all' || floorNum == floorFilter;
-      final matchesQuery =
-          query.isEmpty || roomName.contains(query) || roomId.contains(query);
+          final matchesFloor = floorFilter == 'all' || floorNum == floorFilter;
+          final matchesQuery =
+              query.isEmpty ||
+              roomName.contains(query) ||
+              roomId.contains(query);
 
-      return matchesFloor && matchesQuery;
-    }).toList();
+          return matchesFloor && matchesQuery;
+        }).toList();
 
     if (mounted) {
       setState(() {});
@@ -1847,23 +1956,72 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     return 0.0;
   }
 
+  double _upperThresholdForRoom(Map<String, dynamic> room) {
+    final upper = _toDouble(room['upper_threshold']);
+    if (upper > 0) return upper;
+    return _toDouble(room['threshold']);
+  }
+
+  double _lowerThresholdForRoom(Map<String, dynamic> room) {
+    final lower = _toDouble(room['lower_threshold']);
+    if (lower > 0) return lower;
+    final upper = _upperThresholdForRoom(room);
+    return upper > 0 ? upper * 0.8 : 0.0;
+  }
+
   String _statusForRoom(Map<String, dynamic> room) {
     final roomId = (room['room_id'] ?? '').toString();
-    final threshold = _toDouble(room['threshold']);
+    final lowerThreshold = _lowerThresholdForRoom(room);
+    final upperThreshold = _upperThresholdForRoom(room);
     final liveData = _roomLiveData[roomId];
-    final currentPower = liveData != null 
-        ? _toDouble(liveData['power'] ?? liveData['value'])
-        : 0.0;
+    final currentPower =
+        liveData != null
+            ? _toDouble(liveData['power'] ?? liveData['value'])
+            : 0.0;
 
     if (currentPower <= 0) return 'Idle';
-    if (threshold > 0 && currentPower > threshold) return 'High Usage';
+    if (upperThreshold > 0 && currentPower > upperThreshold)
+      return 'High Alert';
+    if (lowerThreshold > 0 &&
+        upperThreshold > lowerThreshold &&
+        currentPower >= lowerThreshold &&
+        currentPower <= upperThreshold) {
+      return 'Medium Alert';
+    }
     return 'Normal';
+  }
+
+  String _statusDescriptionForRoom(Map<String, dynamic> room) {
+    final roomId = (room['room_id'] ?? '').toString();
+    final lowerThreshold = _lowerThresholdForRoom(room);
+    final upperThreshold = _upperThresholdForRoom(room);
+    final liveData = _roomLiveData[roomId];
+    final currentPower =
+        liveData != null
+            ? _toDouble(liveData['power'] ?? liveData['value'])
+            : 0.0;
+    final status = _statusForRoom(room);
+
+    if (status == 'Medium Alert') {
+      return 'Current ${currentPower.toStringAsFixed(2)} kW is within threshold range '
+          '[${lowerThreshold.toStringAsFixed(2)}-${upperThreshold.toStringAsFixed(2)} kW]';
+    }
+    if (status == 'High Alert') {
+      return 'Current ${currentPower.toStringAsFixed(2)} kW is above upper threshold '
+          '${upperThreshold.toStringAsFixed(2)} kW '
+          '(range ${lowerThreshold.toStringAsFixed(2)}-${upperThreshold.toStringAsFixed(2)} kW)';
+    }
+    if (status == 'Idle') return 'No active consumption now';
+    return 'Current ${currentPower.toStringAsFixed(2)} kW is below lower threshold '
+        '${lowerThreshold.toStringAsFixed(2)} kW';
   }
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'High Usage':
+      case 'High Alert':
         return Colors.red;
+      case 'Medium Alert':
+        return Colors.orange;
       case 'Idle':
         return Colors.grey;
       default:
@@ -1874,20 +2032,43 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
   Future<void> _editThreshold(Map<String, dynamic> room) async {
     final roomId = (room['room_id'] ?? '').toString();
     final roomName = (room['room_name'] ?? roomId).toString();
-    _thresholdController.text = (room['threshold'] ?? '').toString();
+    final currentLower = _lowerThresholdForRoom(room);
+    final currentUpper = _upperThresholdForRoom(room);
+    _lowerThresholdController.text =
+        currentLower > 0 ? currentLower.toString() : '';
+    _upperThresholdController.text =
+        currentUpper > 0 ? currentUpper.toString() : '';
 
-    final newVal = await showDialog<double>(
+    final newVals = await showDialog<List<double>>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text('Update Threshold • $roomName'),
-          content: TextField(
-            controller: _thresholdController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Threshold',
-              suffixText: 'kW',
-            ),
+          title: Text('Update Threshold Range • $roomName'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: _lowerThresholdController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Lower Bound',
+                  suffixText: 'kW',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _upperThresholdController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Upper Bound',
+                  suffixText: 'kW',
+                ),
+              ),
+            ],
           ),
           actions: [
             TextButton(
@@ -1896,8 +2077,17 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
             ),
             ElevatedButton(
               onPressed: () {
-                final parsed = double.tryParse(_thresholdController.text.trim());
-                Navigator.pop(context, parsed);
+                final lower = double.tryParse(
+                  _lowerThresholdController.text.trim(),
+                );
+                final upper = double.tryParse(
+                  _upperThresholdController.text.trim(),
+                );
+                if (lower == null || upper == null) {
+                  Navigator.pop(context);
+                  return;
+                }
+                Navigator.pop(context, [lower, upper]);
               },
               child: const Text('Save'),
             ),
@@ -1906,13 +2096,28 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
       },
     );
 
-    if (newVal == null || newVal <= 0) return;
+    if (newVals == null || newVals.length != 2) return;
+    final lower = newVals[0];
+    final upper = newVals[1];
+    if (lower <= 0 || upper <= 0 || upper <= lower) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Please enter valid bounds: upper must be greater than lower',
+          ),
+        ),
+      );
+      return;
+    }
 
     for (final baseUrl in _apiCandidates) {
       try {
         final resp = await http
             .put(
-              Uri.parse('$baseUrl/rooms/$roomId/threshold?threshold=$newVal'),
+              Uri.parse(
+                '$baseUrl/rooms/$roomId/threshold?lower_bound=$lower&upper_bound=$upper',
+              ),
               headers: {'Content-Type': 'application/json'},
             )
             .timeout(const Duration(seconds: 6));
@@ -1921,7 +2126,9 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
           await _loadRooms();
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✓ Threshold updated successfully')),
+            const SnackBar(
+              content: Text('✓ Threshold range updated successfully'),
+            ),
           );
           return;
         }
@@ -1932,14 +2139,14 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Failed to update threshold')),
+      const SnackBar(content: Text('Failed to update threshold range')),
     );
   }
 
   Widget _buildRoomLiveMetrics(Map<String, dynamic> room) {
     final roomId = (room['room_id'] ?? '').toString();
     final liveData = _roomLiveData[roomId];
-    
+
     if (liveData == null) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1957,19 +2164,49 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
     final voltage = _toDouble(liveData['voltage']);
     final current = _toDouble(liveData['current']);
     final energy = _toDouble(liveData['energy']);
-    final threshold = _toDouble(room['threshold']);
-    final utilization = threshold > 0 ? (power / threshold * 100).clamp(0, 999) : 0.0;
+    final lowerThreshold = _lowerThresholdForRoom(room);
+    final upperThreshold = _upperThresholdForRoom(room);
+    final utilization =
+        upperThreshold > 0 ? (power / upperThreshold * 100).clamp(0, 999) : 0.0;
 
     return Wrap(
       spacing: 16,
       runSpacing: 8,
       children: [
-        _buildMetricChip('⚡ Power', '${power.toStringAsFixed(2)} kW', Colors.red),
-        _buildMetricChip('🔋 Energy', '${energy.toStringAsFixed(2)} kWh', Colors.green),
-        _buildMetricChip('⚙️ Current', '${current.toStringAsFixed(2)} A', Colors.orange),
-        _buildMetricChip('📊 Voltage', '${voltage.toStringAsFixed(1)} V', Colors.blue),
-        _buildMetricChip('📈 Usage', '${utilization.toStringAsFixed(1)}%', 
-          utilization > 100 ? Colors.red : utilization > 75 ? Colors.orange : Colors.green),
+        _buildMetricChip(
+          '⚡ Power',
+          '${power.toStringAsFixed(2)} kW',
+          Colors.red,
+        ),
+        _buildMetricChip(
+          '🔋 Energy',
+          '${energy.toStringAsFixed(2)} kWh',
+          Colors.green,
+        ),
+        _buildMetricChip(
+          '⚙️ Current',
+          '${current.toStringAsFixed(2)} A',
+          Colors.orange,
+        ),
+        _buildMetricChip(
+          '📊 Voltage',
+          '${voltage.toStringAsFixed(1)} V',
+          Colors.blue,
+        ),
+        _buildMetricChip(
+          '🎯 Threshold Range',
+          '${lowerThreshold.toStringAsFixed(2)}-${upperThreshold.toStringAsFixed(2)} kW',
+          Colors.purple,
+        ),
+        _buildMetricChip(
+          '📈 Usage',
+          '${utilization.toStringAsFixed(1)}%',
+          utilization > 100
+              ? Colors.red
+              : utilization > 75
+              ? Colors.orange
+              : Colors.green,
+        ),
       ],
     );
   }
@@ -1985,12 +2222,20 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11)),
+          Text(
+            label,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(fontSize: 11),
+          ),
           const SizedBox(height: 2),
-          Text(value, style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.bold,
-            color: color,
-          )),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -2003,9 +2248,10 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
 
     final totalRooms = _rooms.length;
     final visibleRooms = _filteredRooms.length;
-    final highUsageCount = _filteredRooms
-        .where((room) => _statusForRoom(room) == 'High Usage')
-        .length;
+    final highUsageCount =
+        _filteredRooms
+            .where((room) => _statusForRoom(room) == 'High Alert')
+            .length;
     final floorsCount = _floors.length;
 
     return RefreshIndicator(
@@ -2021,9 +2267,9 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
           ),
           const SizedBox(height: 6),
           Text(
-            widget.department != null 
-              ? 'Monitor ${widget.department} department rooms with live energy metrics'
-              : 'Monitor rooms with live energy metrics',
+            widget.department != null
+                ? 'Monitor ${widget.department} department rooms with live energy metrics'
+                : 'Monitor rooms with live energy metrics',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
@@ -2035,20 +2281,45 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
             spacing: 12,
             runSpacing: 12,
             children: [
-              _roomKpiCard(context, 'Total Rooms', totalRooms.toString(), Icons.meeting_room_outlined, Colors.blue),
-              _roomKpiCard(context, 'Visible', visibleRooms.toString(), Icons.filter_list, Colors.indigo),
-              _roomKpiCard(context, 'Floors', floorsCount.toString(), Icons.apartment, Colors.teal),
-              _roomKpiCard(context, 'High Usage', highUsageCount.toString(), Icons.warning_amber_rounded, 
-                highUsageCount > 0 ? Colors.red : Colors.green),
+              _roomKpiCard(
+                context,
+                'Total Rooms',
+                totalRooms.toString(),
+                Icons.meeting_room_outlined,
+                Colors.blue,
+              ),
+              _roomKpiCard(
+                context,
+                'Visible',
+                visibleRooms.toString(),
+                Icons.filter_list,
+                Colors.indigo,
+              ),
+              _roomKpiCard(
+                context,
+                'Floors',
+                floorsCount.toString(),
+                Icons.apartment,
+                Colors.teal,
+              ),
+              _roomKpiCard(
+                context,
+                'High Alerts',
+                highUsageCount.toString(),
+                Icons.warning_amber_rounded,
+                highUsageCount > 0 ? Colors.red : Colors.green,
+              ),
             ],
           ),
 
           const SizedBox(height: 16),
-          
+
           // Filter and Controls
           Card(
             elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Wrap(
@@ -2078,7 +2349,10 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                         isDense: true,
                       ),
                       items: [
-                        const DropdownMenuItem(value: 'all', child: Text('All Floors')),
+                        const DropdownMenuItem(
+                          value: 'all',
+                          child: Text('All Floors'),
+                        ),
                         ..._floors.map(
                           (floor) => DropdownMenuItem(
                             value: floor.toString(),
@@ -2100,12 +2374,17 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                     child: const Text('Reload'),
                   ),
                   ElevatedButton.icon(
-                    onPressed: () => showDialog(
-                      context: context,
-                      builder: (_) => ThresholdSettingsDialog(theme: theme, scheme: scheme),
-                    ),
+                    onPressed:
+                        () => showDialog(
+                          context: context,
+                          builder:
+                              (_) => ThresholdSettingsDialog(
+                                theme: theme,
+                                scheme: scheme,
+                              ),
+                        ),
                     icon: const Icon(Icons.tune),
-                    label: const Text('Bulk Threshold Settings'),
+                    label: const Text('Bulk Threshold Range Settings'),
                   ),
                 ],
               ),
@@ -2140,7 +2419,9 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
               return Card(
                 elevation: 2,
                 margin: const EdgeInsets.only(bottom: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(14),
                   child: Column(
@@ -2170,7 +2451,10 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                                 Text(
                                   _relayConnectionLabel(roomId),
                                   style: theme.textTheme.bodySmall?.copyWith(
-                                    color: hasActiveRelay ? Colors.green.shade700 : Colors.orange.shade800,
+                                    color:
+                                        hasActiveRelay
+                                            ? Colors.green.shade700
+                                            : Colors.orange.shade800,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -2178,7 +2462,10 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
                             decoration: BoxDecoration(
                               color: color.withOpacity(0.15),
                               borderRadius: BorderRadius.circular(999),
@@ -2193,32 +2480,44 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _statusDescriptionForRoom(room),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: color,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       const SizedBox(height: 12),
-                      
+
                       // Live Metrics
                       _buildRoomLiveMetrics(room),
-                      
+
                       const SizedBox(height: 12),
-                      
+
                       // Action Buttons
                       Row(
                         children: [
                           OutlinedButton.icon(
                             onPressed: () => _editThreshold(room),
                             icon: const Icon(Icons.edit, size: 18),
-                            label: const Text('Edit Threshold'),
+                            label: const Text('Edit Threshold Range'),
                           ),
                           const SizedBox(width: 10),
                           if (hasActiveRelay) ...[
                             ElevatedButton(
                               onPressed: () => _controlRoomPower(roomId, 'ON'),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green.shade700,
+                              ),
                               child: const Text('ON'),
                             ),
                             const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: () => _controlRoomPower(roomId, 'OFF'),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red.shade700,
+                              ),
                               child: const Text('OFF'),
                             ),
                             const SizedBox(width: 10),
@@ -2228,12 +2527,20 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                               final liveData = _roomLiveData[roomId];
                               if (liveData != null) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Last update: ${liveData['timestamp'] ?? 'Just now'}')),
+                                  SnackBar(
+                                    content: Text(
+                                      'Last update: ${liveData['timestamp'] ?? 'Just now'}',
+                                    ),
+                                  ),
                                 );
                               }
                             },
                             icon: const Icon(Icons.info_outline, size: 18),
-                            label: Text(hasActiveRelay ? 'Details' : 'Details (Relay unavailable)'),
+                            label: Text(
+                              hasActiveRelay
+                                  ? 'Details'
+                                  : 'Details (Relay unavailable)',
+                            ),
                           ),
                         ],
                       ),
@@ -2322,41 +2629,45 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    final points = (timeSeriesData ?? const <Map<String, dynamic>>[])
-        .take(24)
-        .toList()
-        .reversed
-        .toList();
+    final points =
+        (timeSeriesData ?? const <Map<String, dynamic>>[])
+            .take(24)
+            .toList()
+            .reversed
+            .toList();
 
-    final powerValues = points
-        .map((item) => _toDouble(item['power'] ?? item['value']))
-        .toList();
+    final powerValues =
+        points
+            .map((item) => _toDouble(item['power'] ?? item['value']))
+            .toList();
 
-    final currentPower = _toDouble(sensorData?['power'] ?? sensorData?['value']);
-    final avgPower = powerValues.isEmpty
-        ? currentPower
-        : powerValues.reduce((a, b) => a + b) / powerValues.length;
-    final peakPower = powerValues.isEmpty
-        ? currentPower
-        : powerValues.reduce(max);
-    final basePower = powerValues.isEmpty
-        ? currentPower
-        : powerValues.reduce(min);
+    final currentPower = _toDouble(
+      sensorData?['power'] ?? sensorData?['value'],
+    );
+    final avgPower =
+        powerValues.isEmpty
+            ? currentPower
+            : powerValues.reduce((a, b) => a + b) / powerValues.length;
+    final peakPower =
+        powerValues.isEmpty ? currentPower : powerValues.reduce(max);
+    final basePower =
+        powerValues.isEmpty ? currentPower : powerValues.reduce(min);
     final anomalyCount = anomalies.length;
 
-    final trend = powerValues.length >= 2
-        ? powerValues.last - powerValues.first
-        : 0.0;
+    final trend =
+        powerValues.length >= 2 ? powerValues.last - powerValues.first : 0.0;
 
-    final lineSpots = powerValues
-        .asMap()
-        .entries
-        .map((entry) => FlSpot(entry.key.toDouble(), entry.value))
-        .toList();
+    final lineSpots =
+        powerValues
+            .asMap()
+            .entries
+            .map((entry) => FlSpot(entry.key.toDouble(), entry.value))
+            .toList();
 
-    final maxY = powerValues.isEmpty
-        ? (currentPower <= 0 ? 10.0 : currentPower * 1.4)
-        : (powerValues.reduce(max) * 1.2).clamp(5.0, 1000.0);
+    final maxY =
+        powerValues.isEmpty
+            ? (currentPower <= 0 ? 10.0 : currentPower * 1.4)
+            : (powerValues.reduce(max) * 1.2).clamp(5.0, 1000.0);
 
     return ListView(
       padding: const EdgeInsets.all(20),
@@ -2448,62 +2759,63 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
                   const SizedBox(height: 16),
                   SizedBox(
                     height: 240,
-                    child: lineSpots.isEmpty
-                        ? Center(
-                            child: Text(
-                              'No data to plot yet',
-                              style: theme.textTheme.bodyMedium,
-                            ),
-                          )
-                        : LineChart(
-                            LineChartData(
-                              minX: 0,
-                              maxX: (lineSpots.length - 1).toDouble(),
-                              minY: 0,
-                              maxY: maxY,
-                              gridData: FlGridData(
-                                show: true,
-                                drawVerticalLine: false,
-                                horizontalInterval: maxY / 5,
+                    child:
+                        lineSpots.isEmpty
+                            ? Center(
+                              child: Text(
+                                'No data to plot yet',
+                                style: theme.textTheme.bodyMedium,
                               ),
-                              titlesData: FlTitlesData(
-                                leftTitles: AxisTitles(
-                                  sideTitles: SideTitles(
-                                    showTitles: true,
-                                    reservedSize: 42,
-                                    interval: maxY / 5,
+                            )
+                            : LineChart(
+                              LineChartData(
+                                minX: 0,
+                                maxX: (lineSpots.length - 1).toDouble(),
+                                minY: 0,
+                                maxY: maxY,
+                                gridData: FlGridData(
+                                  show: true,
+                                  drawVerticalLine: false,
+                                  horizontalInterval: maxY / 5,
+                                ),
+                                titlesData: FlTitlesData(
+                                  leftTitles: AxisTitles(
+                                    sideTitles: SideTitles(
+                                      showTitles: true,
+                                      reservedSize: 42,
+                                      interval: maxY / 5,
+                                    ),
+                                  ),
+                                  bottomTitles: const AxisTitles(
+                                    sideTitles: SideTitles(
+                                      showTitles: true,
+                                      reservedSize: 24,
+                                      interval: 4,
+                                    ),
+                                  ),
+                                  topTitles: const AxisTitles(
+                                    sideTitles: SideTitles(showTitles: false),
+                                  ),
+                                  rightTitles: const AxisTitles(
+                                    sideTitles: SideTitles(showTitles: false),
                                   ),
                                 ),
-                                bottomTitles: const AxisTitles(
-                                  sideTitles: SideTitles(
-                                    showTitles: true,
-                                    reservedSize: 24,
-                                    interval: 4,
+                                borderData: FlBorderData(show: false),
+                                lineBarsData: [
+                                  LineChartBarData(
+                                    spots: lineSpots,
+                                    isCurved: true,
+                                    barWidth: 3,
+                                    color: scheme.primary,
+                                    dotData: const FlDotData(show: false),
+                                    belowBarData: BarAreaData(
+                                      show: true,
+                                      color: scheme.primary.withOpacity(0.15),
+                                    ),
                                   ),
-                                ),
-                                topTitles: const AxisTitles(
-                                  sideTitles: SideTitles(showTitles: false),
-                                ),
-                                rightTitles: const AxisTitles(
-                                  sideTitles: SideTitles(showTitles: false),
-                                ),
+                                ],
                               ),
-                              borderData: FlBorderData(show: false),
-                              lineBarsData: [
-                                LineChartBarData(
-                                  spots: lineSpots,
-                                  isCurved: true,
-                                  barWidth: 3,
-                                  color: scheme.primary,
-                                  dotData: const FlDotData(show: false),
-                                  belowBarData: BarAreaData(
-                                    show: true,
-                                    color: scheme.primary.withOpacity(0.15),
-                                  ),
-                                ),
-                              ],
                             ),
-                          ),
                   ),
                 ],
               ),
@@ -2546,8 +2858,8 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
                     anomalyCount >= 5
                         ? 'High'
                         : anomalyCount > 0
-                            ? 'Moderate'
-                            : 'Low',
+                        ? 'Moderate'
+                        : 'Low',
                     Icons.shield_outlined,
                   ),
                 ],
@@ -2589,10 +2901,7 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      label,
-                      style: theme.textTheme.bodySmall,
-                    ),
+                    Text(label, style: theme.textTheme.bodySmall),
                     const SizedBox(height: 4),
                     Text(
                       value,
@@ -2624,9 +2933,7 @@ class _DepartmentAnalyticsSection extends StatelessWidget {
         children: [
           Icon(icon, size: 18, color: scheme.primary),
           const SizedBox(width: 8),
-          Expanded(
-            child: Text(label, style: theme.textTheme.bodyMedium),
-          ),
+          Expanded(child: Text(label, style: theme.textTheme.bodyMedium)),
           Text(
             value,
             style: theme.textTheme.bodyMedium?.copyWith(
@@ -2686,9 +2993,10 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
     super.didUpdateWidget(old);
     if (old.anomalies != widget.anomalies) {
       setState(() {
-        _localAnomalies = _cast(widget.anomalies)
-            .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
-            .toList();
+        _localAnomalies =
+            _cast(widget.anomalies)
+                .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+                .toList();
       });
     }
   }
@@ -2713,9 +3021,10 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
           final fetched = raw.whereType<Map<String, dynamic>>().toList();
           if (!mounted) return;
           setState(() {
-            _localAnomalies = fetched
-                .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
-                .toList();
+            _localAnomalies =
+                fetched
+                    .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+                    .toList();
           });
           return;
         }
@@ -2752,10 +3061,14 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
         }
         // Fallback DELETE
         final del = await http
-            .delete(Uri.parse('$base/anomalies/$alertId'),
-                headers: {'Content-Type': 'application/json'})
+            .delete(
+              Uri.parse('$base/anomalies/$alertId'),
+              headers: {'Content-Type': 'application/json'},
+            )
             .timeout(const Duration(seconds: 8));
-        if (del.statusCode == 200 || del.statusCode == 204 || del.statusCode == 404) {
+        if (del.statusCode == 200 ||
+            del.statusCode == 204 ||
+            del.statusCode == 404) {
           success = true;
           break;
         }
@@ -2771,36 +3084,45 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
         _resolvingIds.remove(alertId);
         _localAnomalies.removeWhere((a) => (a['id'] ?? a['_id']) == alertId);
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Row(children: [
-          Icon(Icons.check_circle, color: Colors.white, size: 18),
-          SizedBox(width: 8),
-          Text('Alert resolved successfully.'),
-        ]),
-        backgroundColor: Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 18),
+              SizedBox(width: 8),
+              Text('Alert resolved successfully.'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
     } else {
       setState(() => _resolvingIds.remove(alertId));
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Row(children: [
-          Icon(Icons.error_outline, color: Colors.white, size: 18),
-          SizedBox(width: 8),
-          Expanded(child: Text('Could not reach server. Try again.')),
-        ]),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        action: SnackBarAction(
-          label: 'Retry',
-          textColor: Colors.white,
-          onPressed: () {
-            final retryIndex = _localAnomalies
-                .indexWhere((a) => (a['id'] ?? a['_id']) == alertId);
-            if (retryIndex >= 0) _resolveAlert(retryIndex);
-          },
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white, size: 18),
+              SizedBox(width: 8),
+              Expanded(child: Text('Could not reach server. Try again.')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              final retryIndex = _localAnomalies.indexWhere(
+                (a) => (a['id'] ?? a['_id']) == alertId,
+              );
+              if (retryIndex >= 0) _resolveAlert(retryIndex);
+            },
+          ),
         ),
-      ));
+      );
     }
   }
 
@@ -2823,7 +3145,7 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
     if (ts == null) return '—';
     try {
       final dt = DateTime.parse(ts.toString()).toLocal();
-      return '${dt.day}/${dt.month}  ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+      return '${dt.day}/${dt.month}  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     } catch (_) {
       return ts.toString();
     }
@@ -2832,27 +3154,34 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
   /// Build the alert message content widget, showing formatted notification message
   /// if available, otherwise fall back to raw anomaly data
   Widget _buildAlertMessageContent(Map<String, dynamic> alert) {
-    final roomId = (alert['room_id'] ?? alert['device_id'] ?? '').toString().trim();
+    final roomId =
+        (alert['room_id'] ?? alert['device_id'] ?? '').toString().trim();
     final notification =
-        widget.notificationsByRoom[roomId] ?? widget.notificationsByRoom[roomId.toUpperCase()];
+        widget.notificationsByRoom[roomId] ??
+        widget.notificationsByRoom[roomId.toUpperCase()];
     final theme = Theme.of(context);
 
     if (notification != null) {
       // Display formatted role-based notification message
       final title = notification['title'] ?? '';
       final message = notification['message'] ?? '';
-        final notifPowerRaw = notification['power'];
-        final notifPower = notifPowerRaw is num
-          ? notifPowerRaw.toDouble()
-          : double.tryParse('${notifPowerRaw ?? ''}');
-        final alertPowerRaw = alert['power'];
-        final alertPower = alertPowerRaw is num
-          ? alertPowerRaw.toDouble()
-          : double.tryParse('${alertPowerRaw ?? ''}');
-        final powerText = notifPower != null
-          ? '${notifPower.toStringAsFixed(1)}W'
-          : (alertPower != null ? '${alertPower.toStringAsFixed(1)}W' : 'N/A');
-      
+      final notifPowerRaw = notification['power'];
+      final notifPower =
+          notifPowerRaw is num
+              ? notifPowerRaw.toDouble()
+              : double.tryParse('${notifPowerRaw ?? ''}');
+      final alertPowerRaw = alert['power'];
+      final alertPower =
+          alertPowerRaw is num
+              ? alertPowerRaw.toDouble()
+              : double.tryParse('${alertPowerRaw ?? ''}');
+      final powerText =
+          notifPower != null
+              ? '${notifPower.toStringAsFixed(1)}W'
+              : (alertPower != null
+                  ? '${alertPower.toStringAsFixed(1)}W'
+                  : 'N/A');
+
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2894,19 +3223,35 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
 
     // Fallback: display raw anomaly data if no formatted notification
     final powerRaw = alert['power'];
-    final power = powerRaw is num ? powerRaw.toDouble() : double.tryParse('${powerRaw ?? ''}');
+    final power =
+        powerRaw is num
+            ? powerRaw.toDouble()
+            : double.tryParse('${powerRaw ?? ''}');
     final scoreRaw = alert['score'] ?? alert['anomaly_score'];
-    final score = scoreRaw is num ? scoreRaw.toDouble() : double.tryParse('${scoreRaw ?? ''}');
+    final score =
+        scoreRaw is num
+            ? scoreRaw.toDouble()
+            : double.tryParse('${scoreRaw ?? ''}');
     final occupancyRaw = alert['occupancy'];
-    final occupancy = occupancyRaw is num ? occupancyRaw.toInt() : int.tryParse('${occupancyRaw ?? ''}') ?? 0;
-    final anomalyType = (alert['anomaly_type'] ?? ((occupancy <= 0 && (power ?? 0) >= 20)
-        ? 'usage_without_occupancy'
-        : 'high_unrecognized_usage')).toString();
-    final reasonText = anomalyType == 'usage_without_occupancy'
-        ? 'Usage without occupancy'
-        : 'High/unrecognized usage';
+    final occupancy =
+        occupancyRaw is num
+            ? occupancyRaw.toInt()
+            : int.tryParse('${occupancyRaw ?? ''}') ?? 0;
+    final anomalyType =
+        (alert['anomaly_type'] ??
+                ((occupancy <= 0 && (power ?? 0) >= 20)
+                    ? 'usage_without_occupancy'
+                    : 'high_unrecognized_usage'))
+            .toString();
+    final reasonText =
+        anomalyType == 'usage_without_occupancy'
+            ? 'Usage without occupancy'
+            : 'High/unrecognized usage';
     final sevLabel = _severityLabel(power ?? 0);
-    final stage = (alert['stage'] ?? 'live monitoring').toString().replaceAll('_', ' ');
+    final stage = (alert['stage'] ?? 'live monitoring').toString().replaceAll(
+      '_',
+      ' ',
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2917,11 +3262,15 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
         ),
         Text(
           'Recommendation: Verify room condition, contact class rep/coordinator as applicable, and resolve if safe.',
-          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: Colors.grey.shade700,
+          ),
         ),
         Text(
           '${_formatTime(alert['timestamp'])} • Power: ${power?.toStringAsFixed(1) ?? 'N/A'}W • Occupancy: $occupancy • Score: ${score?.toStringAsFixed(4) ?? 'N/A'}',
-          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade500),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: Colors.grey.shade500,
+          ),
         ),
       ],
     );
@@ -2940,8 +3289,9 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
           // ── Header ───────────────────────────────────────────────────────
           Text(
             '$dept Anomaly Alerts',
-            style: theme.textTheme.headlineSmall
-                ?.copyWith(fontWeight: FontWeight.bold),
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 6),
           Row(
@@ -2949,13 +3299,17 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
               Expanded(
                 child: Text(
                   'Live anomaly detections · auto-refreshes every 6 s',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: Colors.grey.shade600),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.grey.shade600,
+                  ),
                 ),
               ),
               if (_localAnomalies.isNotEmpty)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.red.shade50,
                     borderRadius: BorderRadius.circular(20),
@@ -2979,21 +3333,31 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
             Padding(
               padding: const EdgeInsets.only(top: 60),
               child: Center(
-                child: Column(children: [
-                  Icon(Icons.check_circle_outline,
-                      size: 56, color: Colors.green.withOpacity(0.55)),
-                  const SizedBox(height: 14),
-                  Text('No anomaly alerts detected',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
-                  Text('All sensors operating normally',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: Colors.grey.shade500)),
-                ]),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.check_circle_outline,
+                      size: 56,
+                      color: Colors.green.withOpacity(0.55),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'No anomaly alerts detected',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'All sensors operating normally',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             )
-
           // ── Alert cards — identical layout to CR page ─────────────────────
           else
             ListView.builder(
@@ -3009,9 +3373,13 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
 
                 return Card(
                   elevation: 2,
-                  margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                  margin: const EdgeInsets.symmetric(
+                    vertical: 6,
+                    horizontal: 2,
+                  ),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -3021,23 +3389,29 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
                         decoration: BoxDecoration(
                           color: sevColor,
                           borderRadius: const BorderRadius.vertical(
-                              top: Radius.circular(12)),
+                            top: Radius.circular(12),
+                          ),
                         ),
                       ),
                       Padding(
                         padding: const EdgeInsets.symmetric(
-                            vertical: 10, horizontal: 6),
+                          vertical: 10,
+                          horizontal: 6,
+                        ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             // ── Icon ────────────────────────────────────────
                             Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 10),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
                               child: CircleAvatar(
                                 backgroundColor: sevColor.withOpacity(0.12),
-                                child: Icon(Icons.warning_amber_rounded,
-                                    color: sevColor),
+                                child: Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: sevColor,
+                                ),
                               ),
                             ),
 
@@ -3052,17 +3426,21 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
                                         child: Text(
                                           'Anomaly in ${alert['room_id'] ?? alert['device_id'] ?? 'Unknown room'}',
                                           style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 14),
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
                                         ),
                                       ),
                                       Container(
                                         padding: const EdgeInsets.symmetric(
-                                            horizontal: 7, vertical: 2),
+                                          horizontal: 7,
+                                          vertical: 2,
+                                        ),
                                         decoration: BoxDecoration(
                                           color: sevColor.withOpacity(0.12),
-                                          borderRadius:
-                                              BorderRadius.circular(6),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
                                         ),
                                         child: Text(
                                           sevLabel,
@@ -3084,44 +3462,48 @@ class _DepartmentAlertsSectionState extends State<_DepartmentAlertsSection> {
 
                             // ── Resolve button — always visible ───────────────
                             Padding(
-                              padding:
-                                  const EdgeInsets.only(left: 6, right: 8),
+                              padding: const EdgeInsets.only(left: 6, right: 8),
                               child: ElevatedButton.icon(
-                                onPressed: isResolving
-                                    ? null
-                                    : () => _resolveAlert(i),
+                                onPressed:
+                                    isResolving ? null : () => _resolveAlert(i),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: isResolving
-                                      ? Colors.green.withOpacity(0.5)
-                                      : Colors.green,
+                                  backgroundColor:
+                                      isResolving
+                                          ? Colors.green.withOpacity(0.5)
+                                          : Colors.green,
                                   foregroundColor: Colors.white,
-                                  disabledBackgroundColor:
-                                      Colors.green.withOpacity(0.5),
+                                  disabledBackgroundColor: Colors.green
+                                      .withOpacity(0.5),
                                   disabledForegroundColor: Colors.white70,
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 10),
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
                                   shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(8)),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
                                   elevation: 0,
                                 ),
-                                icon: isResolving
-                                    ? const SizedBox(
-                                        width: 14,
-                                        height: 14,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          valueColor:
-                                              AlwaysStoppedAnimation<Color>(
-                                                  Colors.white),
-                                        ),
-                                      )
-                                    : const Icon(Icons.check, size: 16),
+                                icon:
+                                    isResolving
+                                        ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor:
+                                                AlwaysStoppedAnimation<Color>(
+                                                  Colors.white,
+                                                ),
+                                          ),
+                                        )
+                                        : const Icon(Icons.check, size: 16),
                                 label: Text(
                                   isResolving ? 'Resolving...' : 'Resolve',
                                   style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ),
                             ),
@@ -3158,7 +3540,8 @@ class ThresholdSettingsDialog extends StatefulWidget {
 class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
   List<Map<String, dynamic>> _rooms = [];
   List<Map<String, dynamic>> _filteredRooms = [];
-  Map<String, TextEditingController> _thresholdControllers = {};
+  Map<String, TextEditingController> _lowerThresholdControllers = {};
+  Map<String, TextEditingController> _upperThresholdControllers = {};
   bool _loading = true;
   String? _editingRoomId;
   late TextEditingController _searchController;
@@ -3173,11 +3556,33 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
 
   @override
   void dispose() {
-    for (var controller in _thresholdControllers.values) {
+    for (var controller in _lowerThresholdControllers.values) {
+      controller.dispose();
+    }
+    for (var controller in _upperThresholdControllers.values) {
       controller.dispose();
     }
     _searchController.dispose();
     super.dispose();
+  }
+
+  double _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
+
+  double _upperThresholdForRoom(Map<String, dynamic> room) {
+    final upper = _toDouble(room['upper_threshold']);
+    if (upper > 0) return upper;
+    return _toDouble(room['threshold']);
+  }
+
+  double _lowerThresholdForRoom(Map<String, dynamic> room) {
+    final lower = _toDouble(room['lower_threshold']);
+    if (lower > 0) return lower;
+    final upper = _upperThresholdForRoom(room);
+    return upper > 0 ? upper * 0.8 : 0.0;
   }
 
   Future<void> _loadRooms() async {
@@ -3212,9 +3617,16 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
               _filteredRooms = List.from(_rooms);
               // Initialize controllers for each room
               for (var room in _rooms) {
-                _thresholdControllers[room['room_id']] = TextEditingController(
-                  text: (room['threshold'] ?? 0.0).toString(),
-                );
+                final lower = _lowerThresholdForRoom(room);
+                final upper = _upperThresholdForRoom(room);
+                _lowerThresholdControllers[room['room_id']] =
+                    TextEditingController(
+                      text: lower > 0 ? lower.toString() : '',
+                    );
+                _upperThresholdControllers[room['room_id']] =
+                    TextEditingController(
+                      text: upper > 0 ? upper.toString() : '',
+                    );
               }
               _loading = false;
             });
@@ -3312,7 +3724,8 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
   Future<void> _updateThreshold(
     String roomId,
     String roomName,
-    double newThreshold,
+    double lowerBound,
+    double upperBound,
   ) async {
     try {
       const apiCandidates = [
@@ -3328,7 +3741,7 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
           final resp = await http
               .put(
                 Uri.parse(
-                  '$baseUrl/rooms/$encodedRoomId/threshold?threshold=$newThreshold',
+                  '$baseUrl/rooms/$encodedRoomId/threshold?lower_bound=$lowerBound&upper_bound=$upperBound',
                 ),
                 headers: {'Content-Type': 'application/json'},
               )
@@ -3340,13 +3753,17 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
               // Update the rooms list with new threshold
               final index = _rooms.indexWhere((r) => r['room_id'] == roomId);
               if (index != -1) {
-                _rooms[index]['threshold'] = newThreshold;
+                _rooms[index]['lower_threshold'] = lowerBound;
+                _rooms[index]['upper_threshold'] = upperBound;
+                _rooms[index]['threshold'] = upperBound;
               }
             });
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('Threshold for $roomName updated successfully'),
+                  content: Text(
+                    'Threshold range for $roomName updated successfully',
+                  ),
                   duration: const Duration(seconds: 2),
                 ),
               );
@@ -3360,7 +3777,7 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to update threshold')),
+          const SnackBar(content: Text('Failed to update threshold range')),
         );
       }
     } catch (e) {
@@ -3401,7 +3818,7 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Room Threshold Settings',
+                    'Room Threshold Range Settings',
                     style: widget.theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                       color: widget.scheme.onPrimaryContainer,
@@ -3482,7 +3899,12 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
                           final roomId = room['room_id'];
                           final roomName = room['room_name'];
                           final floorNumber = room['floor_number'];
-                          final currentThreshold = room['threshold'];
+                          final currentLowerThreshold = _lowerThresholdForRoom(
+                            room,
+                          );
+                          final currentUpperThreshold = _upperThresholdForRoom(
+                            room,
+                          );
                           final isEditing = _editingRoomId == roomId;
 
                           return Card(
@@ -3545,17 +3967,33 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          'Current Threshold: ${currentThreshold.toString()} kW',
+                                          'Current Range: ${currentLowerThreshold.toStringAsFixed(2)}-${currentUpperThreshold.toStringAsFixed(2)} kW',
                                           style:
                                               widget.theme.textTheme.bodySmall,
                                         ),
                                         const SizedBox(height: 8),
                                         TextField(
                                           controller:
-                                              _thresholdControllers[roomId]!,
+                                              _lowerThresholdControllers[roomId]!,
                                           decoration: InputDecoration(
-                                            hintText:
-                                                'Enter new threshold (kW)',
+                                            hintText: 'Enter lower bound (kW)',
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            suffixText: 'kW',
+                                          ),
+                                          keyboardType:
+                                              const TextInputType.numberWithOptions(
+                                                decimal: true,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextField(
+                                          controller:
+                                              _upperThresholdControllers[roomId]!,
+                                          decoration: InputDecoration(
+                                            hintText: 'Enter upper bound (kW)',
                                             border: OutlineInputBorder(
                                               borderRadius:
                                                   BorderRadius.circular(8),
@@ -3576,8 +4014,13 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
                                               onPressed: () {
                                                 setState(() {
                                                   _editingRoomId = null;
-                                                  _thresholdControllers[roomId]
-                                                      ?.text = currentThreshold
+                                                  _lowerThresholdControllers[roomId]
+                                                          ?.text =
+                                                      currentLowerThreshold
+                                                          .toString();
+                                                  _upperThresholdControllers[roomId]
+                                                          ?.text =
+                                                      currentUpperThreshold
                                                           .toString();
                                                 });
                                               },
@@ -3586,17 +4029,23 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
                                             const SizedBox(width: 8),
                                             ElevatedButton(
                                               onPressed: () {
-                                                final newThreshold =
-                                                    double.tryParse(
-                                                      _thresholdControllers[roomId]!
-                                                          .text,
-                                                    );
-                                                if (newThreshold != null &&
-                                                    newThreshold > 0) {
+                                                final newLower = double.tryParse(
+                                                  _lowerThresholdControllers[roomId]!
+                                                      .text,
+                                                );
+                                                final newUpper = double.tryParse(
+                                                  _upperThresholdControllers[roomId]!
+                                                      .text,
+                                                );
+                                                if (newLower != null &&
+                                                    newUpper != null &&
+                                                    newLower > 0 &&
+                                                    newUpper > newLower) {
                                                   _updateThreshold(
                                                     roomId,
                                                     roomName,
-                                                    newThreshold,
+                                                    newLower,
+                                                    newUpper,
                                                   );
                                                 } else {
                                                   ScaffoldMessenger.of(
@@ -3604,7 +4053,7 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
                                                   ).showSnackBar(
                                                     const SnackBar(
                                                       content: Text(
-                                                        'Please enter a valid threshold value',
+                                                        'Please enter valid bounds (upper must be greater than lower)',
                                                       ),
                                                     ),
                                                   );
@@ -3618,7 +4067,7 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
                                     )
                                   else
                                     Text(
-                                      'Current Threshold: ${currentThreshold.toString()} kW',
+                                      'Current Range: ${currentLowerThreshold.toStringAsFixed(2)}-${currentUpperThreshold.toStringAsFixed(2)} kW',
                                       style: widget.theme.textTheme.bodyMedium
                                           ?.copyWith(
                                             color: Colors.blue,
@@ -3672,7 +4121,8 @@ class _CoordAlertsBadge extends StatelessWidget {
       children: [
         child,
         Positioned(
-          right: -6, top: -4,
+          right: -6,
+          top: -4,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
             decoration: BoxDecoration(
@@ -3683,8 +4133,10 @@ class _CoordAlertsBadge extends StatelessWidget {
             child: Text(
               count > 99 ? '99+' : '$count',
               style: const TextStyle(
-                  color: Colors.white, fontSize: 10,
-                  fontWeight: FontWeight.bold),
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
               textAlign: TextAlign.center,
             ),
           ),

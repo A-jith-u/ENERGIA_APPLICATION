@@ -24,6 +24,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
   List<Map<String, dynamic>> _alerts = [];
   List<Map<String, dynamic>> _recentAnomalies = [];
   Map<String, String> _lastActionsByRoom = {};
+  Map<String, Map<String, double>> _roomThresholdRanges = {};
   Set<String> _onlineRelayDeviceIds = <String>{};
   Map<String, bool> _relayOnlineById = <String, bool>{};
   Map<String, String> _relayDeviceStateById = {};
@@ -83,13 +84,14 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
   }) {
     if (sensorRows.isEmpty) return null;
 
-    final thresholds = <String, double>{};
+    final upperThresholds = <String, double>{};
     for (final r in rooms) {
       final roomId = _normalizeRoomId((r['room_id'] ?? '').toString());
       if (roomId.isEmpty) continue;
-      final threshold = _toDouble(r['threshold']);
+      final upper = _toDouble(r['upper_threshold']);
+      final threshold = upper > 0 ? upper : _toDouble(r['threshold']);
       if (threshold > 0) {
-        thresholds[roomId] = threshold;
+        upperThresholds[roomId] = threshold;
       }
     }
 
@@ -101,9 +103,8 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
       final ts = _parseAnyTimestamp(row['timestamp']);
       final existing = latestByRoom[roomId];
-      final existingTs = existing == null
-          ? null
-          : _parseAnyTimestamp(existing['timestamp']);
+      final existingTs =
+          existing == null ? null : _parseAnyTimestamp(existing['timestamp']);
       if (existing == null ||
           (ts != null && (existingTs == null || ts.isAfter(existingTs)))) {
         latestByRoom[roomId] = row;
@@ -119,7 +120,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       if (power <= 0.5) continue; // only currently active usage contributes
 
       active += 1;
-      final threshold = thresholds[roomId] ?? 100.0;
+      final threshold = upperThresholds[roomId] ?? 100.0;
       if (power <= threshold) {
         efficient += 1;
       }
@@ -164,9 +165,8 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
       final ts = _parseAnyTimestamp(a['timestamp']);
       final existing = latestAnomalyByRoom[roomId];
-      final existingTs = existing == null
-          ? null
-          : _parseAnyTimestamp(existing['timestamp']);
+      final existingTs =
+          existing == null ? null : _parseAnyTimestamp(existing['timestamp']);
 
       if (existing == null ||
           (ts != null && (existingTs == null || ts.isAfter(existingTs)))) {
@@ -195,12 +195,23 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       final power = _toDouble(latest['power']);
       final occupancy = _toInt(latest['occupancy']);
       final score = _toDouble(latest['score']);
+      final range =
+          _roomThresholdRanges[roomId] ?? const {'lower': 80.0, 'upper': 100.0};
+      final lower = range['lower'] ?? 80.0;
+      final upper = range['upper'] ?? 100.0;
+      final severity =
+          power > upper ? 'HIGH' : (power >= lower ? 'MEDIUM' : 'LOW');
+      final thresholdAlertMessage =
+          severity == 'LOW'
+              ? 'Power below threshold range'
+              : 'Current ${power.toStringAsFixed(1)} W vs range ${lower.toStringAsFixed(1)}-${upper.toStringAsFixed(1)} W';
 
       out.add({
         'id': latest['id'] ?? tracking['id'],
         'room_id': roomId,
         'room_name': tracking['room_name'] ?? roomId,
-        'department': tracking['department'] ?? _profile['department'] ?? 'Unassigned',
+        'department':
+            tracking['department'] ?? _profile['department'] ?? 'Unassigned',
         'power': power,
         'occupancy': occupancy,
         'score': score,
@@ -210,6 +221,8 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
           occupancy: occupancy,
           score: score,
         ),
+        'severity': severity,
+        'threshold_alert_message': thresholdAlertMessage,
       });
     }
 
@@ -234,37 +247,49 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
           title: Text('Active Alerts (${liveAlerts.length})'),
           content: SizedBox(
             width: 680,
-            child: liveAlerts.isEmpty
-                ? const Text('No live active anomalies right now.')
-                : ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: liveAlerts.length,
-                    separatorBuilder: (_, __) => const Divider(height: 16),
-                    itemBuilder: (_, i) {
-                      final a = liveAlerts[i];
-                      final power = _toDouble(a['power']);
-                      final occupancy = _toInt(a['occupancy']);
-                      final score = _toDouble(a['score']);
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${a['room_name']} (${a['room_id']})',
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
+            child:
+                liveAlerts.isEmpty
+                    ? const Text('No live active anomalies right now.')
+                    : ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: liveAlerts.length,
+                      separatorBuilder: (_, __) => const Divider(height: 16),
+                      itemBuilder: (_, i) {
+                        final a = liveAlerts[i];
+                        final power = _toDouble(a['power']);
+                        final occupancy = _toInt(a['occupancy']);
+                        final score = _toDouble(a['score']);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${a['room_name']} (${a['room_id']})',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text('Department: ${a['department'] ?? 'Unassigned'}'),
-                          Text('Alert Type: ${a['reason']}'),
-                          Text('Severity: ${power >= 3000 ? 'HIGH' : 'MEDIUM'} | Stage: sergeant review'),
-                          Text('Recommendation: Inspect room physically and prepare relay intervention if unresolved.'),
-                          Text('Power: ${power.toStringAsFixed(1)} W | Occupancy: $occupancy | Score: ${score.toStringAsFixed(4)}'),
-                          Text('Raised at: ${a['timestamp'] ?? '-'}'),
-                        ],
-                      );
-                    },
-                  ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Department: ${a['department'] ?? 'Unassigned'}',
+                            ),
+                            Text('Alert Type: ${a['reason']}'),
+                            Text(
+                              'Severity: ${a['severity'] ?? 'MEDIUM'} | Stage: sergeant review',
+                            ),
+                            Text(
+                              'Threshold Alert: ${a['threshold_alert_message'] ?? '-'}',
+                            ),
+                            Text(
+                              'Recommendation: Inspect room physically and prepare relay intervention if unresolved.',
+                            ),
+                            Text(
+                              'Power: ${power.toStringAsFixed(1)} W | Occupancy: $occupancy | Score: ${score.toStringAsFixed(4)}',
+                            ),
+                            Text('Raised at: ${a['timestamp'] ?? '-'}'),
+                          ],
+                        );
+                      },
+                    ),
           ),
           actions: [
             TextButton(
@@ -290,7 +315,8 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       final power = row['power'] as num? ?? 0;
       final ts = _parseAnyTimestamp(row['timestamp']);
 
-      final isAfterHours = ts == null ? _isAfterHoursNow : (ts.hour < 8 || ts.hour >= 18);
+      final isAfterHours =
+          ts == null ? _isAfterHoursNow : (ts.hour < 8 || ts.hour >= 18);
       if (!isAfterHours || occupancy > 0 || power < 20) {
         continue;
       }
@@ -320,7 +346,10 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     }
 
     final rows = byRoom.values.toList();
-    rows.sort((a, b) => ((b['power'] as num?) ?? 0).compareTo((a['power'] as num?) ?? 0));
+    rows.sort(
+      (a, b) =>
+          ((b['power'] as num?) ?? 0).compareTo((a['power'] as num?) ?? 0),
+    );
     return rows;
   }
 
@@ -328,7 +357,9 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     final roomId = (room['room_id'] ?? '').toString().trim();
     final deviceId = (room['relay_device_id'] ?? '').toString().trim();
     final channel = int.tryParse((room['relay_channel'] ?? '').toString());
-    return roomId.isNotEmpty && deviceId.isNotEmpty && (channel == 1 || channel == 2);
+    return roomId.isNotEmpty &&
+        deviceId.isNotEmpty &&
+        (channel == 1 || channel == 2);
   }
 
   Set<String> _inactiveRoomIdsFromOverview() {
@@ -354,7 +385,8 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
         return false;
       }
 
-      final deviceId = (room['relay_device_id'] ?? '').toString().trim().toUpperCase();
+      final deviceId =
+          (room['relay_device_id'] ?? '').toString().trim().toUpperCase();
       final isOnline = onlineStateById[deviceId] == true;
       final state = (deviceStates[deviceId] ?? '').toUpperCase();
       if (!isOnline) {
@@ -378,14 +410,15 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     _lastActionsByRoom[roomId] = normalizedAction;
 
     final mappedRoom = _mappings.cast<Map<String, dynamic>?>().firstWhere(
-          (row) => (row?['room_id'] ?? '').toString() == roomId,
-          orElse: () => null,
-        );
+      (row) => (row?['room_id'] ?? '').toString() == roomId,
+      orElse: () => null,
+    );
     if (mappedRoom == null) {
       return;
     }
 
-    final deviceId = (mappedRoom['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    final deviceId =
+        (mappedRoom['relay_device_id'] ?? '').toString().trim().toUpperCase();
     if (deviceId.isNotEmpty) {
       _relayDeviceStateById[deviceId] = normalizedAction;
     }
@@ -393,14 +426,14 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
   String _connectionStateForRoom(Map<String, dynamic> room) {
     final roomId = (room['room_id'] ?? '').toString();
-    final deviceId = (room['relay_device_id'] ?? '').toString().trim().toUpperCase();
+    final deviceId =
+        (room['relay_device_id'] ?? '').toString().trim().toUpperCase();
 
     final lastAction = (_lastActionsByRoom[roomId] ?? '').toUpperCase();
     final deviceState = (_relayDeviceStateById[deviceId] ?? '').toUpperCase();
 
-    final effectiveState = (lastAction == 'ON' || lastAction == 'OFF')
-        ? lastAction
-        : deviceState;
+    final effectiveState =
+        (lastAction == 'ON' || lastAction == 'OFF') ? lastAction : deviceState;
 
     return effectiveState == 'ON' ? 'UP' : 'DOWN';
   }
@@ -463,23 +496,38 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       var relayOnlineById = <String, bool>{};
       final relayDeviceStateById = <String, String>{};
       try {
-        final deviceStatus = await getAllRelayDeviceStatus(token).timeout(const Duration(seconds: 5));
+        final deviceStatus = await getAllRelayDeviceStatus(
+          token,
+        ).timeout(const Duration(seconds: 5));
         for (final device in deviceStatus) {
-          final deviceId = (device['device_id'] ?? '').toString().trim().toUpperCase();
+          final deviceId =
+              (device['device_id'] ?? '').toString().trim().toUpperCase();
           final isOnline = device['is_online'] == true;
-          final state = (device['state'] ?? 'UNKNOWN').toString().trim().toUpperCase();
+          final state =
+              (device['state'] ?? 'UNKNOWN').toString().trim().toUpperCase();
           if (deviceId.isNotEmpty) {
             relayOnlineById[deviceId] = isOnline;
             relayDeviceStateById[deviceId] = state;
           }
         }
 
-        onlineRelayDeviceIds = deviceStatus
-            .where((device) => device['is_online'] == true)
-            .where((device) => (device['state'] ?? 'UNKNOWN').toString().toUpperCase() != 'UNKNOWN')
-            .map((device) => (device['device_id'] ?? '').toString().trim().toUpperCase())
-            .where((id) => id.isNotEmpty)
-            .toSet();
+        onlineRelayDeviceIds =
+            deviceStatus
+                .where((device) => device['is_online'] == true)
+                .where(
+                  (device) =>
+                      (device['state'] ?? 'UNKNOWN').toString().toUpperCase() !=
+                      'UNKNOWN',
+                )
+                .map(
+                  (device) =>
+                      (device['device_id'] ?? '')
+                          .toString()
+                          .trim()
+                          .toUpperCase(),
+                )
+                .where((id) => id.isNotEmpty)
+                .toSet();
       } catch (_) {
         // Device status is best-effort and should not block rendering.
         onlineRelayDeviceIds = <String>{};
@@ -488,7 +536,9 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
       List<Map<String, dynamic>> alerts = [];
       try {
-        alerts = await getActiveAnomalyAlerts().timeout(const Duration(seconds: 10));
+        alerts = await getActiveAnomalyAlerts().timeout(
+          const Duration(seconds: 10),
+        );
       } catch (e) {
         // Alerts should not block dashboard rendering.
         debugPrint('Failed to load active anomaly alerts: $e');
@@ -497,34 +547,67 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
       List<Map<String, dynamic>> anomalies = [];
       try {
-        anomalies = await getRecentAnomalies(limit: 120).timeout(const Duration(seconds: 5));
+        anomalies = await getRecentAnomalies(
+          limit: 120,
+        ).timeout(const Duration(seconds: 5));
       } catch (_) {
         anomalies = [];
       }
 
       List<Map<String, dynamic>> liveSensorRows = [];
       try {
-        liveSensorRows = await getRecentSensorData(limit: 400).timeout(const Duration(seconds: 6));
+        liveSensorRows = await getRecentSensorData(
+          limit: 400,
+        ).timeout(const Duration(seconds: 6));
       } catch (_) {
         liveSensorRows = [];
       }
 
       List<Map<String, dynamic>> roomsCatalog = [];
       try {
-        roomsCatalog = await getRoomsCatalog().timeout(const Duration(seconds: 6));
+        roomsCatalog = await getRoomsCatalog().timeout(
+          const Duration(seconds: 6),
+        );
       } catch (_) {
         roomsCatalog = [];
       }
 
-      final profile = Map<String, dynamic>.from(criticalData[0] as Map<String, dynamic>);
-      final overview = Map<String, dynamic>.from(criticalData[1] as Map<String, dynamic>);
-      final mappings = List<Map<String, dynamic>>.from(criticalData[2] as List<Map<String, dynamic>>);
-      final logs = List<Map<String, dynamic>>.from(criticalData[3] as List<Map<String, dynamic>>);
+      final profile = Map<String, dynamic>.from(
+        criticalData[0] as Map<String, dynamic>,
+      );
+      final overview = Map<String, dynamic>.from(
+        criticalData[1] as Map<String, dynamic>,
+      );
+      final mappings = List<Map<String, dynamic>>.from(
+        criticalData[2] as List<Map<String, dynamic>>,
+      );
+      final logs = List<Map<String, dynamic>>.from(
+        criticalData[3] as List<Map<String, dynamic>>,
+      );
 
-      final mappedRoomIds = mappings
-          .map((m) => _normalizeRoomId((m['room_id'] ?? '').toString()))
-          .where((id) => id.isNotEmpty)
-          .toSet();
+      final mappedRoomIds =
+          mappings
+              .map((m) => _normalizeRoomId((m['room_id'] ?? '').toString()))
+              .where((id) => id.isNotEmpty)
+              .toSet();
+
+      final roomThresholdRanges = <String, Map<String, double>>{};
+      for (final room in roomsCatalog) {
+        final roomId = _normalizeRoomId((room['room_id'] ?? '').toString());
+        if (roomId.isEmpty) continue;
+        final upper =
+            _toDouble(room['upper_threshold']) > 0
+                ? _toDouble(room['upper_threshold'])
+                : _toDouble(room['threshold']);
+        final lower =
+            _toDouble(room['lower_threshold']) > 0
+                ? _toDouble(room['lower_threshold'])
+                : (upper > 0 ? upper * 0.8 : 80.0);
+        roomThresholdRanges[roomId] = {
+          'lower': lower,
+          'upper': upper > lower ? upper : lower + 1,
+        };
+      }
 
       final liveEfficiency = _computeLiveEfficiencyPercent(
         sensorRows: liveSensorRows,
@@ -552,6 +635,7 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
         _onlineRelayDeviceIds = onlineRelayDeviceIds;
         _relayOnlineById = relayOnlineById;
         _relayDeviceStateById = relayDeviceStateById;
+        _roomThresholdRanges = roomThresholdRanges;
         _liveEfficiencyPercent = liveEfficiency;
         _isLoading = false;
         _errorMessage = null;
@@ -560,7 +644,8 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _errorMessage = e is SergeantApiError ? e.message : 'Failed to load dashboard: $e';
+        _errorMessage =
+            e is SergeantApiError ? e.message : 'Failed to load dashboard: $e';
       });
     }
   }
@@ -586,10 +671,14 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
       });
 
       if (!mounted) return;
-      AppNotifier.showSuccess(context, 'Room $roomId power set to ${action.toUpperCase()}');
+      AppNotifier.showSuccess(
+        context,
+        'Room $roomId power set to ${action.toUpperCase()}',
+      );
     } catch (e) {
       if (!mounted) return;
-      final msg = e is SergeantApiError ? e.message : 'Power control failed: $e';
+      final msg =
+          e is SergeantApiError ? e.message : 'Power control failed: $e';
       AppNotifier.showError(context, msg);
     }
   }
@@ -613,14 +702,14 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     for (final room in riskRooms) {
       final roomId = (room['room_id'] ?? '').toString();
       if (roomId.isEmpty) continue;
-      
+
       // Check if this room has a relay mapping
       final hasMapping = _mappings.any((m) {
         final mappedRoomId = (m['room_id'] ?? '').toString().trim();
         final deviceId = (m['relay_device_id'] ?? '').toString().trim();
         return mappedRoomId == roomId && deviceId.isNotEmpty;
       });
-      
+
       if (hasMapping) {
         controllableRooms.add(room);
       }
@@ -628,14 +717,17 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
     if (controllableRooms.isEmpty) {
       if (!mounted) return;
-      AppNotifier.showError(context, 'None of the ${riskRooms.length} risk room(s) have relay mappings configured.');
+      AppNotifier.showError(
+        context,
+        'None of the ${riskRooms.length} risk room(s) have relay mappings configured.',
+      );
       return;
     }
 
     var successCount = 0;
     var failedCount = 0;
     final errors = <String>[];
-    
+
     for (final room in controllableRooms) {
       final roomId = (room['room_id'] ?? '').toString();
       try {
@@ -655,16 +747,26 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
 
     if (!mounted) return;
     setState(() {});
-    
+
     if (successCount > 0) {
       if (failedCount == 0) {
-        AppNotifier.showSuccess(context, 'Power OFF sent to all $successCount risky room(s).');
+        AppNotifier.showSuccess(
+          context,
+          'Power OFF sent to all $successCount risky room(s).',
+        );
       } else {
-        AppNotifier.showSuccess(context, 'Power OFF sent to $successCount of ${controllableRooms.length} room(s). $failedCount failed.');
+        AppNotifier.showSuccess(
+          context,
+          'Power OFF sent to $successCount of ${controllableRooms.length} room(s). $failedCount failed.',
+        );
       }
     } else {
-      final errorMsg = errors.isNotEmpty ? '\n${errors.take(3).join('\n')}' : '';
-      AppNotifier.showError(context, 'Failed to send OFF commands to risky rooms.$errorMsg');
+      final errorMsg =
+          errors.isNotEmpty ? '\n${errors.take(3).join('\n')}' : '';
+      AppNotifier.showError(
+        context,
+        'Failed to send OFF commands to risky rooms.$errorMsg',
+      );
     }
   }
 
@@ -696,10 +798,9 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
               if (!mounted) return;
               navigator.push(
                 MaterialPageRoute(
-                  builder: (_) => SergeantProfilePage(
-                    profile: _profile,
-                    token: token,
-                  ),
+                  builder:
+                      (_) =>
+                          SergeantProfilePage(profile: _profile, token: token),
                 ),
               );
             },
@@ -712,289 +813,375 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _errorMessage != null
               ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_errorMessage!, textAlign: TextAlign.center),
-                        const SizedBox(height: 10),
-                        ElevatedButton(
-                          onPressed: _loadData,
-                          child: const Text('Retry'),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  child: ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(16),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        'Pull down to refresh live status',
-                        style: theme.textTheme.bodySmall,
-                        textAlign: TextAlign.center,
+                      Text(_errorMessage!, textAlign: TextAlign.center),
+                      const SizedBox(height: 10),
+                      ElevatedButton(
+                        onPressed: _loadData,
+                        child: const Text('Retry'),
                       ),
-                      const SizedBox(height: 8),
-                      Card(
-                        color: scheme.primaryContainer,
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Welcome, ${_profile['name'] ?? 'Sergeant'}',
-                                style: theme.textTheme.titleLarge?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                  color: scheme.onPrimaryContainer,
+                    ],
+                  ),
+                ),
+              )
+              : RefreshIndicator(
+                onRefresh: _loadData,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Text(
+                      'Pull down to refresh live status',
+                      style: theme.textTheme.bodySmall,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Card(
+                      color: scheme.primaryContainer,
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Welcome, ${_profile['name'] ?? 'Sergeant'}',
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: scheme.onPrimaryContainer,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'ID: ${_profile['sergeant_id'] ?? '-'} | Email: ${_profile['email'] ?? '-'}',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onPrimaryContainer.withValues(
+                                  alpha: 0.9,
                                 ),
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'ID: ${_profile['sergeant_id'] ?? '-'} | Email: ${_profile['email'] ?? '-'}',
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: scheme.onPrimaryContainer.withValues(alpha: 0.9),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (!_hasLiveData)
+                      Card(
+                        color: Colors.orange.shade50,
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.sensors_off,
+                                color: Colors.orange.shade800,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'No Live Data Connection',
+                                      style: theme.textTheme.titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.orange.shade900,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      !_hasSensorData && !_hasRelayConnection
+                                          ? 'Sensors and relay devices are offline. Waiting for connection...'
+                                          : !_hasSensorData
+                                          ? 'ESP32 sensors are not sending data. Check sensor connections.'
+                                          : 'Relay devices are offline. Check relay connections.',
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            color: Colors.orange.shade800,
+                                          ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      if (!_hasLiveData)
-                        Card(
-                          color: Colors.orange.shade50,
-                          child: Padding(
-                            padding: const EdgeInsets.all(14),
-                            child: Row(
+                    if (!_hasLiveData) const SizedBox(height: 10),
+                    _buildOverviewGrid(theme, activeMappedRooms.length),
+                    const SizedBox(height: 10),
+                    Card(
+                      child: ListTile(
+                        onTap: () => _showActiveAlertDetails(liveActiveAlerts),
+                        leading: Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.orange.shade700,
+                        ),
+                        title: const Text('Active anomaly alerts'),
+                        subtitle: const Text(
+                          'Tap to view room-wise details and reason',
+                        ),
+                        trailing: Text(
+                          '${liveActiveAlerts.length}',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Card(
+                      color:
+                          _isAfterHoursNow
+                              ? Colors.orange.shade50
+                              : scheme.surfaceContainerHighest,
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
                               children: [
-                                Icon(Icons.sensors_off, color: Colors.orange.shade800),
-                                const SizedBox(width: 12),
+                                Icon(
+                                  _isAfterHoursNow
+                                      ? Icons.nightlight_round
+                                      : Icons.schedule,
+                                  color:
+                                      _isAfterHoursNow
+                                          ? Colors.orange.shade800
+                                          : scheme.primary,
+                                ),
+                                const SizedBox(width: 8),
                                 Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'No Live Data Connection',
-                                        style: theme.textTheme.titleSmall?.copyWith(
+                                  child: Text(
+                                    _isAfterHoursNow
+                                        ? 'After-Hours Duty Monitoring'
+                                        : 'Normal-Hours Monitoring',
+                                    style: theme.textTheme.titleMedium
+                                        ?.copyWith(
                                           fontWeight: FontWeight.w700,
-                                          color: Colors.orange.shade900,
+                                          color:
+                                              _isAfterHoursNow
+                                                  ? Colors.orange.shade900
+                                                  : scheme.onSurface,
+                                        ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Risk rooms (power usage with zero occupancy): ${riskRooms.length}',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color:
+                                    _isAfterHoursNow
+                                        ? Colors.orange.shade900
+                                        : scheme.onSurface.withValues(
+                                          alpha: 0.9,
+                                        ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            FilledButton.icon(
+                              onPressed: () => _cutOffRiskRooms(riskRooms),
+                              icon: const Icon(Icons.power_settings_new),
+                              label: const Text('Cut OFF All Risk Rooms'),
+                              style: FilledButton.styleFrom(
+                                backgroundColor:
+                                    riskRooms.isNotEmpty
+                                        ? Colors.red.shade700
+                                        : Colors.blueGrey.shade700,
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (riskRooms.isNotEmpty)
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'After-Hours Anomaly Watchlist',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ...riskRooms.take(8).map((risk) {
+                                final roomId =
+                                    (risk['room_id'] ?? '').toString();
+                                final power =
+                                    (risk['power'] as num?)?.toDouble() ?? 0;
+                                final occupancy =
+                                    (risk['occupancy'] as num?)?.toInt() ?? 0;
+                                final score =
+                                    (risk['score'] as num?)?.toDouble();
+
+                                return ListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                  ),
+                                  leading: Icon(
+                                    Icons.report_problem,
+                                    color: Colors.orange.shade700,
+                                  ),
+                                  title: Text(roomId),
+                                  subtitle: Text(
+                                    'Alert Type: ${risk['reason'] ?? 'Anomalous pattern detected'} | '
+                                    'Severity: ${power >= 3000 ? 'HIGH' : 'MEDIUM'} | '
+                                    'Stage: sergeant review\n'
+                                    'Power: ${power.toStringAsFixed(1)}W | Occupancy: $occupancy'
+                                    '${score != null ? ' | Score: ${score.toStringAsFixed(2)}' : ''}',
+                                  ),
+                                  trailing: Wrap(
+                                    spacing: 8,
+                                    children: [
+                                      ElevatedButton.icon(
+                                        onPressed:
+                                            () =>
+                                                _controlRoomPower(roomId, 'ON'),
+                                        icon: const Icon(Icons.power, size: 16),
+                                        label: const Text('ON'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              Colors.green.shade700,
                                         ),
                                       ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        !_hasSensorData && !_hasRelayConnection
-                                            ? 'Sensors and relay devices are offline. Waiting for connection...'
-                                            : !_hasSensorData
-                                                ? 'ESP32 sensors are not sending data. Check sensor connections.'
-                                                : 'Relay devices are offline. Check relay connections.',
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                          color: Colors.orange.shade800,
+                                      ElevatedButton.icon(
+                                        onPressed:
+                                            () => _controlRoomPower(
+                                              roomId,
+                                              'OFF',
+                                            ),
+                                        icon: const Icon(
+                                          Icons.power_settings_new,
+                                          size: 16,
+                                        ),
+                                        label: const Text('OFF'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.red.shade700,
                                         ),
                                       ),
                                     ],
                                   ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      if (!_hasLiveData) const SizedBox(height: 10),
-                      _buildOverviewGrid(theme, activeMappedRooms.length),
-                      const SizedBox(height: 10),
-                      Card(
-                        child: ListTile(
-                          onTap: () => _showActiveAlertDetails(liveActiveAlerts),
-                          leading: Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700),
-                          title: const Text('Active anomaly alerts'),
-                          subtitle: const Text('Tap to view room-wise details and reason'),
-                          trailing: Text(
-                            '${liveActiveAlerts.length}',
-                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Card(
-                        color: _isAfterHoursNow
-                            ? Colors.orange.shade50
-                            : scheme.surfaceContainerHighest,
-                        child: Padding(
-                          padding: const EdgeInsets.all(14),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(
-                                    _isAfterHoursNow ? Icons.nightlight_round : Icons.schedule,
-                                    color: _isAfterHoursNow ? Colors.orange.shade800 : scheme.primary,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      _isAfterHoursNow
-                                          ? 'After-Hours Duty Monitoring'
-                                          : 'Normal-Hours Monitoring',
-                                      style: theme.textTheme.titleMedium?.copyWith(
-                                        fontWeight: FontWeight.w700,
-                                        color: _isAfterHoursNow
-                                            ? Colors.orange.shade900
-                                            : scheme.onSurface,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Risk rooms (power usage with zero occupancy): ${riskRooms.length}',
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: _isAfterHoursNow
-                                      ? Colors.orange.shade900
-                                      : scheme.onSurface.withValues(alpha: 0.9),
-                                ),
-                              ),
-                              const SizedBox(height: 10),
-                              FilledButton.icon(
-                                onPressed: () => _cutOffRiskRooms(riskRooms),
-                                icon: const Icon(Icons.power_settings_new),
-                                label: const Text('Cut OFF All Risk Rooms'),
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: riskRooms.isNotEmpty
-                                      ? Colors.red.shade700
-                                      : Colors.blueGrey.shade700,
-                                  foregroundColor: Colors.white,
-                                ),
-                              ),
+                                );
+                              }),
                             ],
                           ),
                         ),
                       ),
-                      const SizedBox(height: 10),
-                      if (riskRooms.isNotEmpty)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'After-Hours Anomaly Watchlist',
-                                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 8),
-                                ...riskRooms.take(8).map((risk) {
-                                  final roomId = (risk['room_id'] ?? '').toString();
-                                  final power = (risk['power'] as num?)?.toDouble() ?? 0;
-                                  final occupancy = (risk['occupancy'] as num?)?.toInt() ?? 0;
-                                  final score = (risk['score'] as num?)?.toDouble();
-
-                                  return ListTile(
-                                    dense: true,
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                                    leading: Icon(Icons.report_problem, color: Colors.orange.shade700),
-                                    title: Text(roomId),
-                                    subtitle: Text(
-                                      'Alert Type: ${risk['reason'] ?? 'Anomalous pattern detected'} | '
-                                      'Severity: ${power >= 3000 ? 'HIGH' : 'MEDIUM'} | '
-                                      'Stage: sergeant review\n'
-                                      'Power: ${power.toStringAsFixed(1)}W | Occupancy: $occupancy'
-                                      '${score != null ? ' | Score: ${score.toStringAsFixed(2)}' : ''}',
-                                    ),
-                                    trailing: Wrap(
-                                      spacing: 8,
-                                      children: [
-                                        ElevatedButton.icon(
-                                          onPressed: () => _controlRoomPower(roomId, 'ON'),
-                                          icon: const Icon(Icons.power, size: 16),
-                                          label: const Text('ON'),
-                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700),
-                                        ),
-                                        ElevatedButton.icon(
-                                          onPressed: () => _controlRoomPower(roomId, 'OFF'),
-                                          icon: const Icon(Icons.power_settings_new, size: 16),
-                                          label: const Text('OFF'),
-                                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }),
-                              ],
-                            ),
-                          ),
-                        ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Department-wise Rooms & Power Control',
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Department-wise Rooms & Power Control',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
-                      const SizedBox(height: 8),
-                      if (grouped.isEmpty)
-                        const Card(
-                          child: Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text('No active room-relay mappings found. Ask admin to configure mappings or check live room activity.'),
+                    ),
+                    const SizedBox(height: 8),
+                    if (grouped.isEmpty)
+                      const Card(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text(
+                            'No active room-relay mappings found. Ask admin to configure mappings or check live room activity.',
                           ),
                         ),
-                      ...grouped.entries.map((entry) {
-                        final dept = entry.key;
-                        final rooms = entry.value;
-                        return Card(
-                          child: ExpansionTile(
-                            leading: const Icon(Icons.apartment_outlined),
-                            title: Text('$dept (${rooms.length} rooms)'),
-                            children: rooms.map((room) {
-                              final roomId = (room['room_id'] ?? '').toString();
-                              final roomName = (room['room_name'] ?? roomId).toString();
-                              final channel = room['relay_channel']?.toString() ?? '-';
-                              final status = _lastActionsByRoom[roomId] ?? 'UNKNOWN';
-                              final deviceId = (room['relay_device_id'] ?? '').toString().trim().toUpperCase();
-                              final deviceState = (_relayDeviceStateById[deviceId] ?? 'UNKNOWN').toUpperCase();
-                              final connectionState = _connectionStateForRoom(room);
-                              final isConnectionUp = connectionState == 'UP';
+                      ),
+                    ...grouped.entries.map((entry) {
+                      final dept = entry.key;
+                      final rooms = entry.value;
+                      return Card(
+                        child: ExpansionTile(
+                          leading: const Icon(Icons.apartment_outlined),
+                          title: Text('$dept (${rooms.length} rooms)'),
+                          children:
+                              rooms.map((room) {
+                                final roomId =
+                                    (room['room_id'] ?? '').toString();
+                                final roomName =
+                                    (room['room_name'] ?? roomId).toString();
+                                final channel =
+                                    room['relay_channel']?.toString() ?? '-';
+                                final status =
+                                    _lastActionsByRoom[roomId] ?? 'UNKNOWN';
+                                final deviceId =
+                                    (room['relay_device_id'] ?? '')
+                                        .toString()
+                                        .trim()
+                                        .toUpperCase();
+                                final deviceState =
+                                    (_relayDeviceStateById[deviceId] ??
+                                            'UNKNOWN')
+                                        .toUpperCase();
+                                final connectionState = _connectionStateForRoom(
+                                  room,
+                                );
+                                final isConnectionUp = connectionState == 'UP';
 
-                              return ListTile(
-                                title: Text('$roomName ($roomId)'),
-                                subtitle: Text(
-                                  'Relay channel: $channel | Connection: $connectionState | Last action: $status | Device: $deviceState',
-                                ),
-                                leading: Icon(
-                                  isConnectionUp ? Icons.link : Icons.link_off,
-                                  color: isConnectionUp ? Colors.green.shade700 : Colors.red.shade700,
-                                ),
-                                trailing: Wrap(
-                                  spacing: 8,
-                                  children: [
-                                    ElevatedButton(
-                                      onPressed: () => _controlRoomPower(roomId, 'ON'),
-                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700),
-                                      child: const Text('ON'),
-                                    ),
-                                    ElevatedButton(
-                                      onPressed: () => _controlRoomPower(roomId, 'OFF'),
-                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
-                                      child: const Text('OFF'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
+                                return ListTile(
+                                  title: Text('$roomName ($roomId)'),
+                                  subtitle: Text(
+                                    'Relay channel: $channel | Connection: $connectionState | Last action: $status | Device: $deviceState',
+                                  ),
+                                  leading: Icon(
+                                    isConnectionUp
+                                        ? Icons.link
+                                        : Icons.link_off,
+                                    color:
+                                        isConnectionUp
+                                            ? Colors.green.shade700
+                                            : Colors.red.shade700,
+                                  ),
+                                  trailing: Wrap(
+                                    spacing: 8,
+                                    children: [
+                                      ElevatedButton(
+                                        onPressed:
+                                            () =>
+                                                _controlRoomPower(roomId, 'ON'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor:
+                                              Colors.green.shade700,
+                                        ),
+                                        child: const Text('ON'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed:
+                                            () => _controlRoomPower(
+                                              roomId,
+                                              'OFF',
+                                            ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.red.shade700,
+                                        ),
+                                        child: const Text('OFF'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }).toList(),
+                        ),
+                      );
+                    }),
+                  ],
                 ),
+              ),
     );
   }
 
@@ -1002,8 +1189,10 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     final totalUsage = _overview['total_usage_kwh']?.toString() ?? '0';
     final activeRooms = _overview['active_rooms']?.toString() ?? '0';
     final totalRooms = _overview['total_rooms']?.toString() ?? '0';
-    final efficiency = (_liveEfficiencyPercent ?? (_overview['efficiency_percent'] as num?)?.toDouble() ?? 0.0)
-      .toStringAsFixed(1);
+    final efficiency = (_liveEfficiencyPercent ??
+            (_overview['efficiency_percent'] as num?)?.toDouble() ??
+            0.0)
+        .toStringAsFixed(1);
 
     // Show only live mapped rooms (online + known state).
     final hasRelayMappings = mappedRelayCount > 0;
@@ -1036,9 +1225,10 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
         title: 'Mapped Relay Rooms',
         value: relayDisplayValue,
         icon: Icons.settings_remote_outlined,
-        color: (hasRelayMappings && relayIsConnected)
-            ? Colors.deepPurple.shade700
-            : Colors.grey.shade600,
+        color:
+            (hasRelayMappings && relayIsConnected)
+                ? Colors.deepPurple.shade700
+                : Colors.grey.shade600,
         isDisconnected: !hasRelayMappings || !relayIsConnected,
       ),
     ];
@@ -1046,14 +1236,16 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final crossAxisCount = width >= 1200
-            ? 4
-            : width >= 800
+        final crossAxisCount =
+            width >= 1200
+                ? 4
+                : width >= 800
                 ? 2
                 : 1;
-        final ratio = width >= 1200
-            ? 3.6
-            : width >= 800
+        final ratio =
+            width >= 1200
+                ? 3.6
+                : width >= 800
                 ? 3.0
                 : 2.6;
 
@@ -1120,9 +1312,9 @@ class _MetricCard extends StatelessWidget {
                   Text(
                     value,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: isDisconnected ? Colors.grey.shade700 : null,
-                        ),
+                      fontWeight: FontWeight.w700,
+                      color: isDisconnected ? Colors.grey.shade700 : null,
+                    ),
                   ),
                 ],
               ),
