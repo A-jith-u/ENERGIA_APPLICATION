@@ -137,6 +137,7 @@ STAGE_SERGEANT_MINUTES = 10
 AUTO_CUTOFF_THRESHOLD_MINUTES = 15
 MAX_REMINDER_MINUTES = 120  # stop everything after 2 hours as a safety bound
 PUBLIC_BASE_URL = os.environ.get("ALERT_PUBLIC_BASE_URL", "http://127.0.0.1:5000")
+FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", os.environ.get("PUBLIC_BASE_URL", PUBLIC_BASE_URL))
 
 
 def _is_test_identifier(value: str | None) -> bool:
@@ -746,46 +747,46 @@ class AnomalyAlertService:
                     f"background:{severity_color};color:#fff;font-weight:700;'>"
                     f"{severity_level}</span>"
                 )
+                # role-specific intro and tone
+                intro = {
+                    'class_rep': "Hello Class Representative,",
+                    'coordinator': "Hello Coordinator,",
+                    'sergeant': "Hello Sergeant,",
+                }.get(recipient_type, "Hello,")
+
+                role_note = {
+                    'class_rep': 'Please verify the room immediately and update the app once resolved.',
+                    'coordinator': 'Please coordinate with the class rep and confirm the situation; escalate if unresolved.',
+                    'sergeant': 'Please prepare to intervene if the issue persists; physical inspection may be required.',
+                }.get(recipient_type, '')
+
+                score_block = '' if recipient_type == 'class_rep' else f"<tr style=\"background:#f9f9f9;\"><td style=\"padding:8px;color:#666;\">Anomaly Score</td><td style=\"padding:8px;\">{score}</td></tr>"
+
                 email_html = f"""
                 <html><body style="font-family:Arial,sans-serif;background:#f5f5f5;padding:20px;">
-                  <div style="background:white;border-radius:8px;padding:30px;max-width:600px;
-                              margin:0 auto;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
-                    <div style="background:{severity_color};color:white;padding:16px;border-radius:6px;margin-bottom:20px;">
-                      <h2 style="margin:0;">Energy Anomaly Detected</h2>
+                    <div style="background:white;border-radius:8px;padding:30px;max-width:640px;margin:0 auto;box-shadow:0 4px 12px rgba(0,0,0,0.08);">
+                        <div style="background:{severity_color};color:white;padding:18px;border-radius:6px;margin-bottom:18px;">
+                            <h1 style="margin:0;font-size:20px;">{severity_level} Alert — {room_name}</h1>
+                        </div>
+                        <p style="margin:0 0 12px 0;color:#333;font-size:15px;"><strong>{intro}</strong> {role_note}</p>
+                        <table style="width:100%;border-collapse:collapse;font-size:14px;color:#333;">
+                            <tr><td style="padding:8px;color:#666;width:36%;">Room</td><td style="padding:8px;font-weight:700;">{room_name}</td></tr>
+                            <tr style="background:#fafafa;"><td style="padding:8px;color:#666;">Department</td><td style="padding:8px;font-weight:700;">{department}</td></tr>
+                            <tr><td style="padding:8px;color:#666;">Power Reading</td><td style="padding:8px;font-weight:700;color:#d32f2f;">{power if power is not None else 'N/A'} W</td></tr>
+                            {score_block}
+                            <tr><td style="padding:8px;color:#666;">Alert #</td><td style="padding:8px;">{alert_count}</td></tr>
+                        </table>
+                        <div style="margin:18px 0;padding:12px;border-radius:6px;background:#f1f8ff;border:1px solid #dbeafe;color:#0b5394;">
+                            <strong>Quick Action:</strong> {action}
+                        </div>
+                        <div style="text-align:center;margin:20px 0;">
+                            <a href="{resolve_link}" style="display:inline-block;background:#1e88e5;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:700;">Resolve / Acknowledge</a>
+                            <div style="margin-top:10px;color:#666;font-size:13px;">Clicking the button will acknowledge this alert and stop further escalation for this room.</div>
+                        </div>
+                        <p style="color:#777;font-size:12px;margin-top:8px;">If you prefer to manage alerts from the dashboard, visit <a href="{FRONTEND_BASE_URL}" style="color:#1e88e5;">ENERGIA Dashboard</a>.</p>
+                        <hr style="border:none;border-top:1px solid #eee;margin:18px 0;" />
+                        <p style="color:#999;font-size:12px;margin:0;">This is an automated notification from ENERGIA. Replying to this email is not monitored.</p>
                     </div>
-                    <div style="margin-bottom:12px;">Severity: {severity_badge}</div>
-                    <table style="width:100%;border-collapse:collapse;">
-                      <tr><td style="padding:8px;color:#666;">Room</td>
-                          <td style="padding:8px;font-weight:bold;">{room_name}</td></tr>
-                      <tr style="background:#f9f9f9;">
-                          <td style="padding:8px;color:#666;">Department</td>
-                          <td style="padding:8px;font-weight:bold;">{department}</td></tr>
-                      <tr><td style="padding:8px;color:#666;">Power Reading</td>
-                          <td style="padding:8px;font-weight:bold;color:#ff4444;">{power}W</td></tr>
-                      {'' if recipient_type == 'class_rep' else f'''<tr style="background:#f9f9f9;">
-                          <td style="padding:8px;color:#666;">Anomaly Score</td>
-                          <td style="padding:8px;">{score}</td></tr>'''}
-                      <tr><td style="padding:8px;color:#666;">Alert #</td>
-                          <td style="padding:8px;">{alert_count}</td></tr>
-                    </table>
-                    <div style="background:#fff3cd;border-left:4px solid #ffc107;
-                                padding:12px;margin:20px 0;border-radius:4px;">
-                      <strong>Action Required:</strong> {action}
-                    </div>
-                                        <div style="margin:22px 0;text-align:center;">
-                                            <a href="{resolve_link}"
-                                                 style="display:inline-block;background:#2e7d32;color:#fff;text-decoration:none;
-                                                                padding:12px 18px;border-radius:8px;font-weight:700;">
-                                                Resolve / Acknowledge {role_label} Alert
-                                            </a>
-                                            <div style="margin-top:8px;color:#666;font-size:12px;">
-                                                Use this to acknowledge the {role_label.lower()} alert for {room_name} and stop further escalation for the room.
-                                            </div>
-                                        </div>
-                    <p style="color:#999;font-size:12px;">
-                      This is an automated alert from the ENERGIA monitoring system.
-                    </p>
-                  </div>
                 </body></html>
                 """
                 try:
@@ -797,8 +798,8 @@ class AnomalyAlertService:
                     print(f"  -> Dedicated alert email sent to {recipient_type}: {recipient_email}")
                 except Exception as email_err:
                     print(f"  -> Dedicated alert email failed for {recipient_email}: {email_err}")
-                    # Fallback to existing notify_api SMTP sender if available
-                    if _notify and _notify.SMTP_PASSWORD:
+                    # Fallback to existing notify_api SMTP sender if available — ensure HTML body used
+                    if _notify and getattr(_notify, 'SMTP_PASSWORD', None):
                         try:
                             _notify._send_email(
                                 subject=title,
@@ -811,9 +812,10 @@ class AnomalyAlertService:
             elif _notify and _notify.SMTP_PASSWORD and ('@' in recipient_email):
                 # Legacy path when dedicated mail service is not configured.
                 try:
+                    # Send the same HTML email for consistency
                     _notify._send_email(
                         subject=title,
-                        body=message,
+                        body=email_html,
                         recipients=[recipient_email],
                     )
                     print(f"  -> Legacy notify_api email sent to {recipient_type}: {recipient_email}")
@@ -1138,6 +1140,7 @@ async def resolve_alert_link(room_id: str, resolved_by: str):
     """Resolve an alert from a button in an email message."""
     try:
         await anomaly_alert_service.resolve_anomaly_alert(room_id, resolved_by)
+        # Render a friendly acknowledgement page and redirect back to frontend dashboard
         return HTMLResponse(
             content=(
                 "<html><head><meta charset='utf-8' />"
@@ -1147,9 +1150,11 @@ async def resolve_alert_link(room_id: str, resolved_by: str):
                 "<div style='max-width:680px;margin:0 auto;background:#fff;border-radius:12px;padding:24px;box-shadow:0 2px 10px rgba(0,0,0,.08);'>"
                 "<h2 style='margin-top:0;color:#2e7d32;'>Alert acknowledged successfully</h2>"
                 f"<p style='font-size:15px;color:#333;'>Room <strong>{room_id}</strong> has been marked resolved by <strong>{resolved_by}</strong>.</p>"
-                "<p style='font-size:14px;color:#666;'>You can now return to the app dashboard."
-                " If this alert reoccurs, a new notification thread will be created automatically.</p>"
-                "</div></body></html>"
+                "<p style='font-size:14px;color:#666;'>You will be redirected to the dashboard shortly.</p>"
+                f"<p style='font-size:13px;color:#777;'>If you are not redirected, <a href=\"{FRONTEND_BASE_URL}\">click here to open the dashboard</a>.</p>"
+                f"</div>"
+                f"<script>setTimeout(function() {{ window.location.href = '{FRONTEND_BASE_URL}'; }}, 3000);</script>"
+                "</body></html>"
             ),
             status_code=200,
         )
@@ -1164,6 +1169,7 @@ async def resolve_alert_link(room_id: str, resolved_by: str):
                 "<h2 style='margin-top:0;color:#c62828;'>Unable to acknowledge this alert</h2>"
                 "<p style='font-size:15px;color:#333;'>Please reopen the link from the latest email or resolve the alert directly in the app.</p>"
                 f"<p style='font-size:13px;color:#777;'>Details: {str(e)}</p>"
+                f"<p style='font-size:13px;color:#777;'>You can also open the dashboard here: <a href=\"{FRONTEND_BASE_URL}\">open dashboard</a></p>"
                 "</div></body></html>"
             ),
             status_code=500,
