@@ -1,0 +1,239 @@
+this is the description of our project given by the copilot. i need you to understand my project in detail and help create dataflow diagram for my project. 
+below are the convention for DFD
+Symbol	Shape	Represents
+Process	Circle / Rounded	Data processing
+Data Flow	Arrow	Movement of data
+Data Store	Open Rectangle	Storage of data
+External Entity	Rectangle	Source/Destination (outside system)
+ENERGIA System Data Flow Description (DFD-ready)
+
+
+
+1. System scope
+ENERGIA is a campus energy monitoring and control platform with:
+
+Flutter client applications for Admin, Coordinator, Class Representative, Sergeant, and Student users.
+FastAPI backend gateway that aggregates multiple services.
+PostgreSQL database for operational data.
+ESP32 devices (sensor + relay endpoints) that push telemetry and poll for control commands.
+Optional external notification providers (SMTP email and Firebase Cloud Messaging).
+2. External entities
+Campus Users (Admin, Coordinator, Class Rep, Sergeant, Student)
+ESP32 Sensor Device(s)
+ESP32 Relay Controller Device(s)
+SMTP Server (email alerts/updates)
+Firebase Cloud Messaging service (push notification delivery)
+3. Main processes (for Level-1 decomposition)
+P1 Authentication and Session Management
+P2 Sensor Ingestion and Data Merge
+P3 Analytics and Anomaly Detection
+P4 Dashboard and Live Visualization
+P5 Room and Threshold Configuration
+P6 Prediction Service
+P7 Recommendation Service
+P8 Notification Service (In-app, Email, Push)
+P9 Relay Command and Auto-Cutoff Control
+P10 Monthly Reporting and Export
+4. Data stores
+D1 User and Role Store
+Stores admins, coordinators, class representatives, sergeants, credentials/profile fields, role metadata.
+D2 Sensor Data Store (sensor_data)
+Time-series processed sensor rows with timestamp/device/voltage/current/power/energy/frequency/power_factor/occupancy.
+D3 Raw ESP32 Data Store (esp32_raw_data)
+Raw telemetry snapshots for reporting and historical analysis.
+D4 Rooms and Threshold Store (rooms)
+Room ID, floor, department, threshold values, update timestamps.
+D5 Anomaly Log Store (anomaly_logs)
+Derived anomaly flags, anomaly score, related sensor and occupancy context.
+D6 Relay Mapping Store (room_relay_mapping)
+Room to relay device/channel mapping.
+D7 Relay Command Queue (relay_commands)
+Pending and executed ON/OFF commands for ESP32 polling model.
+D8 Relay Action Log (relay_control_logs)
+Manual and automatic cutoff history, actor, reason, timestamp.
+D9 In-app Notification Store (notifications)
+Notification records, recipient metadata, read/unread states.
+D10 FCM Token Store (fcm_tokens)
+Device token registration for push targets.
+D11 Activity Log Store
+User activity/events for audit and timeline summaries.
+D12 Model Artifacts/Prediction Context
+Trained model files and runtime prediction inputs/outputs.
+5. Context-level (Level-0) flow
+Users interact with Flutter app to login, view dashboards, fetch reports, and manage thresholds/relay actions.
+Flutter app calls backend APIs over HTTP.
+ESP32 sensors send telemetry payloads to backend sensor ingestion endpoint.
+Backend validates, merges, stores, and analyzes incoming telemetry.
+Backend returns live metrics, anomaly states, and predictions to Flutter dashboards.
+Backend generates recommendations using role + department + live sensor context.
+Backend sends notifications to users through:
+In-app DB notifications (polled by app)
+SMTP email
+FCM push
+For power control, backend queues relay commands for ESP32 relay device polling and records execution status.
+Reporting process aggregates month-wise trends and recommendations from stored sensor history.
+6. Detailed process flows
+P1 Authentication and session management
+User sends credentials to login endpoint.
+Backend validates against D1 user tables.
+Backend issues JWT token containing role, identity, and optional department.
+Flutter stores token locally and includes it in future authorized API calls.
+On logout, app can request FCM token removal from D10.
+Data in/out
+
+In: username/password/role context
+Out: JWT, profile context, role permissions
+P2 Sensor ingestion and merge
+ESP32 posts telemetry payload to sensor endpoint (/sensor-data or /api/sensor-data).
+Backend inspects payload fields:
+Electrical metrics (power/current/voltage/energy/pf)
+Occupancy signals
+Relay state heartbeat (if included)
+Backend attempts temporal merge with recent row (within a short window) to combine camera occupancy and electrical data into one logical sample.
+If merge candidate exists, backend updates missing fields; otherwise inserts new row into D2.
+Raw telemetry may also be stored in D3 for reporting/historical aggregation.
+Latest relay state heartbeat updates device relay-state tracking.
+Data in/out
+
+In: device_id, timestamp, electrical fields, occupancy, relay_state
+Out: success/failure + anomaly flag + score
+P3 Analytics and anomaly detection
+After ingestion, backend computes rolling features from recent D2 history:
+Rolling average power
+Rolling standard deviation
+Power change rate
+Occupancy-aware features
+Backend runs anomaly logic:
+Isolation Forest model if loaded
+Rule fallback if model unavailable (absolute threshold and/or spike logic)
+Backend writes anomaly result to D5 (anomaly_logs).
+If anomaly detected, backend triggers alert orchestration process (P8).
+Overview/dashboard cache invalidated so next read reflects new data.
+Data in/out
+
+In: recent sensor history + room threshold
+Out: anomaly flag, anomaly score, anomaly log record
+P4 Dashboard and live visualization
+Flutter dashboards poll/fetch live sensor readings (/sensor-data with filters like device_id/department/limit).
+Backend queries D2 (with optional room-department joins).
+Backend returns time-ordered data arrays for charts and KPIs.
+Flutter renders:
+Voltage/current/power/energy trends
+Active room/sensor status
+Department/floor filtered views
+Data in/out
+
+In: filter params (device_id, department, limit)
+Out: time-series JSON for UI cards/charts
+P5 Room and threshold configuration
+Coordinator/Admin requests room list/floor list.
+Backend reads D4 and returns room metadata and thresholds.
+User updates room threshold from settings dialog.
+Backend validates threshold > 0 and updates D4.
+New thresholds are immediately used by anomaly fallback logic in P3.
+Data in/out
+
+In: room_id, threshold value
+Out: updated room threshold response
+P6 Prediction service
+Flutter prediction page first fetches latest sensor sample for target device.
+Flutter calls prediction endpoint (/model/predict_15min etc.) with room/horizon context.
+Prediction service loads model context (ensemble/prophet fallback), combines historical patterns with latest readings.
+Service returns predicted values, bounds/confidence, method metadata.
+Flutter merges latest sensor snapshot with prediction response and displays forecast cards/charts.
+Data in/out
+
+In: horizon, room_name/device context, optional live reading context
+Out: predicted energy/power, confidence range, method label
+P7 Recommendation service
+Flutter requests recommendations with JWT.
+Recommendation API decodes token to derive role, user ID, department, classroom context.
+AI recommendation engine pulls:
+Live/recent sensor signals from D2/D3
+Prediction context from P6
+User/department context from D1/D4
+Engine generates prioritized recommendation list (critical/high/medium/low/info).
+API returns recommendation list and counts for badge display.
+If token invalid or backend unavailable, frontend can show generic local fallback recommendations.
+Data in/out
+
+In: JWT and optional explicit context override
+Out: recommendation list with title/message/type/priority/icon/timestamp
+P8 Notification service (in-app, email, push)
+In-app notifications
+
+Anomaly/recommendation workflow creates notification records in D9.
+Flutter polls /notify/notifications by email/department and unread filter.
+User marks single/all notifications as read; backend updates D9 state.
+Email notifications
+
+Admin/system sends alert/update request with recipients.
+Notify service formats message and sends via SMTP server.
+Delivery status returned to caller.
+Push notifications
+
+Flutter registers device token via token registration endpoint into D10.
+Backend/FCM API sends push to device/topic/all depending on event.
+FCM delivers to mobile devices; response IDs/logs returned.
+Data in/out
+
+In: alert content, recipient identity, FCM tokens/topics
+Out: notification records, read states, SMTP/FCM delivery status
+P9 Relay command and auto-cutoff control
+Authorized user (sergeant/admin) sends manual ON/OFF room action.
+Backend verifies JWT role and looks up room-device mapping in D6.
+Backend writes command to D7 (relay_commands) with PENDING status.
+ESP32 relay controller polls command endpoint and executes command.
+ESP32 acknowledges execution; backend updates command status and timestamps.
+Backend logs action in D8.
+Auto-cutoff path:
+Anomaly escalation triggers internal auto-cutoff call
+OFF command queued automatically
+Auto action logged distinctly (trigger_type = auto)
+Data in/out
+
+In: room_id, action, reason, actor role
+Out: command_id, queue status, execution lifecycle state
+P10 Monthly reporting and export
+Flutter requests monthly report for selected month/year.
+Report process queries D3 (raw telemetry) for period window and previous-month window.
+Process computes:
+Overall energy and power stats
+Department breakdown
+Daily trends
+Peak usage events
+Sensor health/status
+Process builds recommendations from aggregate behavior.
+API returns structured report object used by UI and PDF/CSV export layers.
+Data in/out
+
+In: month/year
+Out: report package with analytics sections and recommendations
+7. Key data objects (for DFD labels)
+Auth Request: username, password, role_hint, department(optional)
+Auth Response: JWT, user profile, role, department
+Sensor Payload: device_id, power, current, voltage, energy, frequency, power_factor, human_present, relay_state, timestamp
+Sensor Query Response: list of sensor samples + timestamps
+Room Record: room_id, room_name, floor_number, threshold, department
+Threshold Update Request: room_id + threshold
+Anomaly Record: device_id, power, occupancy, is_anomaly, anomaly_score, timestamp
+Prediction Request: room_name/device_id, horizon_minutes
+Prediction Response: forecast value(s), lower_bound, upper_bound, method, latest_sensor_reference
+Recommendation Record: id, title, message, type, priority, icon, timestamp
+Notification Record: recipient_email/type, title, message, room context, read flag, created_at
+Relay Command: command_id, device_id, action, status, created_at, executed_at
+Monthly Report Object: report_period, statistics, trends, breakdowns, recommendations
+8. Suggested DFD decomposition structure for your other GPT tool
+Level-1
+
+Split into P1–P10 above
+Include D1–D12 data stores
+Show data movement direction and transformation points (especially P2, P3, P9)
+
+9. Important modeling notes for the DFD artist/tool
+Backend is a composed API gateway that mounts multiple sub-services under prefixes (/recommendations, /reports, /notify, /relay, /model) plus root routes.
+Sensor endpoint is exposed both unprefixed and /api-prefixed for different clients.
+Relay control is queue-based (not guaranteed direct immediate push), designed for ESP32 polling reliability.
+Notifications are multi-channel: in-app DB polling + email + push.
+Recommendations are role-contextual and can consume prediction + live sensor features.
+Monthly reports rely heavily on raw historical telemetry store.

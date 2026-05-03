@@ -26,9 +26,13 @@ with engine.connect() as conn:
         
         # Use room_id as room_name for new records
         conn.execute(text("""
-            INSERT INTO rooms (room_id, room_name, floor_number, department, threshold) 
-            VALUES (:device_id, :device_id, :floor, 'CSE', 3.0)
-            ON CONFLICT (room_id) DO UPDATE SET department = 'CSE'
+            INSERT INTO rooms (room_id, room_name, floor_number, department, threshold, lower_threshold, upper_threshold) 
+            VALUES (:device_id, :device_id, :floor, 'CSE', 3.2, 1.8, 3.2)
+            ON CONFLICT (room_id) DO UPDATE SET
+                department = 'CSE',
+                threshold = 3.2,
+                lower_threshold = COALESCE(rooms.lower_threshold, 1.8),
+                upper_threshold = COALESCE(rooms.upper_threshold, 3.2)
         """), {"device_id": device_id, "floor": floor})
     
     conn.commit()

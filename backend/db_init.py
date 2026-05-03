@@ -174,7 +174,11 @@ rooms_table = Table(
     Column("room_name", String, nullable=False),
     Column("floor_number", Integer, nullable=False),  # 0 = Ground floor, 1 = First floor, etc.
     Column("department", String, nullable=True),  # Department this room belongs to
-    Column("threshold", Float, nullable=False, default=3.0),  # Default threshold in kW
+    # Legacy single threshold kept for backward compatibility.
+    # New logic should use lower_threshold/upper_threshold range.
+    Column("threshold", Float, nullable=False, default=3.0),
+    Column("lower_threshold", Float, nullable=False, default=2.0),
+    Column("upper_threshold", Float, nullable=False, default=3.0),
     Column("created_at", DateTime, server_default=func.now()),
     Column("updated_at", DateTime, server_default=func.now()),
 )
@@ -479,6 +483,53 @@ if "updated_at" not in coordinator_columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE coordinators ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()"))
 
+room_columns = [col["name"] for col in insp.get_columns("rooms")]
+with engine.begin() as conn:
+    if "threshold" not in room_columns:
+        conn.execute(text("ALTER TABLE rooms ADD COLUMN threshold DOUBLE PRECISION DEFAULT 3.0"))
+    if "lower_threshold" not in room_columns:
+        conn.execute(text("ALTER TABLE rooms ADD COLUMN lower_threshold DOUBLE PRECISION"))
+    if "upper_threshold" not in room_columns:
+        conn.execute(text("ALTER TABLE rooms ADD COLUMN upper_threshold DOUBLE PRECISION"))
+
+    # Keep legacy threshold synchronized to upper bound for compatibility with older clients.
+    conn.execute(text("""
+        UPDATE rooms
+        SET lower_threshold = COALESCE(
+                lower_threshold,
+                CASE
+                    WHEN threshold IS NOT NULL THEN GREATEST(0.1, threshold * 0.8)
+                    WHEN room_name ILIKE '%Lab%' THEN 3.5
+                    WHEN room_name ILIKE '%Staff%' THEN 1.4
+                    ELSE 1.8
+                END
+            ),
+            upper_threshold = COALESCE(
+                upper_threshold,
+                CASE
+                    WHEN threshold IS NOT NULL THEN GREATEST(0.2, threshold)
+                    WHEN room_name ILIKE '%Lab%' THEN 5.5
+                    WHEN room_name ILIKE '%Staff%' THEN 2.6
+                    ELSE 3.2
+                END
+            )
+    """))
+
+    conn.execute(text("""
+        UPDATE rooms
+        SET upper_threshold = GREATEST(upper_threshold, lower_threshold + 0.1)
+        WHERE lower_threshold IS NOT NULL AND upper_threshold IS NOT NULL
+    """))
+
+    conn.execute(text("""
+        UPDATE rooms
+        SET threshold = upper_threshold
+        WHERE upper_threshold IS NOT NULL
+    """))
+
+    conn.execute(text("ALTER TABLE rooms ALTER COLUMN lower_threshold SET NOT NULL"))
+    conn.execute(text("ALTER TABLE rooms ALTER COLUMN upper_threshold SET NOT NULL"))
+
 # Seed convenience accounts into the new separated tables (idempotent)
 admin_seeds = [
     # (username, email, name, password)
@@ -571,37 +622,37 @@ authorized_students = [
     ("TVE21CS046", "CSE", "3"),
 ]
 
-# Room seed data (room_id, room_name, floor_number, threshold)
+# Room seed data (room_id, room_name, floor_number, lower_threshold, upper_threshold)
 room_seeds = [
     # Ground Floor (0) - Classrooms
-    ("Floor-0-Class-G01", "Class G01", 0, 2.5),
-    ("Floor-0-Class-G02", "Class G02", 0, 2.5),
-    ("Floor-0-Class-G03", "Class G03", 0, 2.5),
-    ("Floor-0-Lab-G1", "Computer Lab G1", 0, 4.5),
-    ("Floor-0-Lab-G2", "Computer Lab G2", 0, 4.5),
-    ("Floor-0-StaffRoom-G", "Staff Room Ground Floor", 0, 2.0),
+    ("Floor-0-Class-G01", "Class G01", 0, 1.8, 3.2),
+    ("Floor-0-Class-G02", "Class G02", 0, 1.8, 3.2),
+    ("Floor-0-Class-G03", "Class G03", 0, 1.8, 3.2),
+    ("Floor-0-Lab-G1", "Computer Lab G1", 0, 3.6, 5.8),
+    ("Floor-0-Lab-G2", "Computer Lab G2", 0, 3.6, 5.8),
+    ("Floor-0-StaffRoom-G", "Staff Room Ground Floor", 0, 1.3, 2.5),
     
     # Floor 1 - Classrooms
-    ("Floor-1-Class-101", "Class 101", 1, 2.5),
-    ("Floor-1-Class-102", "Class 102", 1, 2.5),
-    ("Floor-1-Class-103", "Class 103", 1, 2.5),
-    ("Floor-1-Lab-1", "Computer Lab 1", 1, 4.5),
-    ("Floor-1-Lab-2", "Computer Lab 2", 1, 4.5),
-    ("Floor-1-StaffRoom", "Staff Room Floor 1", 1, 2.0),
+    ("Floor-1-Class-101", "Class 101", 1, 1.9, 3.3),
+    ("Floor-1-Class-102", "Class 102", 1, 1.9, 3.3),
+    ("Floor-1-Class-103", "Class 103", 1, 1.9, 3.3),
+    ("Floor-1-Lab-1", "Computer Lab 1", 1, 3.7, 5.9),
+    ("Floor-1-Lab-2", "Computer Lab 2", 1, 3.7, 5.9),
+    ("Floor-1-StaffRoom", "Staff Room Floor 1", 1, 1.4, 2.6),
     
     # Floor 2 - Classrooms
-    ("Floor-2-Class-201", "Class 201", 2, 2.5),
-    ("Floor-2-Class-202", "Class 202", 2, 2.5),
-    ("Floor-2-Class-203", "Class 203", 2, 2.5),
-    ("Floor-2-Lab-3", "Computer Lab 3", 2, 4.5),
-    ("Floor-2-Lab-4", "Computer Lab 4", 2, 4.5),
-    ("Floor-2-StaffRoom", "Staff Room Floor 2", 2, 2.0),
+    ("Floor-2-Class-201", "Class 201", 2, 2.0, 3.4),
+    ("Floor-2-Class-202", "Class 202", 2, 2.0, 3.4),
+    ("Floor-2-Class-203", "Class 203", 2, 2.0, 3.4),
+    ("Floor-2-Lab-3", "Computer Lab 3", 2, 3.8, 6.0),
+    ("Floor-2-Lab-4", "Computer Lab 4", 2, 3.8, 6.0),
+    ("Floor-2-StaffRoom", "Staff Room Floor 2", 2, 1.4, 2.7),
     
     # Floor 3 - Classrooms
-    ("Floor-3-Class-301", "Class 301", 3, 2.5),
-    ("Floor-3-Class-302", "Class 302", 3, 2.5),
-    ("Floor-3-Lab-5", "Electronics Lab", 3, 4.5),
-    ("Floor-3-StaffRoom", "Staff Room Floor 3", 3, 2.0),
+    ("Floor-3-Class-301", "Class 301", 3, 2.0, 3.5),
+    ("Floor-3-Class-302", "Class 302", 3, 2.0, 3.5),
+    ("Floor-3-Lab-5", "Electronics Lab", 3, 3.9, 6.2),
+    ("Floor-3-StaffRoom", "Staff Room Floor 3", 3, 1.5, 2.8),
 ]
 
 with engine.begin() as conn:
@@ -611,15 +662,30 @@ with engine.begin() as conn:
             conn.execute(authorized_students_table.insert().values(ktu_id=ktu_id, department=department, year=year))
     
     # Seed rooms data
-    for room_id, room_name, floor_number, threshold in room_seeds:
+    for room_id, room_name, floor_number, lower_threshold, upper_threshold in room_seeds:
         res = conn.execute(select(rooms_table.c.id).where(rooms_table.c.room_id == room_id)).fetchone()
         if not res:
             conn.execute(rooms_table.insert().values(
                 room_id=room_id,
                 room_name=room_name,
                 floor_number=floor_number,
-                threshold=threshold,
+                threshold=upper_threshold,
+                lower_threshold=lower_threshold,
+                upper_threshold=upper_threshold,
             ))
+        else:
+            conn.execute(text("""
+                UPDATE rooms
+                SET lower_threshold = :lower_threshold,
+                    upper_threshold = :upper_threshold,
+                    threshold = :upper_threshold,
+                    updated_at = NOW()
+                WHERE room_id = :room_id
+            """), {
+                "lower_threshold": lower_threshold,
+                "upper_threshold": upper_threshold,
+                "room_id": room_id,
+            })
     
     # Create indexes for rooms table
     if not _index_exists(conn, 'rooms', 'idx_rooms_floor_number'):

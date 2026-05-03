@@ -167,9 +167,32 @@ def _ensure_sensor_data_frequency_column():
         print(f"Warning: could not ensure sensor_data.frequency column: {exc}")
 
 
+def _ensure_rooms_threshold_range_columns():
+    """Ensure rooms table has lower/upper threshold columns for range-based alerts."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS threshold DOUBLE PRECISION"))
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS lower_threshold DOUBLE PRECISION"))
+            conn.execute(text("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS upper_threshold DOUBLE PRECISION"))
+            conn.execute(text("""
+                UPDATE rooms
+                SET lower_threshold = COALESCE(lower_threshold, GREATEST(COALESCE(threshold, 3.0) * 0.8, 0.1)),
+                    upper_threshold = COALESCE(upper_threshold, GREATEST(COALESCE(threshold, 3.0), 0.2))
+            """))
+            conn.execute(text("""
+                UPDATE rooms
+                SET upper_threshold = GREATEST(upper_threshold, lower_threshold + 0.1)
+                WHERE lower_threshold IS NOT NULL AND upper_threshold IS NOT NULL
+            """))
+            conn.execute(text("UPDATE rooms SET threshold = upper_threshold WHERE upper_threshold IS NOT NULL"))
+    except SQLAlchemyError as exc:  # noqa: BLE001
+        print(f"Warning: could not ensure rooms threshold range columns: {exc}")
+
+
 _ensure_rooms_department_column()
 _ensure_sensor_data_occupancy_column()
 _ensure_sensor_data_frequency_column()
+_ensure_rooms_threshold_range_columns()
 
 MAX_CLASS_REPS_PER_ROOM = 3
 MAX_COORDINATORS_PER_DEPARTMENT = 3
@@ -2099,7 +2122,7 @@ def get_dashboard_overview(active_window_minutes: int = 5, usage_window_hours: i
                         WHEN COUNT(*) = 0 THEN NULL
                         ELSE 100.0 * SUM(
                             CASE
-                                WHEN la.power_w <= COALESCE(r.threshold, 3.0) * 1000.0 THEN 1
+                                WHEN la.power_w <= COALESCE(r.upper_threshold, r.threshold, 3.0) * 1000.0 THEN 1
                                 ELSE 0
                             END
                         )::double precision / COUNT(*)
@@ -2377,6 +2400,27 @@ async def receive_sensor_data(request: Request):
         
         meets_required_conditions = scenario1_high_occupancy or scenario2_no_occupancy_usage
 
+        # Fetch room threshold range from DB (stored in kW, compare in W)
+        room_lower_threshold_w = 4000.0  # safe default 4 kW
+        room_upper_threshold_w = 5000.0  # safe default 5 kW
+        try:
+            with engine.connect() as _tc:
+                _tr = _tc.execute(
+                    text("""
+                        SELECT lower_threshold, upper_threshold, threshold
+                        FROM rooms
+                        WHERE UPPER(room_id) = UPPER(:rid)
+                    """),
+                    {"rid": device_id}
+                ).fetchone()
+                if _tr:
+                    lower_kw = _tr[0] if _tr[0] is not None else (_tr[2] * 0.8 if _tr[2] is not None else 4.0)
+                    upper_kw = _tr[1] if _tr[1] is not None else (_tr[2] if _tr[2] is not None else 5.0)
+                    room_lower_threshold_w = max(0.1, float(lower_kw)) * 1000.0
+                    room_upper_threshold_w = max(float(upper_kw), float(lower_kw) + 0.1) * 1000.0
+        except Exception:
+            pass
+
         if not meets_required_conditions:
             raw_prediction = 1
             score = 0.0
@@ -2385,29 +2429,31 @@ async def receive_sensor_data(request: Request):
             raw_prediction = int(model.predict(input_df)[0])
             score = float(model.decision_function(input_df)[0])
         else:
-            # Fetch room threshold from DB (stored in kW, compare in W)
-            room_threshold_w = 5000.0  # safe default 5 kW
-            try:
-                with engine.connect() as _tc:
-                    _tr = _tc.execute(
-                        text("SELECT threshold FROM rooms WHERE UPPER(room_id) = UPPER(:rid)"),
-                        {"rid": device_id}
-                    ).fetchone()
-                    if _tr and _tr[0]:
-                        room_threshold_w = float(_tr[0]) * 1000.0
-            except Exception:
-                pass
-
             # Relative spike: >2.5x rolling avg (avoids the "avg is already high" problem)
             relative_threshold = rolling_avg * 2.5 if rolling_avg > 50 else float("inf")
 
-            is_above_absolute = p > room_threshold_w
+            is_medium_threshold_alert = room_lower_threshold_w <= p <= room_upper_threshold_w
+            is_high_threshold_alert = p > room_upper_threshold_w
             is_spike = p > relative_threshold and (p - rolling_avg) > 500
 
-            raw_prediction = -1 if (is_above_absolute or is_spike) else 1
+            raw_prediction = -1 if (is_medium_threshold_alert or is_high_threshold_alert or is_spike) else 1
             score = round((p - rolling_avg) / max(rolling_avg, 1.0), 4)
 
         is_anomaly_flag = 1 if raw_prediction == -1 else 0
+        threshold_alert_level = "normal"
+        if p > room_upper_threshold_w:
+            threshold_alert_level = "high"
+        elif room_lower_threshold_w <= p <= room_upper_threshold_w:
+            threshold_alert_level = "medium"
+
+        threshold_alert_message = None
+        if threshold_alert_level in {"medium", "high"}:
+            threshold_alert_message = (
+                f"{threshold_alert_level.upper()} threshold alert for {device_id}: "
+                f"current={p/1000.0:.2f} kW, "
+                f"lower={room_lower_threshold_w/1000.0:.2f} kW, "
+                f"upper={room_upper_threshold_w/1000.0:.2f} kW"
+            )
 
         # Log to anomaly_logs using the normalised flag
         with engine.begin() as conn:
@@ -2446,7 +2492,15 @@ async def receive_sensor_data(request: Request):
             except Exception as _ae:
                 print(f"[auth_api] Alert notification error: {_ae}")
 
-        return {"status": "success", "is_anomaly": is_anomaly_flag, "score": round(score, 4)}
+        return {
+            "status": "success",
+            "is_anomaly": is_anomaly_flag,
+            "score": round(score, 4),
+            "threshold_alert_level": threshold_alert_level,
+            "threshold_alert_message": threshold_alert_message,
+            "lower_threshold_kw": round(room_lower_threshold_w / 1000.0, 3),
+            "upper_threshold_kw": round(room_upper_threshold_w / 1000.0, 3),
+        }
 
     except Exception as err:
         return {"status": "error", "message": str(err)}
@@ -2528,7 +2582,9 @@ def get_all_rooms(department: str = None):
             if department and not _is_admin_department(department):
                 rows = conn.execute(
                     text("""
-                        SELECT room_id, room_name, floor_number, threshold 
+                        SELECT room_id, room_name, floor_number,
+                               COALESCE(lower_threshold, GREATEST(COALESCE(threshold, 3.0) * 0.8, 0.1)) AS lower_threshold,
+                               COALESCE(upper_threshold, COALESCE(threshold, 3.0)) AS upper_threshold
                         FROM rooms 
                         WHERE department = :department
                         ORDER BY floor_number, room_name
@@ -2538,7 +2594,9 @@ def get_all_rooms(department: str = None):
             else:
                 rows = conn.execute(
                     text("""
-                        SELECT room_id, room_name, floor_number, threshold 
+                        SELECT room_id, room_name, floor_number,
+                               COALESCE(lower_threshold, GREATEST(COALESCE(threshold, 3.0) * 0.8, 0.1)) AS lower_threshold,
+                               COALESCE(upper_threshold, COALESCE(threshold, 3.0)) AS upper_threshold
                         FROM rooms 
                         ORDER BY floor_number, room_name
                     """)
@@ -2549,7 +2607,9 @@ def get_all_rooms(department: str = None):
                     "room_id": row[0],
                     "room_name": row[1],
                     "floor_number": row[2],
-                    "threshold": row[3]
+                    "lower_threshold": float(row[3]),
+                    "upper_threshold": float(row[4]),
+                    "threshold": float(row[4]),
                 }
                 for row in rows
             ]
@@ -2571,7 +2631,9 @@ def get_rooms_by_floor(floor_number: int):
         with engine.begin() as conn:
             rows = conn.execute(
                 text("""
-                    SELECT room_id, room_name, floor_number, threshold 
+                    SELECT room_id, room_name, floor_number,
+                           COALESCE(lower_threshold, GREATEST(COALESCE(threshold, 3.0) * 0.8, 0.1)) AS lower_threshold,
+                           COALESCE(upper_threshold, COALESCE(threshold, 3.0)) AS upper_threshold
                     FROM rooms 
                     WHERE floor_number = :floor
                     ORDER BY room_name
@@ -2584,7 +2646,9 @@ def get_rooms_by_floor(floor_number: int):
                     "room_id": row[0],
                     "room_name": row[1],
                     "floor_number": row[2],
-                    "threshold": row[3]
+                    "lower_threshold": float(row[3]),
+                    "upper_threshold": float(row[4]),
+                    "threshold": float(row[4]),
                 }
                 for row in rows
             ]
@@ -2625,14 +2689,33 @@ def get_all_floors():
 
 
 @app.put("/rooms/{room_id}/threshold")
-def update_room_threshold(room_id: str, threshold: float = None):
-    """Update the threshold for a specific room."""
+def update_room_threshold(
+    room_id: str,
+    lower_bound: float = None,
+    upper_bound: float = None,
+    threshold: float = None,
+):
+    """Update threshold range for a specific room.
+
+    Backward compatibility:
+    - If only `threshold` is provided, it is treated as the upper bound and
+      lower bound is inferred as 80% of upper.
+    """
     try:
-        if threshold is None:
-            raise HTTPException(status_code=400, detail="Threshold value is required")
-        
-        if threshold <= 0:
-            raise HTTPException(status_code=400, detail="Threshold must be greater than 0")
+        if lower_bound is None and upper_bound is None:
+            if threshold is None:
+                raise HTTPException(status_code=400, detail="lower_bound and upper_bound are required")
+            upper_bound = threshold
+            lower_bound = max(0.1, threshold * 0.8)
+
+        if lower_bound is None or upper_bound is None:
+            raise HTTPException(status_code=400, detail="Both lower_bound and upper_bound are required")
+
+        if lower_bound <= 0 or upper_bound <= 0:
+            raise HTTPException(status_code=400, detail="Threshold bounds must be greater than 0")
+
+        if upper_bound <= lower_bound:
+            raise HTTPException(status_code=400, detail="upper_bound must be greater than lower_bound")
         
         with engine.begin() as conn:
             # Check if room exists first
@@ -2649,10 +2732,17 @@ def update_room_threshold(room_id: str, threshold: float = None):
             result = conn.execute(
                 text("""
                     UPDATE rooms 
-                    SET threshold = :threshold, updated_at = NOW() 
+                    SET lower_threshold = :lower_bound,
+                        upper_threshold = :upper_bound,
+                        threshold = :upper_bound,
+                        updated_at = NOW() 
                     WHERE room_id = :room_id
                 """),
-                {"threshold": threshold, "room_id": room_id}
+                {
+                    "lower_bound": lower_bound,
+                    "upper_bound": upper_bound,
+                    "room_id": room_id,
+                }
             )
             
             if result.rowcount == 0:
@@ -2661,7 +2751,8 @@ def update_room_threshold(room_id: str, threshold: float = None):
             # Retrieve updated room data
             row = conn.execute(
                 text("""
-                    SELECT room_id, room_name, floor_number, threshold 
+                    SELECT room_id, room_name, floor_number,
+                           lower_threshold, upper_threshold
                     FROM rooms 
                     WHERE room_id = :room_id
                 """),
@@ -2670,19 +2761,21 @@ def update_room_threshold(room_id: str, threshold: float = None):
             
             return {
                 "status": "success",
-                "message": "Threshold updated successfully",
+                "message": "Threshold range updated successfully",
                 "data": {
                     "room_id": row[0],
                     "room_name": row[1],
                     "floor_number": row[2],
-                    "threshold": float(row[3])
+                    "lower_threshold": float(row[3]),
+                    "upper_threshold": float(row[4]),
+                    "threshold": float(row[4]),
                 }
             }
     
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error updating threshold: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error updating threshold range: {str(e)}")
 
 
 @app.put("/rooms/assign-departments")

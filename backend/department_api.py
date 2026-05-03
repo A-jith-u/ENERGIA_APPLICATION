@@ -284,7 +284,9 @@ def get_coordinator_rooms(coordinator_id):
                     'room_name': room.room_name,
                     'floor_number': room.floor_number,
                     'department': room.department,
-                    'threshold': room.threshold,
+                    'lower_threshold': getattr(room, 'lower_threshold', None) if getattr(room, 'lower_threshold', None) is not None else max((getattr(room, 'threshold', 3.0) or 3.0) * 0.8, 0.1),
+                    'upper_threshold': getattr(room, 'upper_threshold', None) if getattr(room, 'upper_threshold', None) is not None else (getattr(room, 'threshold', 3.0) or 3.0),
+                    'threshold': getattr(room, 'upper_threshold', None) if getattr(room, 'upper_threshold', None) is not None else (getattr(room, 'threshold', 3.0) or 3.0),
                 } for room in rooms]
             else:
                 room_list = []
@@ -332,7 +334,9 @@ def get_class_rep_rooms(username):
                     'room_name': room.room_name,
                     'floor_number': room.floor_number,
                     'department': room.department,
-                    'threshold': room.threshold,
+                    'lower_threshold': getattr(room, 'lower_threshold', None) if getattr(room, 'lower_threshold', None) is not None else max((getattr(room, 'threshold', 3.0) or 3.0) * 0.8, 0.1),
+                    'upper_threshold': getattr(room, 'upper_threshold', None) if getattr(room, 'upper_threshold', None) is not None else (getattr(room, 'threshold', 3.0) or 3.0),
+                    'threshold': getattr(room, 'upper_threshold', None) if getattr(room, 'upper_threshold', None) is not None else (getattr(room, 'threshold', 3.0) or 3.0),
                 } for room in rooms]
             else:
                 room_list = []
@@ -369,7 +373,9 @@ def get_department_rooms(department):
                 'room_name': room.room_name,
                 'floor_number': room.floor_number,
                 'department': room.department,
-                'threshold': room.threshold,
+                'lower_threshold': getattr(room, 'lower_threshold', None) if getattr(room, 'lower_threshold', None) is not None else max((getattr(room, 'threshold', 3.0) or 3.0) * 0.8, 0.1),
+                'upper_threshold': getattr(room, 'upper_threshold', None) if getattr(room, 'upper_threshold', None) is not None else (getattr(room, 'threshold', 3.0) or 3.0),
+                'threshold': getattr(room, 'upper_threshold', None) if getattr(room, 'upper_threshold', None) is not None else (getattr(room, 'threshold', 3.0) or 3.0),
             } for room in rooms]
 
             return jsonify({
