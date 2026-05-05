@@ -659,22 +659,54 @@ class _SergeantDashboardPageState extends State<SergeantDashboardPage> {
     }
 
     try {
-      await controlRelay(
+      final resp = await controlRelay(
         token,
         roomId: roomId,
         action: action,
         reason: 'Manual power control by Sergeant dashboard',
       );
 
-      setState(() {
-        _setLocalRoomConnectionState(roomId, action);
-      });
+      final commandId = int.tryParse((resp['command_id'] ?? '').toString());
+      if (commandId == null) {
+        throw SergeantApiError('Relay command queued but command_id missing');
+      }
+
+      final verification = await waitForRelayCommandDelivery(token, commandId);
+      final command = Map<String, dynamic>.from(
+        verification['command'] as Map? ?? const {},
+      );
+      final queueStatus =
+          (command['queue_status'] ?? '').toString().trim().toUpperCase();
+      final timedOut = verification['timed_out'] == true;
+
+      if (queueStatus == 'EXECUTED') {
+        setState(() {
+          _setLocalRoomConnectionState(roomId, action);
+        });
+      }
 
       if (!mounted) return;
-      AppNotifier.showSuccess(
-        context,
-        'Room $roomId power set to ${action.toUpperCase()}',
-      );
+      if (queueStatus == 'EXECUTED') {
+        AppNotifier.showSuccess(
+          context,
+          'Signal delivered: Room $roomId turned ${action.toUpperCase()} (ESP32 acknowledged).',
+        );
+      } else if (queueStatus == 'FAILED') {
+        AppNotifier.showError(
+          context,
+          'Signal sent but ESP32 execution failed for room $roomId.',
+        );
+      } else if (timedOut) {
+        AppNotifier.showInfo(
+          context,
+          'Signal queued for room $roomId, waiting for ESP32 acknowledgment (command #$commandId).',
+        );
+      } else {
+        AppNotifier.showInfo(
+          context,
+          'Signal queued for room $roomId (command #$commandId, status: $queueStatus).',
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       final msg =

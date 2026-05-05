@@ -1326,11 +1326,44 @@ async def invite_user(req: InviteUserRequest):
         "message": f"Invitation {'sent' if email_status == 'sent' else 'created but email sending failed'}"
     }
 @app.get("/anomalies")
-def get_anomalies(limit: int = 50, department: str = None, room_id: str = None):
-    """Fetch active anomalies from anomaly_logs.
-    is_anomaly IN (1, -1) catches both storage conventions.
-    Returns field names matching Flutter: timestamp, score."""
+def get_anomalies(limit: int = 50, department: str = None, room_id: str = None, request: Request = None):
+    """Fetch active anomalies with role-based access control.
+    
+    - Admin/Coordinator/Sergeant: Can access anomalies in their department
+    - Class Representative: Can only access anomalies for their assigned room
+    - Public: Denied (must authenticate)
+    """
     try:
+        # Extract and verify JWT token
+        auth_header = request.headers.get("Authorization") if request else None
+        user_role = None
+        assigned_room_id = None
+        user_department = None
+        
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            try:
+                payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+                user_role = payload.get("role")
+                assigned_room_id = payload.get("assigned_room_id")
+                user_department = payload.get("department")
+            except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+                raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        # Role-based access control
+        if user_role == "student":
+            # Class reps can ONLY access anomalies for their assigned room
+            if not assigned_room_id or assigned_room_id.strip() == "":
+                raise HTTPException(status_code=403, detail="Class representative has no assigned room")
+            # Force room_id to their assigned room
+            room_id = assigned_room_id
+        elif user_role not in ["admin", "coordinator", "sergeant"]:
+            # Unauthenticated or invalid role - deny access
+            raise HTTPException(status_code=401, detail="Authentication required to access anomaly data")
+        
+        # For coordinators/sergeants, restrict to their department if not admin
+        if user_role in ["coordinator", "sergeant"] and user_department and not _is_admin_department(user_department):
+            department = user_department
         with engine.connect() as conn:
             where_parts = []
             params = {"limit": limit}
@@ -2504,14 +2537,37 @@ async def receive_sensor_data(request: Request):
 
     except Exception as err:
         return {"status": "error", "message": str(err)}
-# B. PROVIDE DATA (GET) - For Flutter Charts
-# B. PROVIDE DATA (GET) - For Flutter Charts
 
-# Modified GET endpoint in auth_api.py
+
 @app.get("/sensor-data")
-def get_sensor_data(limit: int = 60, device_id: str = None, department: str = None):
-    """Get sensor data. Can filter by device_id, department, or both."""
+def get_sensor_data(request: Request, limit: int = 60, device_id: str = None, department: str = None):
+    """Get sensor data with role-based access control."""
     try:
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authentication required to access sensor data")
+
+        token = auth_header.split(" ", 1)[1]
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        user_role = payload.get("role")
+        assigned_room_id = payload.get("assigned_room_id")
+        user_department = payload.get("department")
+
+        if user_role == "student":
+            if not assigned_room_id or not str(assigned_room_id).strip():
+                raise HTTPException(status_code=403, detail="Class representative has no assigned room")
+            device_id = assigned_room_id
+            department = None
+        elif user_role in ["coordinator", "sergeant"]:
+            if user_department and not department:
+                department = user_department
+        elif user_role != "admin":
+            raise HTTPException(status_code=401, detail="Authentication required to access sensor data")
+
         with engine.connect() as conn:
             params = {"limit": limit}
             where_parts = []
@@ -2550,7 +2606,7 @@ def get_sensor_data(limit: int = 60, device_id: str = None, department: str = No
                 """),
                 params,
             )
-            
+
             rows = result.fetchall()
             data = [
                 {
@@ -2563,12 +2619,14 @@ def get_sensor_data(limit: int = 60, device_id: str = None, department: str = No
                     "power": row[6],
                     "energy": row[7],
                     "frequency": row[8],
-                    "power_factor": row[9]
+                    "power_factor": row[9],
                 }
                 for row in rows
             ]
             return {"status": "success", "data": data}
-            
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error retrieving sensor data: {str(e)}")
 
@@ -2597,68 +2655,28 @@ def get_all_rooms(department: str = None):
                         SELECT room_id, room_name, floor_number,
                                COALESCE(lower_threshold, GREATEST(COALESCE(threshold, 3.0) * 0.8, 0.1)) AS lower_threshold,
                                COALESCE(upper_threshold, COALESCE(threshold, 3.0)) AS upper_threshold
-                        FROM rooms 
+                        FROM rooms
                         ORDER BY floor_number, room_name
                     """)
                 ).fetchall()
-            
+
             data = [
                 {
                     "room_id": row[0],
                     "room_name": row[1],
                     "floor_number": row[2],
-                    "lower_threshold": float(row[3]),
-                    "upper_threshold": float(row[4]),
-                    "threshold": float(row[4]),
+                    "lower_threshold": float(row[3]) if row[3] is not None else None,
+                    "upper_threshold": float(row[4]) if row[4] is not None else None,
                 }
                 for row in rows
             ]
-            
+
             return {
                 "status": "success",
                 "count": len(data),
-                "data": data
+                "data": data,
             }
-    
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
 
-
-@app.get("/rooms/floor/{floor_number}")
-def get_rooms_by_floor(floor_number: int):
-    """Get all rooms on a specific floor."""
-    try:
-        with engine.begin() as conn:
-            rows = conn.execute(
-                text("""
-                    SELECT room_id, room_name, floor_number,
-                           COALESCE(lower_threshold, GREATEST(COALESCE(threshold, 3.0) * 0.8, 0.1)) AS lower_threshold,
-                           COALESCE(upper_threshold, COALESCE(threshold, 3.0)) AS upper_threshold
-                    FROM rooms 
-                    WHERE floor_number = :floor
-                    ORDER BY room_name
-                """),
-                {"floor": floor_number}
-            ).fetchall()
-            
-            data = [
-                {
-                    "room_id": row[0],
-                    "room_name": row[1],
-                    "floor_number": row[2],
-                    "lower_threshold": float(row[3]),
-                    "upper_threshold": float(row[4]),
-                    "threshold": float(row[4]),
-                }
-                for row in rows
-            ]
-            
-            return {
-                "status": "success",
-                "count": len(data),
-                "data": data
-            }
-    
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error retrieving rooms: {str(e)}")
 

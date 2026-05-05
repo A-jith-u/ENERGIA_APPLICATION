@@ -210,11 +210,7 @@ Future<Map<String, dynamic>> _putJson(
     final uri = Uri.parse('$base$path');
     try {
       final response = await http
-          .put(
-            uri,
-            headers: _headers(token: token),
-            body: jsonEncode(payload),
-          )
+          .put(uri, headers: _headers(token: token), body: jsonEncode(payload))
           .timeout(_requestTimeout);
 
       if (response.statusCode == 200) {
@@ -296,6 +292,44 @@ Future<Map<String, dynamic>> controlRelay(
   }, token: token);
 }
 
+Future<Map<String, dynamic>> getRelayCommandStatus(
+  String token,
+  int commandId,
+) async {
+  return _getJson('/relay/command-status/$commandId', token: token);
+}
+
+Future<Map<String, dynamic>> waitForRelayCommandDelivery(
+  String token,
+  int commandId, {
+  Duration timeout = const Duration(seconds: 12),
+  Duration pollInterval = const Duration(seconds: 1),
+}) async {
+  final startedAt = DateTime.now();
+  while (DateTime.now().difference(startedAt) < timeout) {
+    final statusResp = await getRelayCommandStatus(token, commandId);
+    final command = Map<String, dynamic>.from(
+      statusResp['command'] as Map? ?? const {},
+    );
+    final queueStatus =
+        (command['queue_status'] ?? '').toString().trim().toUpperCase();
+
+    if (queueStatus == 'EXECUTED' || queueStatus == 'FAILED') {
+      return {'timed_out': false, 'command': command};
+    }
+
+    await Future<void>.delayed(pollInterval);
+  }
+
+  final finalResp = await getRelayCommandStatus(token, commandId);
+  return {
+    'timed_out': true,
+    'command': Map<String, dynamic>.from(
+      finalResp['command'] as Map? ?? const {},
+    ),
+  };
+}
+
 Future<List<Map<String, dynamic>>> getActiveAnomalyAlerts() async {
   final response = await _getJson('/anomaly-alerts/active-alerts');
   final raw = response['data'] as List<dynamic>? ?? const [];
@@ -332,9 +366,10 @@ Future<List<Map<String, dynamic>>> getRecentSensorData({
 }
 
 Future<List<Map<String, dynamic>>> getRoomsCatalog({String? department}) async {
-  final path = (department != null && department.trim().isNotEmpty)
-      ? '/rooms?department=${Uri.encodeComponent(department.trim())}'
-      : '/rooms';
+  final path =
+      (department != null && department.trim().isNotEmpty)
+          ? '/rooms?department=${Uri.encodeComponent(department.trim())}'
+          : '/rooms';
   final response = await _getJson(path);
   final raw = response['data'] as List<dynamic>? ?? const [];
   return raw.map((e) => Map<String, dynamic>.from(e as Map)).toList();
@@ -359,12 +394,8 @@ Future<Map<String, dynamic>> changeSergeantPassword(
   required String currentPassword,
   required String newPassword,
 }) async {
-  return _postJson(
-    '/sergeant/change-password',
-    {
-      'current_password': currentPassword,
-      'new_password': newPassword,
-    },
-    token: token,
-  );
+  return _postJson('/sergeant/change-password', {
+    'current_password': currentPassword,
+    'new_password': newPassword,
+  }, token: token);
 }
