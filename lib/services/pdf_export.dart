@@ -16,7 +16,7 @@ Future<void> exportTablePdf(
   List<List<String>> rows, {
   String? subtitle,
 }) async {
-  Future<Directory?> _resolveDownloadsDir() async {
+  Future<Directory?> resolveDownloadsDir() async {
     if (Platform.isAndroid) {
       final dirs = await getExternalStorageDirectories(type: StorageDirectory.downloads);
       if (dirs != null && dirs.isNotEmpty) return dirs.first;
@@ -29,7 +29,7 @@ Future<void> exportTablePdf(
 
   final doc = pw.Document();
 
-  String _fmtStamp(DateTime dt) {
+  String fmtStamp(DateTime dt) {
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
     final d = dt.day.toString().padLeft(2, '0');
@@ -49,10 +49,10 @@ Future<void> exportTablePdf(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
               pw.Text(title, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-              pw.Text(_fmtStamp(DateTime.now()), style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+              pw.Text(fmtStamp(DateTime.now()), style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
             ],
           ),
-          if (subtitle != null) pw.Text(subtitle!, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+          if (subtitle != null) pw.Text(subtitle, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
           pw.SizedBox(height: 8),
           pw.Divider(color: PdfColors.grey500, thickness: 0.5),
           pw.SizedBox(height: 8),
@@ -100,7 +100,7 @@ Future<void> exportTablePdf(
       .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
       .replaceAll(RegExp(r'_+'), '_')
       .replaceAll(RegExp(r'^_|_$'), '');
-  String _fmtFileStamp(DateTime dt) {
+  String fmtFileStamp(DateTime dt) {
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
     final d = dt.day.toString().padLeft(2, '0');
@@ -108,10 +108,10 @@ Future<void> exportTablePdf(
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$y$m$d-$hh$mm';
   }
-  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${_fmtFileStamp(DateTime.now())}.pdf';
+  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${fmtFileStamp(DateTime.now())}.pdf';
 
   // Try saving to Downloads when available (Android + desktop)
-  final downloadsDir = await _resolveDownloadsDir();
+  final downloadsDir = await resolveDownloadsDir();
   if (downloadsDir != null) {
     final outPath = '${downloadsDir.path}/$fileName';
     final file = File(outPath);
@@ -136,7 +136,7 @@ Future<String?> exportTablePdfAutoSave(
   List<List<String>> rows, {
   String? subtitle,
 }) async {
-  Future<Directory?> _resolveDownloadsDir() async {
+  Future<Directory?> resolveDownloadsDir() async {
     if (Platform.isAndroid) {
       final dirs = await getExternalStorageDirectories(type: StorageDirectory.downloads);
       if (dirs != null && dirs.isNotEmpty) return dirs.first;
@@ -149,7 +149,7 @@ Future<String?> exportTablePdfAutoSave(
 
   // Build document with standardized header & footer
   final doc = pw.Document();
-  String _fmtStamp(DateTime dt) {
+  String fmtStamp(DateTime dt) {
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
     final d = dt.day.toString().padLeft(2, '0');
@@ -169,10 +169,10 @@ Future<String?> exportTablePdfAutoSave(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
               pw.Text(title, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-              pw.Text(_fmtStamp(DateTime.now()), style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+              pw.Text(fmtStamp(DateTime.now()), style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
             ],
           ),
-          if (subtitle != null) pw.Text(subtitle!, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
+          if (subtitle != null) pw.Text(subtitle, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
           pw.SizedBox(height: 8),
           pw.Divider(color: PdfColors.grey500, thickness: 0.5),
           pw.SizedBox(height: 8),
@@ -207,7 +207,7 @@ Future<String?> exportTablePdfAutoSave(
       .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
       .replaceAll(RegExp(r'_+'), '_')
       .replaceAll(RegExp(r'^_|_$'), '');
-  String _fmtFileStamp(DateTime dt) {
+  String fmtFileStamp(DateTime dt) {
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
     final d = dt.day.toString().padLeft(2, '0');
@@ -215,9 +215,9 @@ Future<String?> exportTablePdfAutoSave(
     final mm = dt.minute.toString().padLeft(2, '0');
     return '$y$m$d-$hh$mm';
   }
-  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${_fmtFileStamp(DateTime.now())}.pdf';
+  final fileName = '${safeTitle.isEmpty ? 'export' : safeTitle}_${fmtFileStamp(DateTime.now())}.pdf';
 
-  final downloadsDir = await _resolveDownloadsDir();
+  final downloadsDir = await resolveDownloadsDir();
   if (downloadsDir != null) {
     final outPath = '${downloadsDir.path}/$fileName';
     final file = File(outPath);

@@ -5,48 +5,59 @@ import 'services/user_lists.dart';
 import 'services/notifier.dart';
 import 'services/pdf_export.dart';
 
-class SergeantListPage extends StatefulWidget {
-  const SergeantListPage({super.key});
+class DetailedCoordinatorsPage extends StatefulWidget {
+  const DetailedCoordinatorsPage({super.key});
 
   @override
-  State<SergeantListPage> createState() => _SergeantListPageState();
+  State<DetailedCoordinatorsPage> createState() => _DetailedCoordinatorsPageState();
 }
 
-class _SergeantListPageState extends State<SergeantListPage> {
-  List<Map<String, dynamic>> _allSergeants = [];
+class _DetailedCoordinatorsPageState extends State<DetailedCoordinatorsPage> {
+  List<Map<String, dynamic>> _allCoordinators = [];
   bool _isLoading = false;
   String? _errorMessage;
 
   final _searchController = TextEditingController();
   String _selectedStatus = 'All';
-  List<Map<String, dynamic>> _filteredSergeants = [];
+  List<Map<String, dynamic>> _filteredCoordinators = [];
 
   @override
   void initState() {
     super.initState();
-    // Subscribe to shared sergeants list
-    UserListsStore.instance.sergeants.addListener(_onSergeantsChanged);
+    // Subscribe to shared coordinators list
+    UserListsStore.instance.coordinators.addListener(_onCoordinatorsChanged);
     // Initialize from cached store for instant display
-    _allSergeants = List<Map<String, dynamic>>.from(UserListsStore.instance.sergeants.value);
-    _filteredSergeants = List.from(_allSergeants);
+    _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
+    _filteredCoordinators = List.from(_allCoordinators);
     // Refresh in background
-    _loadSergeants();
+    _loadCoordinators();
   }
 
-  void _onSergeantsChanged() {
+  void _onCoordinatorsChanged() {
     if (!mounted) return;
     setState(() {
-      _allSergeants = List<Map<String, dynamic>>.from(UserListsStore.instance.sergeants.value);
-      _filteredSergeants = _allSergeants.where((sergeant) {
-        final name = sergeant['name']?.toString().toLowerCase() ?? '';
-        final email = sergeant['email']?.toString().toLowerCase() ?? '';
+      _allCoordinators = List<Map<String, dynamic>>.from(UserListsStore.instance.coordinators.value);
+      _filteredCoordinators = _allCoordinators.where((coordinator) {
+        final name = coordinator['name']?.toString().toLowerCase() ?? '';
+        final email = coordinator['email']?.toString().toLowerCase() ?? '';
         final searchLower = _searchController.text.toLowerCase();
 
         final matchesSearch = _searchController.text.isEmpty ||
             name.contains(searchLower) ||
             email.contains(searchLower);
 
-        final isActive = sergeant['is_active'] == true;
+        final lastLogin = coordinator['last_login']?.toString();
+        bool isActiveFromLogin() {
+          if (lastLogin == null) return false;
+          try {
+            final date = DateTime.parse(lastLogin);
+            return DateTime.now().difference(date) <= const Duration(days: 30);
+          } catch (_) {
+            return false;
+          }
+        }
+
+        final isActive = isActiveFromLogin();
         final matchesStatus = _selectedStatus == 'All' ||
             (_selectedStatus == 'Active' && isActive) ||
             (_selectedStatus == 'Inactive' && !isActive);
@@ -56,7 +67,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     });
   }
 
-  Future<void> _loadSergeants() async {
+  Future<void> _loadCoordinators() async {
     if (!mounted) return;
     setState(() {
       _isLoading = true;
@@ -64,7 +75,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     });
 
     try {
-      await api.getSergeants();
+      await api.getCoordinators();
       if (!mounted) return;
       setState(() {
         _isLoading = false;
@@ -72,7 +83,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Failed to load sergeants: $e';
+        _errorMessage = 'Failed to load coordinators: $e';
         _isLoading = false;
       });
     }
@@ -81,23 +92,32 @@ class _SergeantListPageState extends State<SergeantListPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    UserListsStore.instance.sergeants.removeListener(_onSergeantsChanged);
+    UserListsStore.instance.coordinators.removeListener(_onCoordinatorsChanged);
     super.dispose();
   }
 
   void _filterData() {
     if (!mounted) return;
     setState(() {
-      _filteredSergeants = _allSergeants.where((sergeant) {
-        final name = sergeant['name']?.toString().toLowerCase() ?? '';
-        final email = sergeant['email']?.toString().toLowerCase() ?? '';
+      _filteredCoordinators = _allCoordinators.where((coordinator) {
+        final name = coordinator['name']?.toString().toLowerCase() ?? '';
+        final email = coordinator['email']?.toString().toLowerCase() ?? '';
         final searchLower = _searchController.text.toLowerCase();
         
         final matchesSearch = _searchController.text.isEmpty ||
             name.contains(searchLower) ||
             email.contains(searchLower);
-        
-        final isActive = sergeant['is_active'] == true;
+        final lastLogin = coordinator['last_login']?.toString();
+        bool isActiveFromLogin() {
+          if (lastLogin == null) return false;
+          try {
+            final date = DateTime.parse(lastLogin);
+            return DateTime.now().difference(date) <= const Duration(days: 30);
+          } catch (_) {
+            return false;
+          }
+        }
+        final isActive = isActiveFromLogin();
         final matchesStatus = _selectedStatus == 'All' ||
             (_selectedStatus == 'Active' && isActive) ||
             (_selectedStatus == 'Inactive' && !isActive);
@@ -108,32 +128,33 @@ class _SergeantListPageState extends State<SergeantListPage> {
   }
 
   Future<void> _exportToPdf() async {
-    if (_filteredSergeants.isEmpty) {
+    if (_filteredCoordinators.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No sergeants to export')),
+        const SnackBar(content: Text('No coordinators to export')),
       );
       return;
     }
 
-    const headers = ['Name', 'Email', 'Phone', 'Status', 'Last Login', 'Joined Date'];
-    final rows = _filteredSergeants.map((sergeant) {
-      final phone = sergeant['phone']?.toString() ?? 'N/A';
-      final lastLogin = sergeant['last_login']?.toString();
+    const headers = ['Name', 'Email', 'Phone', 'Department', 'Status', 'Last Login', 'Joined Date'];
+    final rows = _filteredCoordinators.map((coordinator) {
+      final phone = coordinator['phone']?.toString() ?? 'N/A';
+      final lastLogin = coordinator['last_login']?.toString();
       final isActive = lastLogin != null
           ? (DateTime.now().difference(DateTime.parse(lastLogin)) <= const Duration(days: 30))
           : false;
       final lastLoginStr = lastLogin != null
           ? DateFormat('MMM d, yyyy h:mm a').format(DateTime.parse(lastLogin))
           : 'Never';
-      final createdStr = sergeant['created_at']?.toString();
+      final createdStr = coordinator['created_at']?.toString();
       final createdDate = createdStr != null
           ? DateFormat('MMM d, yyyy').format(DateTime.parse(createdStr))
           : 'N/A';
 
       return [
-        sergeant['name']?.toString() ?? 'Unknown',
-        sergeant['email']?.toString() ?? 'N/A',
+        coordinator['name']?.toString() ?? 'Unknown',
+        coordinator['email']?.toString() ?? 'N/A',
         phone,
+        coordinator['department']?.toString() ?? 'N/A',
         isActive ? 'Active' : 'Inactive',
         lastLoginStr,
         createdDate,
@@ -141,7 +162,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     }).toList();
 
     await exportTablePdfAutoSave(
-      'Sergeants List',
+      'Coordinators List',
       headers,
       rows,
       subtitle: 'Exported on ${DateFormat('MMM d, yyyy').format(DateTime.now())}',
@@ -156,14 +177,14 @@ class _SergeantListPageState extends State<SergeantListPage> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Sergeants'),
+        title: const Text('Coordinators'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
         backgroundColor: theme.appBarTheme.backgroundColor ?? scheme.surface,
         foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
         elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
           TextButton(
-            onPressed: _loadSergeants,
+            onPressed: _loadCoordinators,
             child: const Text('Reload'),
           ),
         ],
@@ -185,31 +206,31 @@ class _SergeantListPageState extends State<SergeantListPage> {
                             Text(_errorMessage!, style: theme.textTheme.titleMedium),
                             const SizedBox(height: 16),
                             ElevatedButton(
-                              onPressed: _loadSergeants,
+                              onPressed: _loadCoordinators,
                               child: const Text('Retry'),
                             ),
                           ],
                         ),
                       )
-                    : _buildSergeantsList(theme),
+                    : _buildCoordinatorsList(theme),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildSergeantsList(ThemeData theme) {
+  Widget _buildCoordinatorsList(ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Header
         Text(
-          'Security Personnel',
+          'Department Coordinators',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         Text(
-          '${_filteredSergeants.length} ${_filteredSergeants.length == 1 ? 'sergeant' : 'sergeants'}',
+          '${_filteredCoordinators.length} ${_filteredCoordinators.length == 1 ? 'coordinator' : 'coordinators'}',
           style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
         ),
         const SizedBox(height: 24),
@@ -258,28 +279,28 @@ class _SergeantListPageState extends State<SergeantListPage> {
         ),
         const SizedBox(height: 24),
         
-        // Sergeants List
+        // Coordinators List
         Expanded(
-          child: _filteredSergeants.isEmpty
+          child: _filteredCoordinators.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.security_outlined, size: 64, color: Colors.grey.shade400),
+                      Icon(Icons.school_outlined, size: 64, color: Colors.grey.shade400),
                       const SizedBox(height: 16),
                       Text(
-                        'No sergeants found',
+                        'No coordinators found',
                         style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
                       ),
                     ],
                   ),
                 )
               : ListView.separated(
-                  itemCount: _filteredSergeants.length,
+                  itemCount: _filteredCoordinators.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
-                    final sergeant = _filteredSergeants[index];
-                    return _buildSergeantCard(sergeant, theme);
+                    final coordinator = _filteredCoordinators[index];
+                    return _buildCoordinatorCard(coordinator, theme);
                   },
                 ),
         ),
@@ -287,14 +308,23 @@ class _SergeantListPageState extends State<SergeantListPage> {
     );
   }
 
-  Widget _buildSergeantCard(Map<String, dynamic> sergeant, ThemeData theme) {
-    final name = sergeant['name']?.toString() ?? 'Unknown';
-    final email = sergeant['email']?.toString() ?? 'No email';
-    final phone = sergeant['phone']?.toString() ?? 'No phone';
-    final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
-    final isActive = sergeant['is_active'] == true;
-    final lastLogin = sergeant['last_login'];
-    final createdAt = sergeant['created_at'];
+  Widget _buildCoordinatorCard(Map<String, dynamic> coordinator, ThemeData theme) {
+    final name = coordinator['name']?.toString() ?? 'Unknown';
+    final email = coordinator['email']?.toString() ?? 'No email';
+    final phone = coordinator['phone']?.toString() ?? 'No phone';
+    final coordinatorId = coordinator['coordinator_id']?.toString() ?? coordinator['id']?.toString() ?? '';
+    final lastLogin = coordinator['last_login']?.toString();
+    bool isActiveFromLogin() {
+      if (lastLogin == null) return false;
+      try {
+        final date = DateTime.parse(lastLogin);
+        return DateTime.now().difference(date) <= const Duration(days: 30);
+      } catch (_) {
+        return false;
+      }
+    }
+    final isActive = isActiveFromLogin();
+    final createdAt = coordinator['created_at'];
 
     String formatDate(String? dateStr) {
       if (dateStr == null) return 'Never';
@@ -315,7 +345,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
           // Show detail dialog
           showDialog(
             context: context,
-            builder: (_) => _SergeantDetailDialog(sergeant: sergeant),
+            builder: (_) => _CoordinatorDetailDialog(coordinator: coordinator),
           );
         },
         child: Padding(
@@ -325,10 +355,10 @@ class _SergeantListPageState extends State<SergeantListPage> {
               // Avatar
               CircleAvatar(
                 radius: 28,
-                backgroundColor: isActive ? Colors.purple.shade100 : Colors.grey.shade300,
+                backgroundColor: isActive ? Colors.blue.shade100 : Colors.grey.shade300,
                 child: Icon(
-                  Icons.security,
-                  color: isActive ? Colors.purple.shade700 : Colors.grey.shade600,
+                  Icons.person,
+                  color: isActive ? Colors.blue.shade700 : Colors.grey.shade600,
                   size: 28,
                 ),
               ),
@@ -394,9 +424,9 @@ class _SergeantListPageState extends State<SergeantListPage> {
                   // Delete button
                   IconButton(
                     icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    tooltip: 'Delete sergeant',
+                    tooltip: 'Delete coordinator',
                     onPressed: () {
-                      _confirmDeleteSergeant(context, sergeant);
+                      _confirmDeleteCoordinator(context, coordinator);
                     },
                   ),
                   // Chevron to indicate more details
@@ -413,15 +443,15 @@ class _SergeantListPageState extends State<SergeantListPage> {
     );
   }
 
-  void _confirmDeleteSergeant(BuildContext context, Map<String, dynamic> sergeant) {
-    final name = sergeant['name']?.toString() ?? 'Unknown';
-    final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
+  void _confirmDeleteCoordinator(BuildContext context, Map<String, dynamic> coordinator) {
+    final name = coordinator['name']?.toString() ?? 'Unknown';
+    final coordinatorId = coordinator['coordinator_id']?.toString() ?? coordinator['id']?.toString() ?? '';
     
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete Sergeant'),
-        content: Text('Are you sure you want to delete $name ($sergeantId)?\n\nThis action cannot be undone.'),
+        title: const Text('Delete Coordinator'),
+        content: Text('Are you sure you want to delete $name ($coordinatorId)?\n\nThis action cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
@@ -431,7 +461,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
               Navigator.pop(dialogContext);
-              _deleteSergeant(context, sergeant);
+              _deleteCoordinator(context, coordinator);
             },
             child: const Text('Delete'),
           ),
@@ -440,62 +470,57 @@ class _SergeantListPageState extends State<SergeantListPage> {
     );
   }
 
-  Future<void> _deleteSergeant(BuildContext context, Map<String, dynamic> sergeant) async {
+  Future<void> _deleteCoordinator(BuildContext context, Map<String, dynamic> coordinator) async {
     try {
-      final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
-      final name = sergeant['name']?.toString() ?? 'Unknown';
+      final coordinatorId = coordinator['coordinator_id']?.toString() ?? coordinator['id']?.toString() ?? '';
       
       // Optimistic update: remove from list immediately
-      final indexToRemove = _allSergeants.indexWhere((s) => s['sergeant_id'] == sergeantId);
+      final indexToRemove = _allCoordinators.indexWhere((c) => 
+          c['coordinator_id'] == coordinatorId || c['id'] == coordinatorId);
       if (indexToRemove != -1) {
-        final removedSergeant = _allSergeants[indexToRemove];
+        final removedCoordinator = _allCoordinators[indexToRemove];
         
         if (mounted) {
           setState(() {
-            _allSergeants.removeAt(indexToRemove);
+            _allCoordinators.removeAt(indexToRemove);
             _filterData(); // Update filtered list
           });
         }
         
-        AppNotifier.showSuccess(context, 'Sergeant deleted successfully');
-        
-        // Call API in background
-        try {
-          await api.deleteSergeant(sergeantId);
-        } catch (e) {
-          // If delete fails, add sergeant back
-          if (mounted) {
-            setState(() {
-              _allSergeants.insert(indexToRemove, removedSergeant);
-              _filterData();
-            });
-            AppNotifier.showError(context, 'Failed to delete sergeant: $e');
-          }
-        }
+        AppNotifier.showSuccess(context, 'Coordinator removed from this list');
       }
     } catch (e) {
       if (mounted) {
-        AppNotifier.showError(context, 'Failed to delete sergeant: $e');
+        AppNotifier.showError(context, 'Failed to delete coordinator: $e');
       }
     }
   }
 }
 
-class _SergeantDetailDialog extends StatelessWidget {
-  final Map<String, dynamic> sergeant;
+class _CoordinatorDetailDialog extends StatelessWidget {
+  final Map<String, dynamic> coordinator;
 
-  const _SergeantDetailDialog({required this.sergeant});
+  const _CoordinatorDetailDialog({required this.coordinator});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = sergeant['name']?.toString() ?? 'Unknown';
-    final email = sergeant['email']?.toString() ?? 'No email';
-    final phone = sergeant['phone']?.toString() ?? 'No phone';
-    final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
-    final isActive = sergeant['is_active'] == true;
-    final lastLogin = sergeant['last_login'];
-    final createdAt = sergeant['created_at'];
+    final name = coordinator['name']?.toString() ?? 'Unknown';
+    final email = coordinator['email']?.toString() ?? 'No email';
+    final phone = coordinator['phone']?.toString() ?? 'No phone';
+    final coordinatorId = coordinator['coordinator_id']?.toString() ?? coordinator['id']?.toString() ?? '';
+    final lastLogin = coordinator['last_login']?.toString();
+    bool isActiveFromLogin() {
+      if (lastLogin == null) return false;
+      try {
+        final date = DateTime.parse(lastLogin);
+        return DateTime.now().difference(date) <= const Duration(days: 30);
+      } catch (_) {
+        return false;
+      }
+    }
+    final isActive = isActiveFromLogin();
+    final createdAt = coordinator['created_at'];
 
     String formatDate(String? dateStr) {
       if (dateStr == null) return 'Never';
@@ -510,9 +535,9 @@ class _SergeantDetailDialog extends StatelessWidget {
     return AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.security, color: Colors.purple.shade700),
+          Icon(Icons.person, color: Colors.blue.shade700),
           const SizedBox(width: 8),
-          Text('Sergeant Details'),
+          const Text('Coordinator Details'),
         ],
       ),
       content: SizedBox(
@@ -521,7 +546,7 @@ class _SergeantDetailDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _DetailRow(icon: Icons.badge, label: 'Sergeant ID', value: sergeantId),
+            _DetailRow(icon: Icons.badge, label: 'Coordinator ID', value: coordinatorId),
             _DetailRow(icon: Icons.person, label: 'Name', value: name),
             _DetailRow(icon: Icons.email, label: 'Email', value: email),
             _DetailRow(icon: Icons.phone, label: 'Phone', value: phone),

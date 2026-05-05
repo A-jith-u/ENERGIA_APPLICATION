@@ -568,6 +568,7 @@ class RegisterRequest(BaseModel):
     department: str = None  # Required for student registration
     year: str = None  # Required for student registration
     email: str = None  # Email address for student registration
+    phone: str = None  # Phone number for user registration
 
 class InviteUserRequest(BaseModel):
     """Payload for admin invite endpoint.
@@ -576,6 +577,7 @@ class InviteUserRequest(BaseModel):
     username: str
     role: str = "student"
     name: str | None = None
+    phone: str | None = None
     ktu_id: str | None = None
     department: str | None = None
     year: str | None = None
@@ -594,6 +596,7 @@ class UpdateProfileRequest(BaseModel):
     name: str
     department: str
     year: str
+    phone: str | None = None
 
 class ChangePasswordRequest(BaseModel):
     username: str  # Email or KTU ID
@@ -809,8 +812,8 @@ def update_profile(req: UpdateProfileRequest):
     with engine.begin() as conn:
         # Update the student record based on KTU ID
         conn.execute(
-            text("UPDATE class_representatives SET name = :n, department = :d, year = :y WHERE ktu_id = :k"),
-            {"n": req.name, "d": req.department, "y": req.year, "k": req.ktu_id}
+            text("UPDATE class_representatives SET name = :n, department = :d, year = :y, phone = :phone WHERE ktu_id = :k"),
+            {"n": req.name, "d": req.department, "y": req.year, "phone": (req.phone or "").strip() or None, "k": req.ktu_id}
         )
 
         # Fetch the updated record to issue a refreshed token so UI updates immediately
@@ -1149,7 +1152,7 @@ async def invite_user(req: InviteUserRequest):
                 query = text("""
                     UPDATE class_representatives
                     SET password_hash=:p, name=:n, department=:d, ktu_id=:k, year=:y,
-                        email=:e, is_proxy=:is_proxy, proxy_for_email=:proxy_for_email,
+                        email=:e, phone=:phone, is_proxy=:is_proxy, proxy_for_email=:proxy_for_email,
                         assigned_room_id=:assigned_room_id
                     WHERE id=:i
                 """)
@@ -1160,6 +1163,7 @@ async def invite_user(req: InviteUserRequest):
                     "k": req.ktu_id,
                     "y": req.year,
                     "e": target_email,
+                    "phone": (req.phone or "").strip() or None,
                     "is_proxy": is_proxy,
                     "proxy_for_email": proxy_for_email,
                     "assigned_room_id": room_id,
@@ -1175,7 +1179,7 @@ async def invite_user(req: InviteUserRequest):
 
                 query = text("""
                     UPDATE coordinators
-                    SET password_hash=:p, name=:n, department=:d, email=:e,
+                    SET password_hash=:p, name=:n, department=:d, email=:e, phone=:phone,
                         is_proxy=:is_proxy, proxy_for_email=:proxy_for_email,
                         assigned_room_id=:assigned_room_id
                     WHERE id=:i
@@ -1185,20 +1189,21 @@ async def invite_user(req: InviteUserRequest):
                     "n": req.name,
                     "d": req.department,
                     "e": target_email,
+                    "phone": (req.phone or "").strip() or None,
                     "is_proxy": is_proxy,
                     "proxy_for_email": proxy_for_email,
                     "assigned_room_id": room_id,
                     "i": existing[0],
                 }
             else:  # admins
-                query = text("UPDATE admins SET password_hash=:p, name=:n, email=:e WHERE id=:i")
-                params = {"p": pw_hash, "n": req.name, "e": target_email, "i": existing[0]}
+                query = text("UPDATE admins SET password_hash=:p, name=:n, email=:e, phone=:phone WHERE id=:i")
+                params = {"p": pw_hash, "n": req.name, "e": target_email, "phone": (req.phone or "").strip() or None, "i": existing[0]}
             action = "updated"
         else:
             if target_table == "class_representatives":
                 query = text(
-                    "INSERT INTO class_representatives (username, password_hash, name, department, ktu_id, year, email, is_proxy, proxy_for_email, assigned_room_id, created_at) "
-                    "VALUES (:u, :p, :n, :d, :k, :y, :e, :is_proxy, :proxy_for_email, :assigned_room_id, :c)"
+                    "INSERT INTO class_representatives (username, password_hash, name, department, ktu_id, year, email, phone, is_proxy, proxy_for_email, assigned_room_id, created_at) "
+                    "VALUES (:u, :p, :n, :d, :k, :y, :e, :phone, :is_proxy, :proxy_for_email, :assigned_room_id, :c)"
                 )
                 params = {
                     "u": req.username,
@@ -1208,6 +1213,7 @@ async def invite_user(req: InviteUserRequest):
                     "k": req.ktu_id,
                     "y": req.year,
                     "e": target_email,
+                    "phone": (req.phone or "").strip() or None,
                     "is_proxy": is_proxy,
                     "proxy_for_email": proxy_for_email,
                     "assigned_room_id": room_id,
@@ -1240,8 +1246,8 @@ async def invite_user(req: InviteUserRequest):
                 coordinator_id = f"{dept_prefix}{next_num:03d}"
                 
                 query = text(
-                    "INSERT INTO coordinators (coordinator_id, email, password_hash, name, department, is_proxy, proxy_for_email, assigned_room_id, created_at) "
-                    "VALUES (:cid, :e, :p, :n, :d, :is_proxy, :proxy_for_email, :assigned_room_id, :c)"
+                    "INSERT INTO coordinators (coordinator_id, email, password_hash, name, department, phone, is_proxy, proxy_for_email, assigned_room_id, created_at) "
+                    "VALUES (:cid, :e, :p, :n, :d, :phone, :is_proxy, :proxy_for_email, :assigned_room_id, :c)"
                 )
                 params = {
                     "cid": coordinator_id,
@@ -1249,6 +1255,7 @@ async def invite_user(req: InviteUserRequest):
                     "p": pw_hash,
                     "n": req.name,
                     "d": req.department,
+                    "phone": (req.phone or "").strip() or None,
                     "is_proxy": is_proxy,
                     "proxy_for_email": proxy_for_email,
                     "assigned_room_id": room_id,
@@ -1256,13 +1263,14 @@ async def invite_user(req: InviteUserRequest):
                 }
             else:  # admins
                 query = text(
-                    "INSERT INTO admins (email, password_hash, name, created_at) "
-                    "VALUES (:e, :p, :n, :c)"
+                    "INSERT INTO admins (email, password_hash, name, phone, created_at) "
+                    "VALUES (:e, :p, :n, :phone, :c)"
                 )
                 params = {
                     "e": target_email,
                     "p": pw_hash,
                     "n": req.name,
+                    "phone": (req.phone or "").strip() or None,
                     "c": datetime.utcnow(),
                 }
             action = "created"
@@ -1611,8 +1619,8 @@ def register(req: RegisterRequest):
             # Insert into class_representatives table
             pw_hash = PWD_CTX.hash(req.password)
             conn.execute(
-                text("INSERT INTO class_representatives (username, password_hash, ktu_id, email, department, year, created_at) VALUES (:u, :p, :k, :e, :d, :y, :c)"),
-                {"u": req.username, "p": pw_hash, "k": req.ktu_id, "e": req.email, "d": req.department, "y": req.year, "c": datetime.utcnow()},
+                text("INSERT INTO class_representatives (username, password_hash, ktu_id, email, department, year, phone, created_at) VALUES (:u, :p, :k, :e, :d, :y, :phone, :c)"),
+                {"u": req.username, "p": pw_hash, "k": req.ktu_id, "e": req.email, "d": req.department, "y": req.year, "phone": (req.phone or "").strip() or None, "c": datetime.utcnow()},
             )
     else:
         # Admin or coordinator registration
@@ -1631,8 +1639,8 @@ def register(req: RegisterRequest):
                     raise HTTPException(status_code=400, detail="Admin already exists")
                 pw_hash = PWD_CTX.hash(req.password)
                 conn.execute(
-                    text("INSERT INTO admins (email, password_hash, name, created_at) VALUES (:e, :p, :n, :c)"),
-                    {"e": req.email, "p": pw_hash, "n": req.username or req.email, "c": datetime.utcnow()},
+                    text("INSERT INTO admins (email, password_hash, name, phone, created_at) VALUES (:e, :p, :n, :phone, :c)"),
+                    {"e": req.email, "p": pw_hash, "n": req.username or req.email, "phone": (req.phone or "").strip() or None, "c": datetime.utcnow()},
                 )
             else:
                 row = conn.execute(text("SELECT id FROM coordinators WHERE email=:e"), {"e": req.email}).fetchone()
@@ -1640,8 +1648,8 @@ def register(req: RegisterRequest):
                     raise HTTPException(status_code=400, detail="Coordinator already exists")
                 pw_hash = PWD_CTX.hash(req.password)
                 conn.execute(
-                    text("INSERT INTO coordinators (email, password_hash, name, department, created_at) VALUES (:e, :p, :n, :d, :c)"),
-                    {"e": req.email, "p": pw_hash, "n": req.username or req.email, "d": req.department, "c": datetime.utcnow()},
+                    text("INSERT INTO coordinators (email, password_hash, name, department, phone, created_at) VALUES (:e, :p, :n, :d, :phone, :c)"),
+                    {"e": req.email, "p": pw_hash, "n": req.username or req.email, "d": req.department, "phone": (req.phone or "").strip() or None, "c": datetime.utcnow()},
                 )
     return {"status": "ok"}
 

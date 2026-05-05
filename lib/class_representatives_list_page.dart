@@ -5,48 +5,58 @@ import 'services/user_lists.dart';
 import 'services/notifier.dart';
 import 'services/pdf_export.dart';
 
-class SergeantListPage extends StatefulWidget {
-  const SergeantListPage({super.key});
+class DetailedClassRepresentativesPage extends StatefulWidget {
+  const DetailedClassRepresentativesPage({super.key});
 
   @override
-  State<SergeantListPage> createState() => _SergeantListPageState();
+  State<DetailedClassRepresentativesPage> createState() => _DetailedClassRepresentativesPageState();
 }
 
-class _SergeantListPageState extends State<SergeantListPage> {
-  List<Map<String, dynamic>> _allSergeants = [];
+class _DetailedClassRepresentativesPageState extends State<DetailedClassRepresentativesPage> {
+  List<Map<String, dynamic>> _allClassReps = [];
   bool _isLoading = false;
   String? _errorMessage;
 
   final _searchController = TextEditingController();
   String _selectedStatus = 'All';
-  List<Map<String, dynamic>> _filteredSergeants = [];
+  List<Map<String, dynamic>> _filteredClassReps = [];
 
   @override
   void initState() {
     super.initState();
-    // Subscribe to shared sergeants list
-    UserListsStore.instance.sergeants.addListener(_onSergeantsChanged);
+    // Subscribe to shared class representatives list
+    UserListsStore.instance.classReps.addListener(_onClassRepsChanged);
     // Initialize from cached store for instant display
-    _allSergeants = List<Map<String, dynamic>>.from(UserListsStore.instance.sergeants.value);
-    _filteredSergeants = List.from(_allSergeants);
+    _allClassReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
+    _filteredClassReps = List.from(_allClassReps);
     // Refresh in background
-    _loadSergeants();
+    _loadClassReps();
   }
 
-  void _onSergeantsChanged() {
+  void _onClassRepsChanged() {
     if (!mounted) return;
     setState(() {
-      _allSergeants = List<Map<String, dynamic>>.from(UserListsStore.instance.sergeants.value);
-      _filteredSergeants = _allSergeants.where((sergeant) {
-        final name = sergeant['name']?.toString().toLowerCase() ?? '';
-        final email = sergeant['email']?.toString().toLowerCase() ?? '';
+      _allClassReps = List<Map<String, dynamic>>.from(UserListsStore.instance.classReps.value);
+      _filteredClassReps = _allClassReps.where((classRep) {
+        final name = classRep['name']?.toString().toLowerCase() ?? '';
+        final email = classRep['email']?.toString().toLowerCase() ?? '';
         final searchLower = _searchController.text.toLowerCase();
 
         final matchesSearch = _searchController.text.isEmpty ||
             name.contains(searchLower) ||
             email.contains(searchLower);
 
-        final isActive = sergeant['is_active'] == true;
+        final lastLogin = classRep['last_login']?.toString();
+        bool isActiveFromLogin() {
+          if (lastLogin == null) return false;
+          try {
+            final date = DateTime.parse(lastLogin);
+            return DateTime.now().difference(date) <= const Duration(days: 30);
+          } catch (_) {
+            return false;
+          }
+        }
+        final isActive = isActiveFromLogin();
         final matchesStatus = _selectedStatus == 'All' ||
             (_selectedStatus == 'Active' && isActive) ||
             (_selectedStatus == 'Inactive' && !isActive);
@@ -56,7 +66,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     });
   }
 
-  Future<void> _loadSergeants() async {
+  Future<void> _loadClassReps() async {
     if (!mounted) return;
     setState(() {
       _isLoading = true;
@@ -64,7 +74,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     });
 
     try {
-      await api.getSergeants();
+      await api.getClassRepresentatives();
       if (!mounted) return;
       setState(() {
         _isLoading = false;
@@ -72,7 +82,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Failed to load sergeants: $e';
+        _errorMessage = 'Failed to load class representatives: $e';
         _isLoading = false;
       });
     }
@@ -81,23 +91,33 @@ class _SergeantListPageState extends State<SergeantListPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    UserListsStore.instance.sergeants.removeListener(_onSergeantsChanged);
+    UserListsStore.instance.classReps.removeListener(_onClassRepsChanged);
     super.dispose();
   }
 
   void _filterData() {
     if (!mounted) return;
     setState(() {
-      _filteredSergeants = _allSergeants.where((sergeant) {
-        final name = sergeant['name']?.toString().toLowerCase() ?? '';
-        final email = sergeant['email']?.toString().toLowerCase() ?? '';
+      _filteredClassReps = _allClassReps.where((classRep) {
+        final name = classRep['name']?.toString().toLowerCase() ?? '';
+        final email = classRep['email']?.toString().toLowerCase() ?? '';
         final searchLower = _searchController.text.toLowerCase();
         
         final matchesSearch = _searchController.text.isEmpty ||
             name.contains(searchLower) ||
             email.contains(searchLower);
         
-        final isActive = sergeant['is_active'] == true;
+        final lastLogin = classRep['last_login']?.toString();
+        bool isActiveFromLogin() {
+          if (lastLogin == null) return false;
+          try {
+            final date = DateTime.parse(lastLogin);
+            return DateTime.now().difference(date) <= const Duration(days: 30);
+          } catch (_) {
+            return false;
+          }
+        }
+        final isActive = isActiveFromLogin();
         final matchesStatus = _selectedStatus == 'All' ||
             (_selectedStatus == 'Active' && isActive) ||
             (_selectedStatus == 'Inactive' && !isActive);
@@ -108,32 +128,35 @@ class _SergeantListPageState extends State<SergeantListPage> {
   }
 
   Future<void> _exportToPdf() async {
-    if (_filteredSergeants.isEmpty) {
+    if (_filteredClassReps.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No sergeants to export')),
+        const SnackBar(content: Text('No class representatives to export')),
       );
       return;
     }
 
-    const headers = ['Name', 'Email', 'Phone', 'Status', 'Last Login', 'Joined Date'];
-    final rows = _filteredSergeants.map((sergeant) {
-      final phone = sergeant['phone']?.toString() ?? 'N/A';
-      final lastLogin = sergeant['last_login']?.toString();
+    const headers = ['Name', 'KTU ID', 'Email', 'Phone', 'Class', 'Status', 'Last Login', 'Joined Date'];
+    final rows = _filteredClassReps.map((classRep) {
+      final ktuId = classRep['ktu_id']?.toString() ?? 'N/A';
+      final phone = classRep['phone']?.toString() ?? 'N/A';
+      final lastLogin = classRep['last_login']?.toString();
       final isActive = lastLogin != null
           ? (DateTime.now().difference(DateTime.parse(lastLogin)) <= const Duration(days: 30))
           : false;
       final lastLoginStr = lastLogin != null
           ? DateFormat('MMM d, yyyy h:mm a').format(DateTime.parse(lastLogin))
           : 'Never';
-      final createdStr = sergeant['created_at']?.toString();
+      final createdStr = classRep['created_at']?.toString();
       final createdDate = createdStr != null
           ? DateFormat('MMM d, yyyy').format(DateTime.parse(createdStr))
           : 'N/A';
 
       return [
-        sergeant['name']?.toString() ?? 'Unknown',
-        sergeant['email']?.toString() ?? 'N/A',
+        classRep['name']?.toString() ?? 'Unknown',
+        ktuId,
+        classRep['email']?.toString() ?? 'N/A',
         phone,
+        classRep['class']?.toString() ?? 'N/A',
         isActive ? 'Active' : 'Inactive',
         lastLoginStr,
         createdDate,
@@ -141,7 +164,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
     }).toList();
 
     await exportTablePdfAutoSave(
-      'Sergeants List',
+      'Class Representatives List',
       headers,
       rows,
       subtitle: 'Exported on ${DateFormat('MMM d, yyyy').format(DateTime.now())}',
@@ -156,14 +179,14 @@ class _SergeantListPageState extends State<SergeantListPage> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Sergeants'),
+        title: const Text('Class Representatives'),
         leading: BackButton(onPressed: () => Navigator.of(context).pop()),
         backgroundColor: theme.appBarTheme.backgroundColor ?? scheme.surface,
         foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
         elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
           TextButton(
-            onPressed: _loadSergeants,
+            onPressed: _loadClassReps,
             child: const Text('Reload'),
           ),
         ],
@@ -185,31 +208,31 @@ class _SergeantListPageState extends State<SergeantListPage> {
                             Text(_errorMessage!, style: theme.textTheme.titleMedium),
                             const SizedBox(height: 16),
                             ElevatedButton(
-                              onPressed: _loadSergeants,
+                              onPressed: _loadClassReps,
                               child: const Text('Retry'),
                             ),
                           ],
                         ),
                       )
-                    : _buildSergeantsList(theme),
+                    : _buildClassRepsList(theme),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildSergeantsList(ThemeData theme) {
+  Widget _buildClassRepsList(ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Header
         Text(
-          'Security Personnel',
+          'Class Representatives',
           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         Text(
-          '${_filteredSergeants.length} ${_filteredSergeants.length == 1 ? 'sergeant' : 'sergeants'}',
+          '${_filteredClassReps.length} ${_filteredClassReps.length == 1 ? 'representative' : 'representatives'}',
           style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
         ),
         const SizedBox(height: 24),
@@ -258,28 +281,28 @@ class _SergeantListPageState extends State<SergeantListPage> {
         ),
         const SizedBox(height: 24),
         
-        // Sergeants List
+        // Class Representatives List
         Expanded(
-          child: _filteredSergeants.isEmpty
+          child: _filteredClassReps.isEmpty
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.security_outlined, size: 64, color: Colors.grey.shade400),
+                      Icon(Icons.people_outlined, size: 64, color: Colors.grey.shade400),
                       const SizedBox(height: 16),
                       Text(
-                        'No sergeants found',
+                        'No class representatives found',
                         style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
                       ),
                     ],
                   ),
                 )
               : ListView.separated(
-                  itemCount: _filteredSergeants.length,
+                  itemCount: _filteredClassReps.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
-                    final sergeant = _filteredSergeants[index];
-                    return _buildSergeantCard(sergeant, theme);
+                    final classRep = _filteredClassReps[index];
+                    return _buildClassRepCard(classRep, theme);
                   },
                 ),
         ),
@@ -287,14 +310,26 @@ class _SergeantListPageState extends State<SergeantListPage> {
     );
   }
 
-  Widget _buildSergeantCard(Map<String, dynamic> sergeant, ThemeData theme) {
-    final name = sergeant['name']?.toString() ?? 'Unknown';
-    final email = sergeant['email']?.toString() ?? 'No email';
-    final phone = sergeant['phone']?.toString() ?? 'No phone';
-    final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
-    final isActive = sergeant['is_active'] == true;
-    final lastLogin = sergeant['last_login'];
-    final createdAt = sergeant['created_at'];
+  Widget _buildClassRepCard(Map<String, dynamic> classRep, ThemeData theme) {
+    final name = classRep['name']?.toString() ?? 'Unknown';
+    final email = classRep['email']?.toString() ?? 'No email';
+    final phone = classRep['phone']?.toString() ?? 'No phone';
+    final repId = classRep['ktu_id']?.toString() ??
+      classRep['class_representative_id']?.toString() ??
+      classRep['id']?.toString() ?? '';
+      final lastLogin = classRep['last_login']?.toString();
+      bool isActiveFromLogin() {
+        if (lastLogin == null) return false;
+        try {
+          final date = DateTime.parse(lastLogin);
+          return DateTime.now().difference(date) <= const Duration(days: 30);
+        } catch (_) {
+          return false;
+        }
+      }
+      final isActive = isActiveFromLogin();
+    
+    final createdAt = classRep['created_at'];
 
     String formatDate(String? dateStr) {
       if (dateStr == null) return 'Never';
@@ -315,7 +350,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
           // Show detail dialog
           showDialog(
             context: context,
-            builder: (_) => _SergeantDetailDialog(sergeant: sergeant),
+            builder: (_) => _ClassRepDetailDialog(classRep: classRep),
           );
         },
         child: Padding(
@@ -325,10 +360,10 @@ class _SergeantListPageState extends State<SergeantListPage> {
               // Avatar
               CircleAvatar(
                 radius: 28,
-                backgroundColor: isActive ? Colors.purple.shade100 : Colors.grey.shade300,
+                backgroundColor: isActive ? Colors.orange.shade100 : Colors.grey.shade300,
                 child: Icon(
-                  Icons.security,
-                  color: isActive ? Colors.purple.shade700 : Colors.grey.shade600,
+                  Icons.school,
+                  color: isActive ? Colors.orange.shade700 : Colors.grey.shade600,
                   size: 28,
                 ),
               ),
@@ -394,9 +429,9 @@ class _SergeantListPageState extends State<SergeantListPage> {
                   // Delete button
                   IconButton(
                     icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    tooltip: 'Delete sergeant',
+                    tooltip: 'Delete representative',
                     onPressed: () {
-                      _confirmDeleteSergeant(context, sergeant);
+                      _confirmDeleteClassRep(context, classRep);
                     },
                   ),
                   // Chevron to indicate more details
@@ -413,15 +448,15 @@ class _SergeantListPageState extends State<SergeantListPage> {
     );
   }
 
-  void _confirmDeleteSergeant(BuildContext context, Map<String, dynamic> sergeant) {
-    final name = sergeant['name']?.toString() ?? 'Unknown';
-    final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
+  void _confirmDeleteClassRep(BuildContext context, Map<String, dynamic> classRep) {
+    final name = classRep['name']?.toString() ?? 'Unknown';
+    final repId = classRep['class_representative_id']?.toString() ?? classRep['id']?.toString() ?? '';
     
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete Sergeant'),
-        content: Text('Are you sure you want to delete $name ($sergeantId)?\n\nThis action cannot be undone.'),
+        title: const Text('Delete Class Representative'),
+        content: Text('Are you sure you want to delete $name ($repId)?\n\nThis action cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
@@ -431,7 +466,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
               Navigator.pop(dialogContext);
-              _deleteSergeant(context, sergeant);
+              _deleteClassRep(context, classRep);
             },
             child: const Text('Delete'),
           ),
@@ -440,62 +475,59 @@ class _SergeantListPageState extends State<SergeantListPage> {
     );
   }
 
-  Future<void> _deleteSergeant(BuildContext context, Map<String, dynamic> sergeant) async {
+  Future<void> _deleteClassRep(BuildContext context, Map<String, dynamic> classRep) async {
     try {
-      final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
-      final name = sergeant['name']?.toString() ?? 'Unknown';
+      final repId = classRep['class_representative_id']?.toString() ?? classRep['id']?.toString() ?? '';
       
       // Optimistic update: remove from list immediately
-      final indexToRemove = _allSergeants.indexWhere((s) => s['sergeant_id'] == sergeantId);
+      final indexToRemove = _allClassReps.indexWhere((r) => 
+          r['class_representative_id'] == repId || r['id'] == repId);
       if (indexToRemove != -1) {
-        final removedSergeant = _allSergeants[indexToRemove];
+        final removedRep = _allClassReps[indexToRemove];
         
         if (mounted) {
           setState(() {
-            _allSergeants.removeAt(indexToRemove);
+            _allClassReps.removeAt(indexToRemove);
             _filterData(); // Update filtered list
           });
         }
         
-        AppNotifier.showSuccess(context, 'Sergeant deleted successfully');
-        
-        // Call API in background
-        try {
-          await api.deleteSergeant(sergeantId);
-        } catch (e) {
-          // If delete fails, add sergeant back
-          if (mounted) {
-            setState(() {
-              _allSergeants.insert(indexToRemove, removedSergeant);
-              _filterData();
-            });
-            AppNotifier.showError(context, 'Failed to delete sergeant: $e');
-          }
-        }
+        AppNotifier.showSuccess(context, 'Class representative removed from this list');
       }
     } catch (e) {
       if (mounted) {
-        AppNotifier.showError(context, 'Failed to delete sergeant: $e');
+        AppNotifier.showError(context, 'Failed to delete representative: $e');
       }
     }
   }
 }
 
-class _SergeantDetailDialog extends StatelessWidget {
-  final Map<String, dynamic> sergeant;
+class _ClassRepDetailDialog extends StatelessWidget {
+  final Map<String, dynamic> classRep;
 
-  const _SergeantDetailDialog({required this.sergeant});
+  const _ClassRepDetailDialog({required this.classRep});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = sergeant['name']?.toString() ?? 'Unknown';
-    final email = sergeant['email']?.toString() ?? 'No email';
-    final phone = sergeant['phone']?.toString() ?? 'No phone';
-    final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
-    final isActive = sergeant['is_active'] == true;
-    final lastLogin = sergeant['last_login'];
-    final createdAt = sergeant['created_at'];
+    final name = classRep['name']?.toString() ?? 'Unknown';
+    final email = classRep['email']?.toString() ?? 'No email';
+    final phone = classRep['phone']?.toString() ?? 'No phone';
+    final repId = classRep['ktu_id']?.toString() ??
+      classRep['class_representative_id']?.toString() ??
+      classRep['id']?.toString() ?? '';
+    final lastLogin = classRep['last_login']?.toString();
+    bool isActiveFromLogin() {
+      if (lastLogin == null) return false;
+      try {
+        final date = DateTime.parse(lastLogin);
+        return DateTime.now().difference(date) <= const Duration(days: 30);
+      } catch (_) {
+        return false;
+      }
+    }
+    final isActive = isActiveFromLogin();
+    final createdAt = classRep['created_at'];
 
     String formatDate(String? dateStr) {
       if (dateStr == null) return 'Never';
@@ -510,9 +542,9 @@ class _SergeantDetailDialog extends StatelessWidget {
     return AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.security, color: Colors.purple.shade700),
+          Icon(Icons.person, color: Colors.orange.shade700),
           const SizedBox(width: 8),
-          Text('Sergeant Details'),
+          const Text('Class Representative Details'),
         ],
       ),
       content: SizedBox(
@@ -521,7 +553,7 @@ class _SergeantDetailDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _DetailRow(icon: Icons.badge, label: 'Sergeant ID', value: sergeantId),
+            _DetailRow(icon: Icons.badge, label: 'Rep ID', value: repId),
             _DetailRow(icon: Icons.person, label: 'Name', value: name),
             _DetailRow(icon: Icons.email, label: 'Email', value: email),
             _DetailRow(icon: Icons.phone, label: 'Phone', value: phone),

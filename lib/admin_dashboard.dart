@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
-import 'package:energia/widgets/energy_visualization_widgets.dart';
+import 'package:intl/intl.dart'; // For DateFormat
 import 'services/notifier.dart';
 import 'package:energia/services/pdf_export.dart';
 import 'package:energia/services/csv_export.dart';
 import 'role_selection_page.dart'; // For Logout navigation
 // Departmental page imports
 import 'computer_science_classrooms_page.dart'; 
-import 'Electrical.dart';
-import 'Electronics.dart';
-import 'mechanical.dart';
-import 'Itt.dart';
-import 'adminblock.dart';
 import 'dart:convert'; // Fixes 'jsonEncode' error
 import 'dart:async'; // For Timer
 import 'package:http/http.dart' as http; // Fixes 'http' error
@@ -24,8 +19,9 @@ import 'services/validators.dart'; // Import validation functions
 import 'activity_logs_page.dart'; // Import activity logs page
 import 'monthly_report_page.dart'; // Import monthly report page
 import 'dart:ui'; // For ImageFilter (glassmorphism effect)
-import 'package:flutter/foundation.dart';
 import 'sergeant_list_page.dart'; // Import sergeant list page
+import 'coordinator_list_page.dart'; // Import coordinator list page
+import 'class_representatives_list_page.dart'; // Import class representatives list page
 import 'user_permissions_page.dart'; // Import user permissions page
 import 'admin_profile_page.dart'; // Import admin profile page
 import 'services/admin_api.dart'; // Import admin API functions
@@ -1005,7 +1001,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
           Icons.supervisor_account_outlined, 
           Colors.orange.shade600,
           onTap: () {
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CoordinatorsPage()));
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DetailedCoordinatorsPage()));
           },
         ),
         _buildUserTypeCard(
@@ -1015,7 +1011,7 @@ class _UsersManagementSectionState extends State<_UsersManagementSection> {
           Icons.school_outlined, 
           Colors.blue.shade600,
           onTap: () {
-            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ClassRepresentativesPage()));
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DetailedClassRepresentativesPage()));
           },
         ),
         _buildUserTypeCard(
@@ -1987,10 +1983,81 @@ class _ClassRepresentativesPageState extends State<ClassRepresentativesPage> {
                                   DataCell(Text(r['email']?.toString() ?? 'N/A')),
                                   DataCell(Text(r['year']?.toString() ?? 'N/A')),
                                   DataCell(
-                                    IconButton(
-                                      icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                      tooltip: 'Delete user',
-                                      onPressed: () => _confirmDeleteUser(r['username']?.toString() ?? '', r['name']?.toString() ?? 'User'),
+                                    Row(
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(Icons.info_outline, color: Colors.blue),
+                                          tooltip: 'View details',
+                                          onPressed: () {
+                                            // Show detail dialog using KTU id as primary identifier
+                                            final rep = r;
+                                            final repId = rep['ktu_id']?.toString() ?? rep['username']?.toString() ?? rep['id']?.toString() ?? '';
+                                            final phone = rep['phone']?.toString() ?? 'No phone';
+                                            final lastLoginRaw = rep['last_login']?.toString();
+                                            String formatDate(String? dateStr) {
+                                              if (dateStr == null) return 'Never';
+                                              try {
+                                                final date = DateTime.parse(dateStr);
+                                                return DateFormat('MMM d, yyyy h:mm a').format(date);
+                                              } catch (_) {
+                                                return 'Invalid date';
+                                              }
+                                            }
+                                            bool isActiveFromLogin(String? dateStr) {
+                                              if (dateStr == null) return false;
+                                              try {
+                                                final date = DateTime.parse(dateStr);
+                                                return DateTime.now().difference(date) <= const Duration(days: 30);
+                                              } catch (_) {
+                                                return false;
+                                              }
+                                            }
+
+                                            showDialog(
+                                              context: context,
+                                              builder: (ctx) => AlertDialog(
+                                                title: Row(
+                                                  children: [
+                                                    Icon(Icons.person, color: Colors.orange.shade700),
+                                                    const SizedBox(width: 8),
+                                                    const Text('Class Representative Details'),
+                                                  ],
+                                                ),
+                                                content: SizedBox(
+                                                  width: 400,
+                                                  child: Column(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      _DetailRow(icon: Icons.badge, label: 'Rep ID', value: repId),
+                                                      _DetailRow(icon: Icons.person, label: 'Name', value: rep['name']?.toString() ?? 'Unknown'),
+                                                      _DetailRow(icon: Icons.email, label: 'Email', value: rep['email']?.toString() ?? 'No email'),
+                                                      _DetailRow(icon: Icons.phone, label: 'Phone', value: phone),
+                                                      const Divider(),
+                                                      _DetailRow(
+                                                        icon: Icons.verified_user,
+                                                        label: 'Status',
+                                                        value: isActiveFromLogin(lastLoginRaw) ? 'Active' : 'Inactive',
+                                                        valueColor: isActiveFromLogin(lastLoginRaw) ? Colors.green.shade700 : Colors.red.shade700,
+                                                      ),
+                                                      _DetailRow(icon: Icons.login, label: 'Last Login', value: formatDate(lastLoginRaw)),
+                                                      _DetailRow(icon: Icons.calendar_today, label: 'Created', value: formatDate(rep['created_at']?.toString())),
+                                                    ],
+                                                  ),
+                                                ),
+                                                actions: [
+                                                  TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close')),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                          tooltip: 'Delete user',
+                                          onPressed: () => _confirmDeleteUser(r['username']?.toString() ?? '', r['name']?.toString() ?? 'User'),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ]);
@@ -2844,6 +2911,47 @@ class __ActivityLogWidgetState extends State<_ActivityLogWidget> {
             }),
           );
         },
+      ),
+    );
+  }
+}
+
+/// Helper widget for displaying detail row with icon, label, and value
+class _DetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: Colors.grey.shade600),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: Theme.of(context).textTheme.labelSmall),
+              Text(value, 
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: valueColor,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

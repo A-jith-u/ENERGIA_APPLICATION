@@ -19,7 +19,7 @@ class DepartmentDashboard extends StatefulWidget {
 
 class _DepartmentDashboardState extends State<DepartmentDashboard> {
   late DepartmentCustomizationService _customizationService;
-  int _selectedMenuIndex = 0;
+  final int _selectedMenuIndex = 0;
 
   @override
   void initState() {

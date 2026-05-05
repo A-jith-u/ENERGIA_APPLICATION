@@ -63,6 +63,7 @@ admins_table = Table(
     Column("email", String, unique=True, nullable=False),
     Column("password_hash", String, nullable=False),
     Column("name", String, nullable=False),
+    Column("phone", String, nullable=True),  # Phone number
     Column("department", String, nullable=False),  # Department this admin manages (or 'admin' for system-wide)
     Column("role_level", String, nullable=False, default="department_admin"),  # "superadmin" or "department_admin"
     Column("is_active", Integer, default=1),  # 0=inactive, 1=active
@@ -80,6 +81,7 @@ coordinators_table = Table(
     Column("email", String, unique=True, nullable=False),
     Column("password_hash", String, nullable=False),
     Column("name", String, nullable=False),
+    Column("phone", String, nullable=True),  # Phone number
     Column("department", String, nullable=False),  # Department this coordinator manages
     Column("assigned_rooms", String, nullable=True),  # JSON list of assigned room IDs
     Column("is_active", Integer, default=1),  # 0=inactive, 1=active
@@ -155,6 +157,7 @@ class_representatives_table = Table(
     Column("ktu_id", String, unique=True, nullable=False),
     Column("email", String, unique=True, nullable=False),
     Column("name", String, nullable=True),
+    Column("phone", String, nullable=True),  # Phone number
     Column("department", String, nullable=False),  # Department class belongs to
     Column("year", String, nullable=False),
     Column("section", String, nullable=True),  # Class section (A, B, C, etc.)
@@ -426,6 +429,9 @@ if "created_at" not in class_rep_columns:
 if "updated_at" not in class_rep_columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE class_representatives ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()"))
+if "phone" not in class_rep_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE class_representatives ADD COLUMN phone VARCHAR"))
 
 admin_columns = [col["name"] for col in insp.get_columns("admins")]
 if "name" not in admin_columns:
@@ -437,6 +443,9 @@ if "email" not in admin_columns:
 if "username" not in admin_columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE admins ADD COLUMN username VARCHAR UNIQUE"))
+if "phone" not in admin_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE admins ADD COLUMN phone VARCHAR"))
 
 # Ensure sensor_data has all required metric columns (idempotent)
 sensor_columns = [col["name"] for col in insp.get_columns("sensor_data")]
@@ -482,6 +491,9 @@ if "created_at" not in coordinator_columns:
 if "updated_at" not in coordinator_columns:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE coordinators ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()"))
+if "phone" not in coordinator_columns:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE coordinators ADD COLUMN phone VARCHAR"))
 
 room_columns = [col["name"] for col in insp.get_columns("rooms")]
 with engine.begin() as conn:
