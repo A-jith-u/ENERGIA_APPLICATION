@@ -39,6 +39,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   Timer? _liveTimer;
   EnhancedUser? _currentUser;
   String? _userDepartment; // Store department for filtering
+  String? _authToken;
   final DepartmentCustomizationService _customizationService =
       DepartmentCustomizationService();
   final List<String> _accessibleRooms = [];
@@ -61,6 +62,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       // Fallback to shared preferences if available
       _loadUserDepartmentFromPrefs();
     }
+    _loadAuthToken();
 
     // Load initial data for both room view and analytics
     _loadLiveData();
@@ -99,6 +101,19 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
       }
     } catch (e) {
       // Silent fail - will use null department which means show all
+    }
+  }
+
+  Future<void> _loadAuthToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
+      if (!mounted) return;
+      setState(() {
+        _authToken = token;
+      });
+    } catch (e) {
+      // Best effort only.
     }
   }
 
@@ -297,11 +312,13 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
           queryString += '&department=${Uri.encodeComponent(_userDepartment!)}';
         }
 
+        final headers = {
+          'Content-Type': 'application/json',
+          if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+        };
+
         final resp = await http
-            .get(
-              Uri.parse('$baseUrl$queryString'),
-              headers: {'Content-Type': 'application/json'},
-            )
+            .get(Uri.parse('$baseUrl$queryString'), headers: headers)
             .timeout(const Duration(seconds: 6));
 
         if (resp.statusCode == 200) {
@@ -1687,11 +1704,13 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
         final queryString =
             '/sensor-data?limit=100&department=${Uri.encodeComponent(widget.department!)}';
 
+        final headers = {
+          'Content-Type': 'application/json',
+          if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+        };
+
         final resp = await http
-            .get(
-              Uri.parse('$baseUrl$queryString'),
-              headers: {'Content-Type': 'application/json'},
-            )
+            .get(Uri.parse('$baseUrl$queryString'), headers: headers)
             .timeout(const Duration(seconds: 6));
 
         if (resp.statusCode == 200) {
@@ -2414,6 +2433,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
               final roomId = (room['room_id'] ?? '').toString();
               final roomName = (room['room_name'] ?? roomId).toString();
               final floor = (room['floor_number'] ?? '-').toString();
+              final hasRelayMapping = _relayMappingByRoom.containsKey(roomId);
               final hasActiveRelay = _hasActiveRelayConnectionForRoom(roomId);
 
               return Card(
@@ -2504,7 +2524,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
                             label: const Text('Edit Threshold Range'),
                           ),
                           const SizedBox(width: 10),
-                          if (hasActiveRelay) ...[
+                          if (hasRelayMapping) ...[
                             ElevatedButton(
                               onPressed: () => _controlRoomPower(roomId, 'ON'),
                               style: ElevatedButton.styleFrom(

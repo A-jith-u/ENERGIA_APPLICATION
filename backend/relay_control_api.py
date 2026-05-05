@@ -152,6 +152,42 @@ def get_command_status(command_id: int) -> dict:
         return None
 
 
+@app.get("/command-status/{command_id}")
+async def relay_command_status(command_id: int, authorization: Optional[str] = Header(None)):
+    """Get delivery/execution status of a queued relay command."""
+    try:
+        verify_token(authorization, ["sergeant", "admin", "coordinator"])
+
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT id, device_id, command, status, created_at, executed_at
+                FROM relay_commands
+                WHERE id = :command_id
+                LIMIT 1
+            """), {"command_id": command_id}).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Command {command_id} not found")
+
+        return {
+            "status": "success",
+            "command": {
+                "command_id": row[0],
+                "device_id": row[1],
+                "action": row[2],
+                "queue_status": row[3],
+                "created_at": row[4].isoformat() if row[4] else None,
+                "executed_at": row[5].isoformat() if row[5] else None,
+                "is_delivered": row[3] == "EXECUTED",
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Relay Control] Error getting command status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/control")
 async def control_relay(request: RelayControlRequest, authorization: Optional[str] = Header(None)):
     """
@@ -552,32 +588,43 @@ async def list_room_relay_mappings(authorization: Optional[str] = Header(None)):
 async def get_pending_commands(device_id: str):
     """
     ESP32 polls this endpoint to check for pending relay commands.
-    Returns oldest unacknowledged command for the device.
+    Commands are consume-once: once fetched, they are marked DELIVERED and
+    will not be sent again on subsequent polls.
     """
     try:
-        with engine.connect() as conn:
-            # Get oldest pending command
+        with engine.begin() as conn:
+            # Atomically claim the oldest pending command for this device.
             result = conn.execute(text("""
-                SELECT id, command, created_at
-                FROM relay_commands
-                WHERE device_id = :device_id
-                AND status = 'PENDING'
-                ORDER BY created_at ASC
-                LIMIT 1
+                WITH next_cmd AS (
+                    SELECT id
+                    FROM relay_commands
+                    WHERE device_id = :device_id
+                      AND status = 'PENDING'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE relay_commands rc
+                SET status = 'DELIVERED'
+                FROM next_cmd
+                WHERE rc.id = next_cmd.id
+                RETURNING rc.id, rc.command, rc.created_at
             """), {"device_id": device_id}).fetchone()
-            
-            if result:
-                command_id, command, created_at = result
-                return {
-                    "command_id": command_id,
-                    "command": command,
-                    "device_id": device_id,
-                    "timestamp": created_at.isoformat()
-                }
-            else:
-                # No pending commands - return 204 No Content
-                from fastapi import Response
-                return Response(status_code=204)
+
+        if result:
+            command_id, command, created_at = result
+            return {
+                "device_id": device_id,
+                "command_id": command_id,
+                "command": command,
+                "created_at": created_at.isoformat() if created_at else None,
+            }
+
+        # No pending command: lightweight response for MCU polling.
+        return {
+            "device_id": device_id,
+            "command": None,
+        }
                 
     except Exception as e:
         print(f"Error fetching commands: {e}")

@@ -39,9 +39,9 @@ class _DashboardPageState extends State<DashboardPage> {
   int _badgeCount = 0;
 
   static const List<String> _baseUrls = [
-    'http://127.0.0.1:5000',   // Windows desktop app
-    'http://localhost:5000',    // fallback
-    'http://10.0.2.2:5000',    // Android emulator
+    'http://127.0.0.1:5000', // Windows desktop app
+    'http://localhost:5000', // fallback
+    'http://10.0.2.2:5000', // Android emulator
     'http://192.168.160.1:5000', // physical device (update to your machine IP)
   ];
 
@@ -129,9 +129,12 @@ class _DashboardPageState extends State<DashboardPage> {
           final body = jsonDecode(resp.body);
           final raw = body is List ? body : (body['anomalies'] as List? ?? []);
           final fetched = List<Map<String, dynamic>>.from(
-              raw.whereType<Map<String, dynamic>>());
+            raw.whereType<Map<String, dynamic>>(),
+          );
           if (!mounted) return;
-          setState(() { _anomalies = fetched; });
+          setState(() {
+            _anomalies = fetched;
+          });
           _reminderService.syncAlerts(fetched);
           return;
         }
@@ -155,16 +158,23 @@ class _DashboardPageState extends State<DashboardPage> {
         if (query.isNotEmpty) {
           url += '?${query.join('&')}';
         }
+        final headers = {
+          'Content-Type': 'application/json',
+          if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+        };
         final resp = await http
-            .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
+            .get(Uri.parse(url), headers: headers)
             .timeout(const Duration(seconds: 6));
         if (resp.statusCode == 200) {
           final body = jsonDecode(resp.body);
           final raw = body is List ? body : (body['anomalies'] as List? ?? []);
           final fetched = List<Map<String, dynamic>>.from(
-              raw.whereType<Map<String, dynamic>>());
+            raw.whereType<Map<String, dynamic>>(),
+          );
           if (!mounted) return;
-          setState(() { _anomalies = fetched; });
+          setState(() {
+            _anomalies = fetched;
+          });
           _reminderService.syncAlerts(fetched);
           if (_index == 2) _reminderService.clearBadge();
           return;
@@ -197,10 +207,7 @@ class _DashboardPageState extends State<DashboardPage> {
           icon: Icons.notifications_outlined,
           count: _badgeCount,
         ),
-        activeIcon: _CRBadgeIcon(
-          icon: Icons.notifications,
-          count: _badgeCount,
-        ),
+        activeIcon: _CRBadgeIcon(icon: Icons.notifications, count: _badgeCount),
         label: 'Alerts',
       ),
       const BottomNavigationBarItem(
@@ -214,17 +221,21 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _resolveAlertById(dynamic alertId) async {
     for (final base in _baseUrls) {
       try {
-        final r = await http.put(
-          Uri.parse('$base/anomalies/$alertId/resolve'),
-          headers: {'Content-Type': 'application/json'},
-          body: '{"status":"resolved"}',
-        ).timeout(const Duration(seconds: 8));
+        final r = await http
+            .put(
+              Uri.parse('$base/anomalies/$alertId/resolve'),
+              headers: {'Content-Type': 'application/json'},
+              body: '{"status":"resolved"}',
+            )
+            .timeout(const Duration(seconds: 8));
         if (r.statusCode == 200 || r.statusCode == 204) {
           await _fetchAnomalies();
           _clearAlertBadge();
           return;
         }
-      } catch (_) { continue; }
+      } catch (_) {
+        continue;
+      }
     }
   }
 
@@ -281,6 +292,7 @@ class _DashboardPageState extends State<DashboardPage> {
         return _WelcomeSection(
           scheme: scheme,
           assignedRoomId: _assignedRoomId,
+          authToken: _authToken,
         );
       case 1:
         return _ReportsSection(scheme: scheme, userToken: _authToken);
@@ -1085,10 +1097,12 @@ class _ProfileInfoTile extends StatelessWidget {
 class _WelcomeSection extends StatefulWidget {
   final ColorScheme scheme;
   final String? assignedRoomId;
+  final String? authToken;
 
   const _WelcomeSection({
     required this.scheme,
     this.assignedRoomId,
+    this.authToken,
   });
 
   @override
@@ -1117,10 +1131,16 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   Timer? _refreshTimer;
   String? _preferredBaseUrl;
 
+  String _canonicalDeviceIdForRoom(String roomId) {
+    final normalized = roomId.trim().toUpperCase();
+    if (normalized == 'CS-201') return 'ESP32-CS-C201';
+    return roomId.trim();
+  }
+
   String get _roomDeviceId =>
       (widget.assignedRoomId == null || widget.assignedRoomId!.trim().isEmpty)
           ? 'CS-201'
-          : widget.assignedRoomId!.trim();
+          : _canonicalDeviceIdForRoom(widget.assignedRoomId!);
 
   // Getter for power in kW
   double get _currentPowerKw => _currentPowerW / 1000.0;
@@ -1148,6 +1168,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
         'http://localhost:5000',
         'http://127.0.0.1:5000',
         'http://localhost:5000',
+        'http://192.168.1.25:5000',
         'http://10.0.2.2:5000',
       ];
 
@@ -1164,9 +1185,16 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             '$baseUrl/sensor-data?limit=36&device_id=${Uri.encodeComponent(_roomDeviceId)}',
           );
 
+          // Build headers with authorization token
+          final headers = {
+            'Content-Type': 'application/json',
+            if (widget.authToken != null)
+              'Authorization': 'Bearer ${widget.authToken}',
+          };
+
           // Use a smaller timeout to keep UI responsive even when a host is down.
           final finalResponse = await http
-              .get(roomUri, headers: {'Content-Type': 'application/json'})
+              .get(roomUri, headers: headers)
               .timeout(
                 const Duration(seconds: 4),
                 onTimeout: () {
@@ -1384,6 +1412,8 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hasSensorData =
+        _livePowerSeriesKw.isNotEmpty || _lastDataUpdate != null;
 
     final currentKw = _currentPowerW / 1000.0;
     final peakKw = _peakTodayW / 1000.0;
@@ -1525,7 +1555,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
         const SizedBox(height: 16),
 
         // Real-time sensor readings in card format
-        if (_liveDataAvailable)
+        if (hasSensorData)
           Row(
             children: [
               Expanded(
@@ -1601,7 +1631,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
           child: Container(
             padding: const EdgeInsets.all(16),
             child:
-                _liveDataAvailable
+                hasSensorData
                     ? Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
@@ -1676,9 +1706,9 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
         const SizedBox(height: 40),
 
         // Live Power Graph with proper scaling
-        if (_liveDataAvailable && _livePowerSeriesKw.isNotEmpty)
+        if (_livePowerSeriesKw.isNotEmpty)
           _buildLivePowerGraph()
-        else if (!_isLoading && !_liveDataAvailable)
+        else if (!_isLoading)
           Container(
             height: 300,
             decoration: BoxDecoration(
@@ -2081,9 +2111,10 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
     super.didUpdateWidget(old);
     if (old.anomalies != widget.anomalies) {
       setState(() {
-        _localAnomalies = widget.anomalies
-            .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
-            .toList();
+        _localAnomalies =
+            widget.anomalies
+                .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+                .toList();
       });
     }
   }
@@ -2109,17 +2140,20 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
           final body = jsonDecode(resp.body);
           final raw = body is List ? body : (body['anomalies'] as List? ?? []);
           final fetched = List<Map<String, dynamic>>.from(
-              raw.whereType<Map<String, dynamic>>());
+            raw.whereType<Map<String, dynamic>>(),
+          );
 
           Map<String, Map<String, dynamic>> notifsByRoom = {};
           final email = widget.userEmail?.trim() ?? '';
-          if (email.isNotEmpty || (widget.department != null && widget.department!.isNotEmpty)) {
+          if (email.isNotEmpty ||
+              (widget.department != null && widget.department!.isNotEmpty)) {
             try {
               String notifUrl = '$base/notify/notifications?limit=100';
               if (email.isNotEmpty) {
                 notifUrl += '&email=${Uri.encodeComponent(email)}';
               } else {
-                notifUrl += '&department=${Uri.encodeComponent(widget.department!)}';
+                notifUrl +=
+                    '&department=${Uri.encodeComponent(widget.department!)}';
               }
               final notifResp = await http
                   .get(
@@ -2128,15 +2162,20 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
                   )
                   .timeout(const Duration(seconds: 6));
               if (notifResp.statusCode == 200) {
-                final notifBody = jsonDecode(notifResp.body) as Map<String, dynamic>;
+                final notifBody =
+                    jsonDecode(notifResp.body) as Map<String, dynamic>;
                 final notifications = notifBody['notifications'] as List? ?? [];
                 for (final n in notifications) {
-                  final roomId = (n['room_id'] ?? n['device_id'] ?? '').toString().trim();
+                  final roomId =
+                      (n['room_id'] ?? n['device_id'] ?? '').toString().trim();
                   if (roomId.isEmpty) continue;
                   final mapN = n as Map<String, dynamic>;
                   notifsByRoom[roomId] = mapN;
                   notifsByRoom[roomId.toUpperCase()] = mapN;
-                  final bareRoom = roomId.replaceFirst(RegExp(r'^ESP32-', caseSensitive: false), '');
+                  final bareRoom = roomId.replaceFirst(
+                    RegExp(r'^ESP32-', caseSensitive: false),
+                    '',
+                  );
                   if (bareRoom.isNotEmpty) {
                     notifsByRoom[bareRoom] = mapN;
                     notifsByRoom[bareRoom.toUpperCase()] = mapN;
@@ -2152,9 +2191,10 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
 
           if (!mounted) return;
           setState(() {
-            _localAnomalies = fetched
-                .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
-                .toList();
+            _localAnomalies =
+                fetched
+                    .where((a) => !_resolvingIds.contains(a['id'] ?? a['_id']))
+                    .toList();
             _notificationsByRoom = notifsByRoom;
           });
           return;
@@ -2166,23 +2206,32 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
   }
 
   Widget _buildAlertMessageContent(Map<String, dynamic> alert) {
-    final roomId = (alert['room_id'] ?? alert['device_id'] ?? '').toString().trim();
+    final roomId =
+        (alert['room_id'] ?? alert['device_id'] ?? '').toString().trim();
     final notification =
-        _notificationsByRoom[roomId] ?? _notificationsByRoom[roomId.toUpperCase()];
+        _notificationsByRoom[roomId] ??
+        _notificationsByRoom[roomId.toUpperCase()];
     final theme = Theme.of(context);
 
     if (notification != null) {
       final title = (notification['title'] ?? '').toString();
       final message = (notification['message'] ?? '').toString();
       final notifPowerRaw = notification['power'];
-      final notifPower = notifPowerRaw is num
-          ? notifPowerRaw.toDouble()
-          : double.tryParse('${notifPowerRaw ?? ''}');
+      final notifPower =
+          notifPowerRaw is num
+              ? notifPowerRaw.toDouble()
+              : double.tryParse('${notifPowerRaw ?? ''}');
       final rawPower = alert['power'];
-      final anomalyPower = rawPower is num ? rawPower.toDouble() : double.tryParse('${rawPower ?? ''}');
-      final powerText = notifPower != null
-          ? '${notifPower.toStringAsFixed(1)}W'
-          : (anomalyPower != null ? '${anomalyPower.toStringAsFixed(1)}W' : 'N/A');
+      final anomalyPower =
+          rawPower is num
+              ? rawPower.toDouble()
+              : double.tryParse('${rawPower ?? ''}');
+      final powerText =
+          notifPower != null
+              ? '${notifPower.toStringAsFixed(1)}W'
+              : (anomalyPower != null
+                  ? '${anomalyPower.toStringAsFixed(1)}W'
+                  : 'N/A');
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2231,11 +2280,15 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
         ),
         Text(
           'Recommendation: Check the room immediately, reduce unnecessary load, and mark resolved after confirmation.',
-          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: Colors.grey.shade700,
+          ),
         ),
         Text(
           'Power: ${alert['power']}W  |  Occupancy: ${alert['occupancy']}  |  Score: ${alert['score']}',
-          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey.shade500),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: Colors.grey.shade500,
+          ),
         ),
       ],
     );
@@ -2270,8 +2323,10 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
         }
         // Fallback to DELETE
         final del = await http
-            .delete(Uri.parse('$base/anomalies/$alertId'),
-                headers: {'Content-Type': 'application/json'})
+            .delete(
+              Uri.parse('$base/anomalies/$alertId'),
+              headers: {'Content-Type': 'application/json'},
+            )
             .timeout(const Duration(seconds: 8));
         if (del.statusCode == 200 ||
             del.statusCode == 204 ||
@@ -2289,39 +2344,47 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
     if (success) {
       setState(() {
         _resolvingIds.remove(alertId);
-        _localAnomalies
-            .removeWhere((a) => (a['id'] ?? a['_id']) == alertId);
+        _localAnomalies.removeWhere((a) => (a['id'] ?? a['_id']) == alertId);
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Row(children: [
-          Icon(Icons.check_circle, color: Colors.white, size: 18),
-          SizedBox(width: 8),
-          Text('Alert resolved successfully.'),
-        ]),
-        backgroundColor: Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.white, size: 18),
+              SizedBox(width: 8),
+              Text('Alert resolved successfully.'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
     } else {
       setState(() => _resolvingIds.remove(alertId));
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Row(children: [
-          Icon(Icons.error_outline, color: Colors.white, size: 18),
-          SizedBox(width: 8),
-          Expanded(child: Text('Could not reach server. Try again.')),
-        ]),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        action: SnackBarAction(
-          label: 'Retry',
-          textColor: Colors.white,
-          onPressed: () {
-            final retryIndex = _localAnomalies
-                .indexWhere((a) => (a['id'] ?? a['_id']) == alertId);
-            if (retryIndex >= 0) _resolveAlert(retryIndex);
-          },
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white, size: 18),
+              SizedBox(width: 8),
+              Expanded(child: Text('Could not reach server. Try again.')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              final retryIndex = _localAnomalies.indexWhere(
+                (a) => (a['id'] ?? a['_id']) == alertId,
+              );
+              if (retryIndex >= 0) _resolveAlert(retryIndex);
+            },
+          ),
         ),
-      ));
+      );
     }
   }
 
@@ -2338,14 +2401,16 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
           // ── Header ──────────────────────────────────────────────────────
           Text(
             '$dept Anomaly Alerts',
-            style: theme.textTheme.headlineSmall
-                ?.copyWith(fontWeight: FontWeight.bold),
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 6),
           Text(
             'Live anomaly detections from department sensors',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: Colors.grey.shade600),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: Colors.grey.shade600,
+            ),
           ),
           const SizedBox(height: 20),
 
@@ -2354,22 +2419,31 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
             Padding(
               padding: const EdgeInsets.only(top: 60),
               child: Center(
-                child: Column(children: [
-                  Icon(Icons.check_circle_outline,
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.check_circle_outline,
                       size: 56,
-                      color: Colors.green.withOpacity(0.55)),
-                  const SizedBox(height: 14),
-                  Text('No anomaly alerts detected',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
-                  Text('All sensors are operating normally',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: Colors.grey.shade500)),
-                ]),
+                      color: Colors.green.withOpacity(0.55),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'No anomaly alerts detected',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'All sensors are operating normally',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             )
-
           // ── Alert cards ──────────────────────────────────────────────────
           else
             ListView.builder(
@@ -2383,26 +2457,30 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
 
                 return Card(
                   elevation: 2,
-                  margin:
-                      const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                  margin: const EdgeInsets.symmetric(
+                    vertical: 6,
+                    horizontal: 2,
+                  ),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
-                        vertical: 10, horizontal: 6),
+                      vertical: 10,
+                      horizontal: 6,
+                    ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         // ── Icon ──────────────────────────────────────────
                         Padding(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 10),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: CircleAvatar(
-                            backgroundColor:
-                                Colors.red.withOpacity(0.12),
+                            backgroundColor: Colors.red.withOpacity(0.12),
                             child: const Icon(
-                                Icons.warning_amber_rounded,
-                                color: Colors.red),
+                              Icons.warning_amber_rounded,
+                              color: Colors.red,
+                            ),
                           ),
                         ),
 
@@ -2414,8 +2492,9 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
                               Text(
                                 'Anomaly in ${alert['room_id'] ?? alert['device_id'] ?? 'Unknown room'}',
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
                               ),
                               const SizedBox(height: 4),
                               _buildAlertMessageContent(alert),
@@ -2430,36 +2509,44 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
                             onPressed:
                                 isResolving ? null : () => _resolveAlert(i),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: isResolving
-                                  ? Colors.green.withOpacity(0.5)
-                                  : Colors.green,
+                              backgroundColor:
+                                  isResolving
+                                      ? Colors.green.withOpacity(0.5)
+                                      : Colors.green,
                               foregroundColor: Colors.white,
-                              disabledBackgroundColor:
-                                  Colors.green.withOpacity(0.5),
+                              disabledBackgroundColor: Colors.green.withOpacity(
+                                0.5,
+                              ),
                               disabledForegroundColor: Colors.white70,
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 10),
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
                               shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
                               elevation: 0,
                             ),
-                            icon: isResolving
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor:
-                                          AlwaysStoppedAnimation<Color>(
-                                              Colors.white),
-                                    ),
-                                  )
-                                : const Icon(Icons.check, size: 16),
+                            icon:
+                                isResolving
+                                    ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              Colors.white,
+                                            ),
+                                      ),
+                                    )
+                                    : const Icon(Icons.check, size: 16),
                             label: Text(
                               isResolving ? 'Resolving...' : 'Resolve',
                               style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600),
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -2499,15 +2586,12 @@ class _CRBadgeIcon extends StatelessWidget {
               duration: const Duration(milliseconds: 220),
               curve: Curves.elasticOut,
               child: Container(
-                constraints:
-                    const BoxConstraints(minWidth: 18, minHeight: 18),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 4, vertical: 1),
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                 decoration: BoxDecoration(
                   color: Colors.red,
                   borderRadius: BorderRadius.circular(10),
-                  border:
-                      Border.all(color: Colors.white, width: 1.5),
+                  border: Border.all(color: Colors.white, width: 1.5),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.red.withOpacity(0.45),
