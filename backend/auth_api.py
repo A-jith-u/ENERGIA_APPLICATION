@@ -456,78 +456,107 @@ def _is_test_identifier(value: str | None) -> bool:
 
 
 def _build_device_candidates(room_or_device_id: str | None) -> list[str]:
-    """Return likely sensor IDs for a room/device token."""
+    """Return likely sensor IDs, prioritizing normalized versions."""
     if not room_or_device_id:
         return []
 
     token = str(room_or_device_id).strip()
-    if not token:
-        return []
-
     out: list[str] = []
 
     def _push(value: str | None):
-        if not value:
-            return
+        if not value: return
         v = value.strip()
-        if not v:
-            return
         if all(v.upper() != existing.upper() for existing in out):
             out.append(v)
 
+    # 1. Try the exact token provided
     _push(token)
+    
+    # 2. Handle the "ESP32-" prefix by removing it (Normalization Alignment)
     upper_token = token.upper()
-
     if upper_token.startswith("ESP32-"):
-        _push(token[6:])
-    else:
-        _push(f"ESP32-{token}")
+        _push(token[6:]) 
 
-    # Heuristic for IDs like CS-201 <-> ESP32-CS-C201
-    base = token[6:] if upper_token.startswith("ESP32-") else token
-    m = re.match(r"^([A-Za-z]+)-(\d+)$", base)
-    if m:
-        dept = m.group(1).upper()
-        room_num = m.group(2)
-        _push(f"ESP32-{dept}-{dept[:1]}{room_num}")
-
-    m2 = re.match(r"^([A-Za-z]+)-([A-Za-z])(\d+)$", base)
-    if m2:
-        _push(f"{m2.group(1).upper()}-{m2.group(3)}")
+    # 3. Handle the specific Class 201 -> CS-C201 logic
+    # This ensures "Floor-2-Class-201" or "Class-201" maps to the new room_name
+    if "201" in token:
+        _push("CS-C201")
+        _push("CS-201")
 
     return out
 
-
 def _resolve_room_id_for_device(conn, room_or_device_id: str | None) -> str | None:
-    """Resolve incoming device token to canonical rooms.room_id when possible."""
+    """Resolve incoming device token to canonical rooms.room_id."""
     candidates = _build_device_candidates(room_or_device_id)
     if not candidates:
         return None
 
     for candidate in candidates:
+        # Check the room_relay_mapping first
         mapped = conn.execute(
-            text(
-                """
-                SELECT m.room_id
-                FROM room_relay_mapping m
-                WHERE UPPER(m.room_id) = UPPER(:id)
+            text("""
+                SELECT m.room_id 
+                FROM room_relay_mapping m 
+                WHERE UPPER(m.room_id) = UPPER(:id) 
                    OR UPPER(m.relay_device_id) = UPPER(:id)
                 LIMIT 1
-                """
-            ),
-            {"id": candidate},
+            """), {"id": candidate}
         ).fetchone()
-        if mapped and mapped[0]:
-            return mapped[0]
+        if mapped: return mapped[0]
 
+        # Check the rooms table (where you updated the room_name)
         room = conn.execute(
-            text("SELECT room_id FROM rooms WHERE UPPER(room_id)=UPPER(:id) LIMIT 1"),
-            {"id": candidate},
+            text("SELECT room_id FROM rooms WHERE UPPER(room_id)=UPPER(:id) OR UPPER(room_name)=UPPER(:id) LIMIT 1"),
+            {"id": candidate}
         ).fetchone()
-        if room and room[0]:
-            return room[0]
+        if room: return room[0]
 
     return None
+
+def _normalize_device_id_to_relay_format(conn, raw_device_id: str | None) -> str:
+    """
+    Normalize incoming device_id to the canonical relay_device_id format (with ESP32- prefix).
+    
+    Logic:
+    1. Build candidates from the raw input (handles both "CS-C201" and "ESP32-CS-C201")
+    2. Look up the relay_device_id from room_relay_mapping (authoritative source)
+    3. Return the properly formatted device_id (e.g., "ESP32-CS-C201")
+    4. Fall back to adding "ESP32-" prefix if no mapping exists
+    """
+    if not raw_device_id:
+        return raw_device_id or "unknown"
+    
+    candidates = _build_device_candidates(raw_device_id)
+    if not candidates:
+        # No candidates generated, use raw and ensure ESP32- prefix
+        token = str(raw_device_id).strip()
+        if not token.upper().startswith("ESP32-"):
+            return "ESP32-" + token
+        return token
+    
+    # Look for the relay_device_id in room_relay_mapping
+    for candidate in candidates:
+        result = conn.execute(
+            text("""
+                SELECT m.relay_device_id 
+                FROM room_relay_mapping m 
+                WHERE UPPER(m.room_id) = UPPER(:id) 
+                   OR UPPER(m.relay_device_id) = UPPER(:id)
+                LIMIT 1
+            """), {"id": candidate}
+        ).fetchone()
+        if result:
+            relay_device_id = result[0]
+            # Ensure ESP32- prefix
+            if relay_device_id and not relay_device_id.upper().startswith("ESP32-"):
+                return "ESP32-" + relay_device_id
+            return relay_device_id or raw_device_id
+    
+    # No mapping found, apply ESP32- prefix normalization as fallback
+    token = str(raw_device_id).strip()
+    if not token.upper().startswith("ESP32-"):
+        return "ESP32-" + token
+    return token
 
 # Pydantic models
 
@@ -1370,13 +1399,17 @@ def get_anomalies(limit: int = 50, department: str = None, room_id: str = None, 
             if department and not _is_admin_department(department):
                 where_parts.append("r.department = :department")
                 params["department"] = department
+            # Change the where_parts logic for room_id to:
             if room_id:
+                # Get all variations (normalized and prefixed)
                 room_candidates = _build_device_candidates(room_id)
                 room_clauses = []
                 for idx, candidate in enumerate(room_candidates):
                     key = f"room_id_{idx}"
                     params[key] = candidate
-                    room_clauses.append(f"UPPER(a.room_id) = UPPER(:{key})")
+                    # Match against room_id OR the potential old device_id in tracking
+                    room_clauses.append(f"(UPPER(a.room_id) = UPPER(:{key}))")
+                
                 if room_clauses:
                     where_parts.append("(" + " OR ".join(room_clauses) + ")")
 
@@ -2253,7 +2286,6 @@ async def receive_sensor_data(request: Request):
     try:
         payload = await request.json()
         raw_device_id = payload.get("device_id", "unknown")
-        device_id = raw_device_id
         timestamp = datetime.now(timezone.utc)
 
         # Verbose ingest log: show exactly what JSON values arrived at backend.
@@ -2275,9 +2307,9 @@ async def receive_sensor_data(request: Request):
         relay_state = str(payload.get("relay_state", "")).strip().upper()
 
         with engine.begin() as conn:
+            # Normalize device_id to canonical relay_device_id format (ESP32-prefixed)
+            device_id = _normalize_device_id_to_relay_format(conn, raw_device_id)
             resolved_room_id = _resolve_room_id_for_device(conn, raw_device_id)
-            # Store sensor/anomaly records under canonical room_id when resolvable.
-            device_id = resolved_room_id or raw_device_id
 
             # Keep relay heartbeat fresh whenever ESP32 includes relay state in sensor payload.
             if has_relay_state and relay_state in {"ON", "OFF", "UNKNOWN"}:
@@ -2290,11 +2322,11 @@ async def receive_sensor_data(request: Request):
                         DO UPDATE SET state = :state, last_updated = NOW()
                         """
                     ),
-                    {"device_id": raw_device_id, "state": relay_state},
+                    {"device_id": device_id, "state": relay_state},
                 )
 
             if resolved_room_id and resolved_room_id != raw_device_id:
-                print(f"[INGEST][MAP] raw_device_id={raw_device_id} -> room_id={resolved_room_id}")
+                print(f"[INGEST][MAP] raw_device_id={raw_device_id} -> device_id={device_id} -> room_id={resolved_room_id}")
 
             # 2. LOOKUP: Check for a row from this device created in the last 7 minutes.
             # Window is 7 min (not 5) because the ESP32 sends on an exact ~300s timer.
@@ -2584,7 +2616,10 @@ def get_sensor_data(request: Request, limit: int = 60, device_id: str = None, de
 
             if department and not _is_admin_department(department):
                 params["department"] = department
-                where_parts.append("UPPER(r.department) = UPPER(:department)")
+                where_parts.append(
+                    "COALESCE(NULLIF(TRIM(UPPER(r.department)), ''), "
+                    "CASE WHEN UPPER(split_part(m.room_id, '-', 1)) = 'CS' THEN 'CSE' ELSE UPPER(split_part(m.room_id, '-', 1)) END) = UPPER(:department)"
+                )
 
             where_sql = ""
             if where_parts:

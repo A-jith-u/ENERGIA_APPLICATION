@@ -50,6 +50,28 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   int _badgeCount = 0;
   late AlertReminderService _reminderService;
 
+  Map<String, dynamic>? _latestElectricalReading(List<dynamic> readings) {
+    for (final item in readings) {
+      if (item is! Map) continue;
+      final reading = Map<String, dynamic>.from(item);
+      final voltage = _toDouble(reading['voltage']);
+      final current = _toDouble(reading['current']);
+      final power = _toDouble(reading['power'] ?? reading['value']);
+      final energy = _toDouble(reading['energy']);
+
+      if (voltage > 0 || current > 0 || power > 0 || energy > 0) {
+        return reading;
+      }
+    }
+
+    if (readings.isEmpty) {
+      return null;
+    }
+
+    final first = readings.first;
+    return first is Map ? Map<String, dynamic>.from(first) : null;
+  }
+
   // 1. COMBINED INITSTATE (Fixes error G351DE6FA)
   @override
   void initState() {
@@ -136,11 +158,13 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
                 '&department=${Uri.encodeComponent(_userDepartment!)}';
           }
 
+          final headers = {
+            'Content-Type': 'application/json',
+            if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+          };
+
           final resp = await http
-              .get(
-                Uri.parse('$baseUrl$queryString'),
-                headers: {'Content-Type': 'application/json'},
-              )
+              .get(Uri.parse('$baseUrl$queryString'), headers: headers)
               .timeout(const Duration(seconds: 6));
 
           if (resp.statusCode == 200) {
@@ -148,8 +172,9 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
             final readings = data['data'] as List? ?? [];
 
             if (readings.isNotEmpty && mounted) {
+              final latestReading = _latestElectricalReading(readings);
               setState(() {
-                _sensorData = readings.first as Map<String, dynamic>;
+                _sensorData = latestReading;
                 _timeSeriesData = List<Map<String, dynamic>>.from(
                   readings.whereType<Map<String, dynamic>>(),
                 );
@@ -326,7 +351,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
           final data = jsonDecode(resp.body);
           final readings = data['data'] as List? ?? [];
           if (readings.isNotEmpty) {
-            _sensorData = readings.first as Map<String, dynamic>;
+            _sensorData = _latestElectricalReading(readings);
             _timeSeriesData = List<Map<String, dynamic>>.from(
               readings.whereType<Map<String, dynamic>>(),
             );
@@ -1726,8 +1751,24 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
           Map<String, Map<String, dynamic>> groupedData = {};
           for (final reading in readings) {
             final deviceId = reading['device_id']?.toString() ?? 'unknown';
-            // Keep the most recent reading for each device
-            if (!groupedData.containsKey(deviceId)) {
+            final existing = groupedData[deviceId];
+            final currentIsElectrical = _latestElectricalReading([reading]);
+            final existingIsElectrical =
+                existing == null ? null : _latestElectricalReading([existing]);
+
+            // Keep the most recent reading for each device, but prefer
+            // rows that actually carry electrical values over zero-only heartbeats.
+            if (existing == null) {
+              groupedData[deviceId] = reading;
+              continue;
+            }
+
+            if (existingIsElectrical == null && currentIsElectrical != null) {
+              groupedData[deviceId] = reading;
+              continue;
+            }
+
+            if (existingIsElectrical != null && currentIsElectrical != null) {
               groupedData[deviceId] = reading;
             }
           }
