@@ -19,7 +19,7 @@ class _PredictionPageState extends State<PredictionPage> {
   bool _isLoading = false;
   String? _errorMessage;
   Timer? _refreshTimer;
-  int _intervalMinutes = 5; // fixed to 5 minutes horizon
+  final int _intervalMinutes = 5; // fixed to 5 minutes horizon
   DateTime? _lastUpdated;
   static const String _roomName = 'CS-201';
 
@@ -391,9 +391,9 @@ class _PredictionPageState extends State<PredictionPage> {
     final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num?;
     final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num?;
     
-    final predictedEnergy = (yhat as num).toDouble();
-    final lowerBound = (yhatLower as num? ?? predictedEnergy * 0.8).toDouble();
-    final upperBound = (yhatUpper as num? ?? predictedEnergy * 1.2).toDouble();
+    final predictedEnergy = (yhat).toDouble();
+    final lowerBound = (yhatLower ?? predictedEnergy * 0.8).toDouble();
+    final upperBound = (yhatUpper ?? predictedEnergy * 1.2).toDouble();
     
     // Extract live sensor data if available
     dynamic latestSensor = _prediction!['latest_sensor_reading'];
@@ -1188,9 +1188,9 @@ class _PredictionPageState extends State<PredictionPage> {
     final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num? ?? 0;
     final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num? ?? 0;
     
-    final predictedEnergy = (yhat as num).toDouble();
-    final lowerBound = (yhatLower as num).toDouble();
-    final upperBound = (yhatUpper as num).toDouble();
+    final predictedEnergy = (yhat).toDouble();
+    final lowerBound = (yhatLower).toDouble();
+    final upperBound = (yhatUpper).toDouble();
     final timestamp = _prediction!['timestamp'] as String;
 
     // Determine status color based on predicted value
@@ -1365,9 +1365,9 @@ class _PredictionPageState extends State<PredictionPage> {
     final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num? ?? 0;
     final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num? ?? 0;
     
-    final predictedEnergy = (yhat as num).toDouble();
-    final lowerBound = (yhatLower as num).toDouble();
-    final upperBound = (yhatUpper as num).toDouble();
+    final predictedEnergy = (yhat).toDouble();
+    final lowerBound = (yhatLower).toDouble();
+    final upperBound = (yhatUpper).toDouble();
 
     return Card(
       elevation: 2,
@@ -1416,7 +1416,7 @@ class _PredictionPageState extends State<PredictionPage> {
                         reservedSize: 40,
                         getTitlesWidget: (value, meta) {
                           return Text(
-                            '${value.toStringAsFixed(1)}',
+                            value.toStringAsFixed(1),
                             style: const TextStyle(fontSize: 10),
                           );
                         },
@@ -1662,7 +1662,7 @@ class _PredictionPageState extends State<PredictionPage> {
                       ),
                     ),
                     Text(
-                      '${powerFactor.toStringAsFixed(2)}',
+                      powerFactor.toStringAsFixed(2),
                       style: theme.textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),

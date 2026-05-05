@@ -5,7 +5,6 @@ import 'role_selection_page.dart';
 import 'graph_adm.dart';
 import 'anomaly_adm.dart';
 import 'prediction_page.dart';
-import 'recommendations_page.dart';
 import 'widgets/recommendation_widgets.dart';
 import 'widgets/prediction_15min_widget.dart';
 

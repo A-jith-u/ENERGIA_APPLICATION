@@ -5,9 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'services/api.dart';
 import 'services/notifier.dart';
-import 'package:energia/models/user_role_model.dart';
 import 'package:energia/services/department_auth_service.dart';
 import 'package:energia/coordinator_dashboard.dart';
 

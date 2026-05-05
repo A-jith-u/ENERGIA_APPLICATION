@@ -380,7 +380,7 @@ class DepartmentCustomizationService {
       Department.admin: [],
     };
 
-    return (roomsByDept[department] as List<dynamic>?)?.cast<String>() ?? [];
+    return (roomsByDept[department])?.cast<String>() ?? [];
   }
 
   List<DashboardFeature> _getDepartmentSpecificFeatures(

@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'widgets/energy_visualization_widgets.dart';
-import 'services/api.dart'; // Ensure this matches your project structure
+// Ensure this matches your project structure
 import 'services/notifier.dart'; // Ensure this matches your project structure
 
 class AnomalyViewerPage extends StatefulWidget {

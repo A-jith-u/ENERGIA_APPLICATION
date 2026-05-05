@@ -8,7 +8,6 @@ import 'role_selection_page.dart';
 import 'dashboard_scaffold.dart'; // Ensure this is imported
 import 'prediction_page.dart';
 import 'prediction_comparison_page.dart';
-import 'recommendations_page.dart';
 import 'widgets/recommendation_widgets.dart';
 import 'widgets/energy_visualization_widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1506,7 +1505,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'Welcome to ${_roomDeviceId}! 💡',
+                      'Welcome to $_roomDeviceId! 💡',
                       style: theme.textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.w900,
                         color: Colors.white,

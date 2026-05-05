@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -54,8 +53,9 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
     final r = roomName.trim().toUpperCase().replaceAll(' ', '');
     if (r.startsWith('ESP32-')) return r;
     if (r.startsWith('CS-')) return 'ESP32-CS-C${r.split('-').last}';
-    if (r.startsWith('CS') && r.length > 2)
+    if (r.startsWith('CS') && r.length > 2) {
       return 'ESP32-CS-C${r.substring(2)}';
+    }
     return r;
   }
 
@@ -353,7 +353,7 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
           final delta = ts.difference(target).abs();
           if (delta > _targetWindow) continue;
 
-          if (best == null || (bestDelta != null && delta < bestDelta!)) {
+          if (best == null || (bestDelta != null && delta < bestDelta)) {
             best = r;
             bestDelta = delta;
           }

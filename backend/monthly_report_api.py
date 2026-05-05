@@ -2,7 +2,9 @@
 Generates comprehensive monthly reports with energy consumption analytics,
 trends, recommendations, and department-wise breakdowns.
 """
-from fastapi import APIRouter, HTTPException
+import jwt
+import traceback
+from fastapi import APIRouter, HTTPException, Header, Request
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text, func
 from typing import Dict, List, Any
@@ -17,11 +19,45 @@ except Exception:
     # Script mode: started via `python app_main.py` from backend folder
     import config  # type: ignore
 
-app = FastAPI() # Make sure this line exists!
-
 DB_URL = config.get_db_url()
+JWT_SECRET = config.get_jwt_secret()
+JWT_ALG = "HS256"
+
+app = FastAPI()
 router = APIRouter()
 engine = create_engine(DB_URL)
+
+
+def _verify_admin_token(authorization: str | None) -> dict:
+    if not authorization:
+        print("[monthly_report] DEBUG: No authorization header")
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        print("[monthly_report] DEBUG: Empty token after removing Bearer prefix")
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        print(f"[monthly_report] DEBUG: Attempting to decode token with secret: {JWT_SECRET[:20]}...")
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        print(f"[monthly_report] DEBUG: Token decoded successfully. Payload: {payload}")
+    except jwt.ExpiredSignatureError as e:
+        print(f"[monthly_report] DEBUG: Token expired: {e}")
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.PyJWTError as e:
+        print(f"[monthly_report] DEBUG: JWT decode error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    role = (payload.get("role") or "").lower()
+    print(f"[monthly_report] DEBUG: User role from token: '{role}'")
+    
+    if role != "admin":
+        print(f"[monthly_report] DEBUG: Role check failed. Expected 'admin', got '{role}'")
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    print(f"[monthly_report] DEBUG: Token verified successfully for user: {payload.get('user_id')}")
+    return payload
 
 
 def _decimal_default(obj):
@@ -32,101 +68,178 @@ def _decimal_default(obj):
 
 
 @router.get("/monthly-report")
-async def get_monthly_report(month: int = None, year: int = None):
+async def get_monthly_report(
+    request: Request,
+    month: int = None,
+    year: int = None,
+    report_type: str = "both",
+    authorization: str | None = Header(default=None, alias="Authorization"),
+):
     """Generate comprehensive monthly report.
-    
-    Args:
-        month: Month number (1-12). Defaults to current month.
-        year: Year (e.g., 2026). Defaults to current year.
-    
-    Returns:
-        Complete monthly report with:
-        - Overall statistics
-        - Department-wise breakdown
-        - Daily consumption trends
-        - Peak usage analysis
-        - Recommendations for improvement
-        - Comparative analysis with previous month
+
+    report_type values:
+    - normal: user-friendly report
+    - technical: detailed technical report
+    - both: return both variants plus legacy fields
     """
     try:
-        # Default to current month if not specified
+        _verify_admin_token(authorization)
+
+        if report_type not in {"normal", "technical", "both"}:
+            raise HTTPException(status_code=400, detail="report_type must be normal, technical, or both")
+
         now = datetime.now()
         target_month = month or now.month
         target_year = year or now.year
-        
-        # Calculate date ranges
+
         report_start = datetime(target_year, target_month, 1)
-        if target_month == 12:
-            report_end = datetime(target_year + 1, 1, 1)
-        else:
-            report_end = datetime(target_year, target_month + 1, 1)
-        
-        # Previous month for comparison
+        report_end = datetime(target_year + 1, 1, 1) if target_month == 12 else datetime(target_year, target_month + 1, 1)
+
         if target_month == 1:
             prev_start = datetime(target_year - 1, 12, 1)
             prev_end = datetime(target_year, 1, 1)
         else:
             prev_start = datetime(target_year, target_month - 1, 1)
             prev_end = datetime(target_year, target_month, 1)
-        
+
         with engine.connect() as conn:
-            # 1. Overall Statistics
             overall_stats = _get_overall_stats(conn, report_start, report_end)
-            
-            # 2. Previous month stats for comparison
             prev_stats = _get_overall_stats(conn, prev_start, prev_end)
-            
-            # 3. Department-wise breakdown
             dept_breakdown = _get_department_breakdown(conn, report_start, report_end)
-            
-            # 4. Daily consumption trends
             daily_trends = _get_daily_trends(conn, report_start, report_end)
-            
-            # 5. Peak usage analysis
             peak_analysis = _get_peak_usage(conn, report_start, report_end)
-            
-            # 6. Classroom-wise consumption
             classroom_data = _get_classroom_consumption(conn, report_start, report_end)
-            
-            # 7. Generate recommendations
-            recommendations = _generate_recommendations(
-                overall_stats, prev_stats, dept_breakdown, peak_analysis
-            )
-            
-            # 8. Active sensors status
             sensor_status = _get_sensor_status(conn, report_start, report_end)
-            
-            # Calculate percentage changes
+            recommendations = _generate_recommendations(overall_stats, prev_stats, dept_breakdown, peak_analysis)
+            insights = _generate_insights(overall_stats, daily_trends, dept_breakdown, peak_analysis)
+            improvements = _generate_improvement_suggestions(overall_stats, peak_analysis, dept_breakdown)
+
             month_over_month_change = 0
-            if prev_stats['total_energy'] > 0:
+            if prev_stats["total_energy"] > 0:
                 month_over_month_change = (
-                    (overall_stats['total_energy'] - prev_stats['total_energy']) 
-                    / prev_stats['total_energy'] * 100
+                    (overall_stats["total_energy"] - prev_stats["total_energy"]) / prev_stats["total_energy"] * 100
                 )
-            
-            return {
+
+            report_period = {
+                "month": target_month,
+                "year": target_year,
+                "month_name": report_start.strftime("%B"),
+                "start_date": report_start.isoformat(),
+                "end_date": report_end.isoformat(),
+                "days_in_month": (report_end - report_start).days,
+            }
+
+            normal_report = _generate_normal_report(
+                report_period,
+                overall_stats,
+                prev_stats,
+                month_over_month_change,
+                dept_breakdown,
+                daily_trends,
+                classroom_data,
+                recommendations,
+                insights,
+                improvements,
+                sensor_status,
+            )
+            technical_report = _generate_technical_report(
+                report_period,
+                overall_stats,
+                prev_stats,
+                month_over_month_change,
+                dept_breakdown,
+                daily_trends,
+                peak_analysis,
+                classroom_data,
+                sensor_status,
+                recommendations,
+                insights,
+                improvements,
+            )
+
+            legacy_department_breakdown = dept_breakdown
+            legacy_daily_trends = daily_trends
+            legacy_peak_analysis = peak_analysis
+            legacy_classroom_consumption = classroom_data
+            legacy_sensor_status = sensor_status
+            legacy_recommendations = recommendations
+            legacy_insights = insights.get("key_findings", [])
+            legacy_improvements = improvements
+
+            if report_type == "technical":
+                legacy_department_breakdown = [
+                    {
+                        "department": item["department"],
+                        "sensor_count": item["sensor_count"],
+                        "readings": item["readings"],
+                        "total_energy": item["energy_kwh"],
+                        "avg_power": item["avg_power_w"],
+                        "peak_power": item["peak_power_w"],
+                    }
+                    for item in technical_report["department_metrics"]
+                ]
+                legacy_daily_trends = [
+                    {
+                        "date": item["date"],
+                        "daily_energy": item["daily_kwh"],
+                        "avg_power": item["avg_power_w"],
+                        "peak_power": item["peak_power_w"],
+                        "readings": item["readings"],
+                    }
+                    for item in technical_report["daily_metrics"]
+                ]
+                legacy_peak_analysis = {
+                    "top_peak_events": technical_report["top_peak_events"],
+                    "hourly_pattern": technical_report["load_profile"],
+                }
+                legacy_classroom_consumption = [
+                    {
+                        "device_id": item["device_id"],
+                        "readings": item["readings"],
+                        "total_energy": item["energy_kwh"],
+                        "avg_power": item["avg_power_w"],
+                        "peak_power": item["peak_power_w"],
+                        "first_reading": None,
+                        "last_reading": None,
+                    }
+                    for item in technical_report["device_metrics"]
+                ]
+                legacy_sensor_status = {
+                    "active_sensors": technical_report["quality_metrics"].get("active_sensors", 0),
+                    "inactive_sensors": technical_report["quality_metrics"].get("inactive_sensors", 0),
+                    "inactive_sensor_list": [],
+                }
+                legacy_recommendations = technical_report["technical_recommendations"]
+                legacy_insights = technical_report["quality_metrics"].get("technical_findings", [])
+                legacy_improvements = technical_report["optimization_actions"]
+
+            response = {
                 "success": True,
-                "report_period": {
-                    "month": target_month,
-                    "year": target_year,
-                    "month_name": report_start.strftime("%B"),
-                    "start_date": report_start.isoformat(),
-                    "end_date": report_end.isoformat(),
-                    "days_in_month": (report_end - report_start).days,
-                },
+                "report_type": report_type,
+                "report_period": report_period,
                 "overall_statistics": overall_stats,
                 "previous_month": prev_stats,
                 "month_over_month_change": round(month_over_month_change, 2),
-                "department_breakdown": dept_breakdown,
-                "daily_trends": daily_trends,
-                "peak_usage_analysis": peak_analysis,
-                "classroom_consumption": classroom_data,
-                "sensor_status": sensor_status,
-                "recommendations": recommendations,
+                "department_breakdown": legacy_department_breakdown,
+                "daily_trends": legacy_daily_trends,
+                "peak_usage_analysis": legacy_peak_analysis,
+                "classroom_consumption": legacy_classroom_consumption,
+                "sensor_status": legacy_sensor_status,
+                "recommendations": legacy_recommendations,
+                "insights": legacy_insights,
+                "improvement_opportunities": legacy_improvements,
                 "generated_at": datetime.now().isoformat(),
+                "normal_report": normal_report,
+                "technical_report": technical_report,
             }
-    
+
+            response["selected_report"] = normal_report if report_type != "technical" else technical_report
+            return response
+
+    except HTTPException:
+        raise
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
 
 
@@ -471,10 +584,237 @@ def _generate_recommendations(
     return recommendations
 
 
+def _generate_insights(
+    overall: Dict,
+    daily_trends: List[Dict[str, Any]],
+    departments: List[Dict[str, Any]],
+    peak: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Generate plain and technical observations from the measured data."""
+    total_days = max(len(daily_trends), 1)
+    avg_daily = overall["total_energy"] / total_days if total_days else 0
+    top_department = departments[0]["department"] if departments else "Unknown"
+    peak_hour = None
+    if peak.get("hourly_pattern"):
+        peak_hour = max(peak["hourly_pattern"], key=lambda item: item["avg_power"])
+
+    return {
+        "key_findings": [
+            f"The facility consumed {overall['total_energy']:.2f} kWh during the report period.",
+            f"Average daily usage was about {avg_daily:.2f} kWh across {total_days} tracked day(s).",
+            f"{overall['active_sensors']} sensor node(s) were active and reporting data.",
+            f"{top_department} was the highest consuming department in this period.",
+        ],
+        "technical_analysis": [
+            f"Average voltage: {overall['avg_voltage']:.2f} V.",
+            f"Average current: {overall['avg_current']:.3f} A.",
+            f"Average power factor: {overall['avg_power_factor']:.3f}.",
+            f"Peak demand: {overall['peak_power']:.2f} W.",
+            f"Peak hour: {peak_hour['hour']:02d}:00" if peak_hour else "Peak hour: not available.",
+        ],
+        "usage_pattern": {
+            "average_daily_energy": round(avg_daily, 2),
+            "highest_department": top_department,
+            "peak_hour": peak_hour["hour"] if peak_hour else None,
+        },
+    }
+
+
+def _generate_improvement_suggestions(
+    overall: Dict[str, Any],
+    peak: Dict[str, Any],
+    departments: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Generate practical improvement actions based on the real readings."""
+    suggestions: List[Dict[str, Any]] = []
+
+    if overall["avg_power_factor"] < 0.85:
+        suggestions.append({
+            "priority": "high",
+            "area": "Power quality",
+            "suggestion": "Improve power factor with capacitor banks or power factor correction equipment.",
+            "potential_impact": "Lower reactive loss and improve billing efficiency.",
+        })
+
+    if overall["peak_power"] > overall["avg_power"] * 1.8:
+        suggestions.append({
+            "priority": "high",
+            "area": "Peak demand",
+            "suggestion": "Shift non-critical loads away from peak hours to flatten the load curve.",
+            "potential_impact": "Reduce demand spikes and improve operational stability.",
+        })
+
+    if departments:
+        heavy = departments[0]
+        suggestions.append({
+            "priority": "medium",
+            "area": heavy["department"],
+            "suggestion": f"Review {heavy['department']} equipment usage and schedule a targeted efficiency audit.",
+            "potential_impact": f"A reduction in the highest-consuming area could save {heavy['total_energy'] * 0.05:.2f} kWh.",
+        })
+
+    if peak.get("hourly_pattern"):
+        busy_hours = sorted(peak["hourly_pattern"], key=lambda item: item["avg_power"], reverse=True)[:3]
+        hour_text = ", ".join(f"{item['hour']:02d}:00" for item in busy_hours)
+        suggestions.append({
+            "priority": "medium",
+            "area": "Scheduling",
+            "suggestion": f"The highest average load was observed around {hour_text}. Move flexible equipment to quieter hours.",
+            "potential_impact": "Less load overlap and smoother daily usage.",
+        })
+
+    suggestions.append({
+        "priority": "low",
+        "area": "Monitoring",
+        "suggestion": "Keep collecting readings continuously so future comparisons stay accurate and evidence-based.",
+        "potential_impact": "Better month-to-month planning and faster anomaly detection.",
+    })
+
+    return suggestions
+
+
+def _generate_normal_report(
+    report_period: Dict[str, Any],
+    overall_stats: Dict[str, Any],
+    prev_stats: Dict[str, Any],
+    month_over_month_change: float,
+    dept_breakdown: List[Dict[str, Any]],
+    daily_trends: List[Dict[str, Any]],
+    classroom_data: List[Dict[str, Any]],
+    recommendations: List[Dict[str, Any]],
+    insights: Dict[str, Any],
+    improvements: List[Dict[str, Any]],
+    sensor_status: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Create a descriptive, easy-to-read report for normal users."""
+    return {
+        "report_kind": "normal",
+        "title": f"Monthly Energy Report - {report_period['month_name']} {report_period['year']}",
+        "summary": {
+            "headline": f"The facility used {overall_stats['total_energy']:.2f} kWh this month.",
+            "trend": f"Compared with last month, energy use {'increased' if month_over_month_change > 0 else 'decreased' if month_over_month_change < 0 else 'stayed the same'} by {abs(month_over_month_change):.2f}%.",
+            "simple_status": "Good" if abs(month_over_month_change) <= 10 else "Needs attention",
+        },
+        "daily_story": {
+            "description": "A simple day-by-day view of how energy was used.",
+            "average_daily_energy": round(overall_stats['total_energy'] / max(len(daily_trends), 1), 2),
+            "highest_day": max(daily_trends, key=lambda item: item['daily_energy'])['date'] if daily_trends else None,
+            "lowest_day": min(daily_trends, key=lambda item: item['daily_energy'])['date'] if daily_trends else None,
+        },
+        "department_story": [
+            {
+                "name": item["department"],
+                "description": f"{item['department']} consumed {item['total_energy']:.2f} kWh and had {item['sensor_count']} monitored area(s).",
+                "share_of_total": round((item['total_energy'] / overall_stats['total_energy']) * 100, 2) if overall_stats['total_energy'] > 0 else 0,
+            }
+            for item in dept_breakdown
+        ],
+        "top_areas": [
+            {
+                "name": item["device_id"],
+                "description": f"This area recorded {item['total_energy']:.2f} kWh in the period.",
+            }
+            for item in classroom_data[:10]
+        ],
+        "recommendations": [
+            {
+                "title": item["title"],
+                "description": item["description"],
+                "action": item["action"],
+            }
+            for item in recommendations[:6]
+        ],
+        "improvement_opportunities": improvements[:6],
+        "insights": insights.get("key_findings", []),
+        "sensor_note": f"{sensor_status.get('active_sensors', 0)} sensors were active during the period.",
+        "closing_note": "All numbers in this report are based on real sensor readings from the monitoring system.",
+    }
+
+
+def _generate_technical_report(
+    report_period: Dict[str, Any],
+    overall_stats: Dict[str, Any],
+    prev_stats: Dict[str, Any],
+    month_over_month_change: float,
+    dept_breakdown: List[Dict[str, Any]],
+    daily_trends: List[Dict[str, Any]],
+    peak_analysis: Dict[str, Any],
+    classroom_data: List[Dict[str, Any]],
+    sensor_status: Dict[str, Any],
+    recommendations: List[Dict[str, Any]],
+    insights: Dict[str, Any],
+    improvements: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Create a technical report with detailed power and usage metrics."""
+    return {
+        "report_kind": "technical",
+        "title": f"Technical Energy Audit - {report_period['month_name']} {report_period['year']}",
+        "system_summary": {
+            "active_nodes": overall_stats["active_sensors"],
+            "reading_count": overall_stats["total_readings"],
+            "total_kwh": round(overall_stats["total_energy"], 3),
+            "avg_kw": round(overall_stats["avg_power"] / 1000, 4),
+            "peak_w": round(overall_stats["peak_power"], 2),
+            "avg_v": round(overall_stats["avg_voltage"], 2),
+            "avg_a": round(overall_stats["avg_current"], 3),
+            "pf": round(overall_stats["avg_power_factor"], 3),
+            "mom_change_percent": round(month_over_month_change, 2),
+        },
+        "comparison": {
+            "previous_month_kwh": round(prev_stats["total_energy"], 3),
+            "delta_kwh": round(overall_stats["total_energy"] - prev_stats["total_energy"], 3),
+            "delta_percent": round(month_over_month_change, 2),
+        },
+        "department_metrics": [
+            {
+                "department": item["department"],
+                "sensor_count": item["sensor_count"],
+                "readings": item["readings"],
+                "energy_kwh": round(item["total_energy"], 3),
+                "avg_power_w": round(item["avg_power"], 2),
+                "peak_power_w": round(item["peak_power"], 2),
+                "energy_share_percent": round((item["total_energy"] / overall_stats["total_energy"] * 100), 2) if overall_stats["total_energy"] > 0 else 0,
+            }
+            for item in dept_breakdown
+        ],
+        "daily_metrics": [
+            {
+                "date": item["date"],
+                "daily_kwh": round(item["daily_energy"], 3),
+                "avg_power_w": round(item["avg_power"], 2),
+                "peak_power_w": round(item["peak_power"], 2),
+                "readings": item["readings"],
+            }
+            for item in daily_trends
+        ],
+        "load_profile": peak_analysis.get("hourly_pattern", []),
+        "top_peak_events": peak_analysis.get("top_peak_events", [])[:12],
+        "device_metrics": [
+            {
+                "device_id": item["device_id"],
+                "readings": item["readings"],
+                "energy_kwh": round(item["total_energy"], 3),
+                "avg_power_w": round(item["avg_power"], 2),
+                "peak_power_w": round(item["peak_power"], 2),
+            }
+            for item in classroom_data[:20]
+        ],
+        "quality_metrics": {
+            "active_sensors": sensor_status.get("active_sensors", 0),
+            "inactive_sensors": sensor_status.get("inactive_sensors", 0),
+            "technical_findings": insights.get("technical_analysis", []),
+        },
+        "technical_recommendations": recommendations[:6],
+        "optimization_actions": improvements[:6],
+    }
+
+
 @router.get("/monthly-report/summary")
-async def get_report_summary(month: int = None, year: int = None):
+async def get_report_summary(month: int = None, year: int = None, authorization: str | None = Header(default=None, alias="Authorization")):
     """Get a quick summary of the monthly report (for preview)."""
     try:
+        _verify_admin_token(authorization)
+
         now = datetime.now()
         target_month = month or now.month
         target_year = year or now.year
@@ -496,5 +836,11 @@ async def get_report_summary(month: int = None, year: int = None):
                 "total_readings": overall_stats['total_readings'],
             }
     
+    except HTTPException:
+        raise
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}")
+
+
+app.include_router(router)

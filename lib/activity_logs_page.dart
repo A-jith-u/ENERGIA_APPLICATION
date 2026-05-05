@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:energia/services/api.dart' as api;
-import 'dart:convert';
 import 'dart:async';
-import 'package:http/http.dart' as http;
 
 /// Full-page activity logs viewer
 class ActivityLogsPage extends StatefulWidget {
@@ -16,9 +14,9 @@ class _ActivityLogsPageState extends State<ActivityLogsPage> {
   List<Map<String, dynamic>> _logs = [];
   bool _isLoading = false;
   int _currentPage = 0;
-  int _itemsPerPage = 15;  // Reduced from 20 to reduce payload and lag
+  final int _itemsPerPage = 15;  // Reduced from 20 to reduce payload and lag
   int _totalItems = 0;
-  String _selectedFilter = 'all';
+  final String _selectedFilter = 'all';
   String _selectedStatus = 'all';
   int _selectedDays = 7;
   int _retryCount = 0;
