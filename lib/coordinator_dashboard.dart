@@ -4,7 +4,6 @@ import 'package:energia/dashboard_scaffold.dart';
 import 'package:energia/models/room_data_simulator.dart';
 import 'package:energia/models/user_role_model.dart';
 import 'package:energia/services/department_customization_service.dart';
-import 'package:energia/widgets/department_dashboard_widget.dart';
 import 'package:energia/widgets/energy_visualization_widgets.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -33,8 +32,8 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   bool _loadingData = true;
   Map<String, dynamic>? _sensorData;
   List<Map<String, dynamic>>? _timeSeriesData;
-  List<Map<String, dynamic>> _secondDropdownOptions = [];
-  List<Map<String, dynamic>> _thirdDropdownOptions =
+  final List<Map<String, dynamic>> _secondDropdownOptions = [];
+  final List<Map<String, dynamic>> _thirdDropdownOptions =
       []; // For floorwise third dropdown
   Timer? _dataRefreshTimer;
   Timer? _liveTimer;
@@ -42,7 +41,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
   String? _userDepartment; // Store department for filtering
   final DepartmentCustomizationService _customizationService =
       DepartmentCustomizationService();
-  List<String> _accessibleRooms = [];
+  final List<String> _accessibleRooms = [];
   List<Map<String, dynamic>> _anomalies = [];
   Map<String, Map<String, dynamic>> _notificationsByRoom =
       {}; // roomId -> notification data
@@ -57,7 +56,7 @@ class _CoordinatorDashboardPageState extends State<CoordinatorDashboardPage> {
     // Extract department from the passed user or from saved preferences
     _currentUser = widget.user;
     if (_currentUser?.department != null) {
-      _userDepartment = _currentUser!.department!.name;
+      _userDepartment = _currentUser!.department.name;
     } else {
       // Fallback to shared preferences if available
       _loadUserDepartmentFromPrefs();
@@ -1530,7 +1529,7 @@ class _CoordinatorOverviewPage extends StatelessWidget {
       context: context,
       barrierDismissible: true,
       builder: (BuildContext dialogContext) {
-        return ThresholdSettingsDialog(theme: theme, scheme: this.scheme);
+        return ThresholdSettingsDialog(theme: theme, scheme: scheme);
       },
     );
   }
@@ -1570,7 +1569,7 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
   Map<String, Map<String, dynamic>> _relayMappingByRoom = {};
   Map<String, bool> _relayOnlineByDevice = {};
   Map<String, String> _relayStateByDevice = {};
-  Map<String, String> _lastRelayActionByRoom = {};
+  final Map<String, String> _lastRelayActionByRoom = {};
   Set<String> _onlineRelayDeviceIds = <String>{};
   String? _authToken;
   Timer? _liveDataTimer;
@@ -1980,8 +1979,9 @@ class _DepartmentRoomsSectionState extends State<_DepartmentRoomsSection> {
             : 0.0;
 
     if (currentPower <= 0) return 'Idle';
-    if (upperThreshold > 0 && currentPower > upperThreshold)
+    if (upperThreshold > 0 && currentPower > upperThreshold) {
       return 'High Alert';
+    }
     if (lowerThreshold > 0 &&
         upperThreshold > lowerThreshold &&
         currentPower >= lowerThreshold &&
@@ -2954,7 +2954,6 @@ class _DepartmentAlertsSection extends StatefulWidget {
   final Map<String, Map<String, dynamic>> notificationsByRoom;
 
   const _DepartmentAlertsSection({
-    super.key,
     required this.anomalies,
     required this.onRefresh,
     required this.baseUrls,
@@ -3540,8 +3539,8 @@ class ThresholdSettingsDialog extends StatefulWidget {
 class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
   List<Map<String, dynamic>> _rooms = [];
   List<Map<String, dynamic>> _filteredRooms = [];
-  Map<String, TextEditingController> _lowerThresholdControllers = {};
-  Map<String, TextEditingController> _upperThresholdControllers = {};
+  final Map<String, TextEditingController> _lowerThresholdControllers = {};
+  final Map<String, TextEditingController> _upperThresholdControllers = {};
   bool _loading = true;
   String? _editingRoomId;
   late TextEditingController _searchController;
@@ -3687,8 +3686,9 @@ class _ThresholdSettingsDialogState extends State<ThresholdSettingsDialog> {
       }
     }
 
-    if (queryIndex < queryLower.length)
+    if (queryIndex < queryLower.length) {
       return 0.0; // Not all query chars matched
+    }
 
     return matches / queryLower.length;
   }

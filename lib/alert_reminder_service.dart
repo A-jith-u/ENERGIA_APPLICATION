@@ -214,7 +214,9 @@ class _AlertState {
   _AlertState({required this.alert, required this.createdAt});
 
   void cancelTimers() {
-    for (final t in timers) t.cancel();
+    for (final t in timers) {
+      t.cancel();
+    }
     timers.clear();
   }
 }

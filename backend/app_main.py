@@ -128,8 +128,15 @@ def _load_monthly_report_api():
         sys.path.append(os.path.dirname(__file__))
         return importlib.import_module("monthly_report_api")
 
-monthly_report_api_module = _load_monthly_report_api()
-app.include_router(monthly_report_api_module.app.router, prefix="/reports", tags=["Reports"])
+try:
+    monthly_report_api_module = _load_monthly_report_api()
+    app.include_router(monthly_report_api_module.router, prefix="/reports", tags=["Reports"])
+    print("[app_main] monthly_report_api mounted at /reports [OK]")
+except Exception as _e:
+    monthly_report_api_module = None
+    print(f"[app_main] monthly_report_api not available: {_e}")
+    import traceback
+    traceback.print_exc()
 
 # Import notify_api module
 try:

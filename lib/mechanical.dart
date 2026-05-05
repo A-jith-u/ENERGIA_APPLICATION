@@ -43,10 +43,10 @@ class Mechan extends StatelessWidget {
             return _ClassroomCard(
               name: room['name'] as String,
               status: room['status'] as String,
-              usage: (room['usage_kw'] as double).toStringAsFixed(1) + ' kW',
+              usage: '${(room['usage_kw'] as double).toStringAsFixed(1)} kW',
               color: room['color'] as Color,
             );
-          }).toList(),
+          }),
 
           const SizedBox(height: 40),
 
