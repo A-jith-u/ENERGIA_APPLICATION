@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names
 // alert_reminder_service.dart
 //
 // In-app anomaly alert reminder system — no Firebase, no extra packages.
@@ -127,7 +128,9 @@ class AlertReminderService {
   /// Delay = kScheduleMinutes[i] minutes from [detectedAt], not from previous reminder.
   void _scheduleReminders(String key, _AlertState state, DateTime detectedAt) {
     for (int i = 0; i < _kScheduleMinutes.length; i++) {
-      final targetTime = detectedAt.add(Duration(minutes: _kScheduleMinutes[i]));
+      final targetTime = detectedAt.add(
+        Duration(minutes: _kScheduleMinutes[i]),
+      );
       final delay = targetTime.difference(DateTime.now());
       final reminderStep = i + 1; // 1-based: #1, #2, #3, #4
 
@@ -165,20 +168,21 @@ class AlertReminderService {
       context: ctx,
       barrierDismissible: true,
       barrierColor: Colors.black45,
-      builder: (_) => _AnomalyAlertDialog(
-        alert: state.alert,
-        reminderStep: reminderStep,
-        onViewAlerts: () {
-          Navigator.of(ctx!, rootNavigator: true).pop();
-          clearBadge();
-          onViewAlerts();
-        },
-        onResolve: () async {
-          Navigator.of(ctx!, rootNavigator: true).pop();
-          resolveAlert(state.alert);
-          await onResolve(state.alert['id'] ?? state.alert['_id']);
-        },
-      ),
+      builder:
+          (_) => _AnomalyAlertDialog(
+            alert: state.alert,
+            reminderStep: reminderStep,
+            onViewAlerts: () {
+              Navigator.of(ctx!, rootNavigator: true).pop();
+              clearBadge();
+              onViewAlerts();
+            },
+            onResolve: () async {
+              Navigator.of(ctx!, rootNavigator: true).pop();
+              resolveAlert(state.alert);
+              await onResolve(state.alert['id'] ?? state.alert['_id']);
+            },
+          ),
     ).whenComplete(() {
       if (_states.containsKey(key)) state.popupShowing = false;
     });
@@ -192,8 +196,7 @@ class AlertReminderService {
   }
 
   static DateTime? _extractDetectedAt(Map<String, dynamic> alert) {
-    final raw =
-        alert['first_detected_at'] ?? alert['timestamp'] ?? alert['ds'];
+    final raw = alert['first_detected_at'] ?? alert['timestamp'] ?? alert['ds'];
     if (raw == null) return null;
     try {
       return DateTime.parse(raw.toString()).toLocal();
@@ -242,9 +245,9 @@ class _AnomalyAlertDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final isFirst = reminderStep == 0;
     final deviceId = '${alert['device_id'] ?? 'Unknown Room'}';
-    final power    = alert['power'] ?? '—';
-    final occupancy= alert['occupancy'] ?? '—';
-    final score    = alert['score'];
+    final power = alert['power'] ?? '—';
+    final occupancy = alert['occupancy'] ?? '—';
+    final score = alert['score'];
     final sevColor = _sevColor(alert['power']);
 
     return Dialog(
@@ -273,8 +276,9 @@ class _AnomalyAlertDialog extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
               decoration: BoxDecoration(
                 color: sevColor,
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(18)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(18),
+                ),
               ),
               child: Row(
                 children: [
@@ -300,7 +304,9 @@ class _AnomalyAlertDialog extends StatelessWidget {
                             child: Text(
                               'This alert has not been resolved yet',
                               style: TextStyle(
-                                  color: Colors.white70, fontSize: 12),
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                       ],
@@ -308,8 +314,8 @@ class _AnomalyAlertDialog extends StatelessWidget {
                   ),
                   // Dismiss x
                   InkWell(
-                    onTap: () =>
-                        Navigator.of(context, rootNavigator: true).pop(),
+                    onTap:
+                        () => Navigator.of(context, rootNavigator: true).pop(),
                     borderRadius: BorderRadius.circular(20),
                     child: const Padding(
                       padding: EdgeInsets.all(6),
@@ -346,7 +352,9 @@ class _AnomalyAlertDialog extends StatelessWidget {
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 8),
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.orange.shade50,
                         borderRadius: BorderRadius.circular(8),
@@ -405,7 +413,8 @@ class _AnomalyAlertDialog extends StatelessWidget {
                         side: BorderSide(color: sevColor),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
                     ),
                   ),
@@ -421,7 +430,8 @@ class _AnomalyAlertDialog extends StatelessWidget {
                         elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
                     ),
                   ),
@@ -454,11 +464,13 @@ class _PulsingIcon extends StatefulWidget {
 class _PulsingIconState extends State<_PulsingIcon>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl = AnimationController(
-      vsync: this, duration: const Duration(milliseconds: 750))
-    ..repeat(reverse: true);
-  late final Animation<double> _scale =
-      Tween<double>(begin: 0.82, end: 1.0).animate(
-          CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+    vsync: this,
+    duration: const Duration(milliseconds: 750),
+  )..repeat(reverse: true);
+  late final Animation<double> _scale = Tween<double>(
+    begin: 0.82,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
 
   @override
   void dispose() {
@@ -468,17 +480,20 @@ class _PulsingIconState extends State<_PulsingIcon>
 
   @override
   Widget build(BuildContext context) => ScaleTransition(
-        scale: _scale,
-        child: Container(
-          padding: const EdgeInsets.all(7),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.22),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.warning_amber_rounded,
-              color: Colors.white, size: 24),
-        ),
-      );
+    scale: _scale,
+    child: Container(
+      padding: const EdgeInsets.all(7),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.22),
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(
+        Icons.warning_amber_rounded,
+        color: Colors.white,
+        size: 24,
+      ),
+    ),
+  );
 }
 
 // ── Detail row ────────────────────────────────────────────────────────────────
@@ -498,11 +513,14 @@ class _DetailRow extends StatelessWidget {
       children: [
         Icon(icon, size: 16, color: Colors.grey.shade500),
         const SizedBox(width: 8),
-        Text('$label:  ',
-            style: const TextStyle(
-                fontSize: 13,
-                color: Colors.black54,
-                fontWeight: FontWeight.w500)),
+        Text(
+          '$label:  ',
+          style: const TextStyle(
+            fontSize: 13,
+            color: Colors.black54,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
         Expanded(
           child: Text(
             value,
@@ -524,11 +542,7 @@ class AlertBadgeIcon extends StatelessWidget {
   final IconData icon;
   final int count;
 
-  const AlertBadgeIcon({
-    super.key,
-    required this.icon,
-    required this.count,
-  });
+  const AlertBadgeIcon({super.key, required this.icon, required this.count});
 
   @override
   Widget build(BuildContext context) {
@@ -545,17 +559,14 @@ class AlertBadgeIcon extends StatelessWidget {
             duration: const Duration(milliseconds: 200),
             curve: Curves.elasticOut,
             child: Container(
-              constraints:
-                  const BoxConstraints(minWidth: 17, minHeight: 17),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
                 color: Colors.red,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: Colors.white, width: 1.5),
                 boxShadow: [
-                  BoxShadow(
-                      color: Colors.red.withOpacity(0.5), blurRadius: 4),
+                  BoxShadow(color: Colors.red.withOpacity(0.5), blurRadius: 4),
                 ],
               ),
               child: Text(

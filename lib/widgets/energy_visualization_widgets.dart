@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
@@ -15,13 +16,13 @@ class EnergyColorScheme {
   static const warningOrange = Color(0xFFFFA726);
   static const criticalRed = Color(0xFFEF5350);
   static const infoTeal = Color(0xFF26C6DA);
-  
+
   static List<Color> get chartGradient => [
     const Color(0xFF005BBB),
     const Color(0xFF0288D1),
     const Color(0xFF29B6F6),
   ];
-  
+
   static Color getSeverityColor(String severity) {
     switch (severity.toLowerCase()) {
       case 'critical':
@@ -73,7 +74,7 @@ class LiveEnergyMeter extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final percentage = (currentPower / maxCapacity) * 100;
-    
+
     return GestureDetector(
       onTap: onTap,
       child: Card(
@@ -128,18 +129,20 @@ class LiveEnergyMeter extends StatelessWidget {
                           trendPercentage! > 0
                               ? Icons.trending_up
                               : Icons.trending_down,
-                          color: trendPercentage! > 0
-                              ? EnergyColorScheme.criticalRed
-                              : EnergyColorScheme.successGreen,
+                          color:
+                              trendPercentage! > 0
+                                  ? EnergyColorScheme.criticalRed
+                                  : EnergyColorScheme.successGreen,
                           size: 18,
                         ),
                         const SizedBox(width: 4),
                         Text(
                           '${trendPercentage!.abs().toStringAsFixed(1)}%',
                           style: TextStyle(
-                            color: trendPercentage! > 0
-                                ? EnergyColorScheme.criticalRed
-                                : EnergyColorScheme.successGreen,
+                            color:
+                                trendPercentage! > 0
+                                    ? EnergyColorScheme.criticalRed
+                                    : EnergyColorScheme.successGreen,
                             fontWeight: FontWeight.w600,
                             fontSize: 12,
                           ),
@@ -246,7 +249,20 @@ class ResponsiveLineChart extends StatelessWidget {
   String _getLabel(double value) {
     if (isMonthly) {
       final monthIndex = value.toInt();
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
       return monthIndex < months.length ? months[monthIndex] : '';
     } else {
       // Live views: index 0 is most recent, roughly 1-minute spacing; show wall-clock time in 12-hour format.
@@ -260,11 +276,10 @@ class ResponsiveLineChart extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final screenWidth = MediaQuery.of(context).size.width;
-    
+
     // Responsive dimensions
-    final chartWidth = isMonthly
-        ? (screenWidth - 60) * 1.2
-        : (screenWidth - 60);
+    final chartWidth =
+        isMonthly ? (screenWidth - 60) * 1.2 : (screenWidth - 60);
     const chartHeight = 300.0;
 
     return Card(
@@ -315,7 +330,10 @@ class ResponsiveLineChart extends StatelessWidget {
                 const SizedBox(width: 8),
                 if (spots.isNotEmpty && !isMonthly)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.green.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(12),
@@ -338,7 +356,10 @@ class ResponsiveLineChart extends StatelessWidget {
                   ),
                 if (spots.isEmpty && !isMonthly)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.red.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(12),
@@ -360,10 +381,7 @@ class ResponsiveLineChart extends StatelessWidget {
                     ),
                   ),
                 if (onRefresh != null)
-                  TextButton(
-                    onPressed: onRefresh,
-                    child: const Text('Reload'),
-                  ),
+                  TextButton(onPressed: onRefresh, child: const Text('Reload')),
               ],
             ),
             const SizedBox(height: 20),
@@ -407,123 +425,133 @@ class ResponsiveLineChart extends StatelessWidget {
                   width: chartWidth,
                   height: chartHeight,
                   child: LineChart(
-                  LineChartData(
-                    gridData: FlGridData(
-                      show: true,
-                      drawVerticalLine: false,
-                      horizontalInterval: maxY / 5,
-                      getDrawingHorizontalLine: (value) =>
-                          const FlLine(color: Colors.grey, strokeWidth: 0.5),
-                    ),
-                    titlesData: FlTitlesData(
-                      rightTitles: const AxisTitles(
-                          sideTitles: SideTitles(showTitles: false)),
-                      topTitles: const AxisTitles(
-                          sideTitles: SideTitles(showTitles: false)),
-                      leftTitles: AxisTitles(
-                        axisNameWidget: Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            unit,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
+                    LineChartData(
+                      gridData: FlGridData(
+                        show: true,
+                        drawVerticalLine: false,
+                        horizontalInterval: maxY / 5,
+                        getDrawingHorizontalLine:
+                            (value) => const FlLine(
+                              color: Colors.grey,
+                              strokeWidth: 0.5,
                             ),
-                          ),
-                        ),
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 50,
-                          getTitlesWidget: (value, meta) => Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: Text(
-                              value.toStringAsFixed(0),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: Colors.grey.shade700,
-                                fontSize: 11,
-                              ),
-                              textAlign: TextAlign.right,
-                            ),
-                          ),
-                        ),
                       ),
-                      bottomTitles: AxisTitles(
-                        axisNameWidget: Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            isMonthly
-                                ? 'Month'
-                                : 'Time (newest on left)',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey.shade700,
+                      titlesData: FlTitlesData(
+                        rightTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        topTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        leftTitles: AxisTitles(
+                          axisNameWidget: Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              unit,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                            overflow: TextOverflow.ellipsis,
+                          ),
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 50,
+                            getTitlesWidget:
+                                (value, meta) => Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: Text(
+                                    value.toStringAsFixed(0),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: Colors.grey.shade700,
+                                      fontSize: 11,
+                                    ),
+                                    textAlign: TextAlign.right,
+                                  ),
+                                ),
                           ),
                         ),
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 38,
-                          interval: isMonthly ? 1 : 5,
-                          getTitlesWidget: (value, meta) => Padding(
-                            padding: const EdgeInsets.only(top: 4),
+                        bottomTitles: AxisTitles(
+                          axisNameWidget: Padding(
+                            padding: const EdgeInsets.only(top: 8),
                             child: Text(
-                              _getLabel(value),
-                              style: theme.textTheme.bodySmall?.copyWith(
+                              isMonthly ? 'Month' : 'Time (newest on left)',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                fontWeight: FontWeight.w600,
                                 color: Colors.grey.shade700,
-                                fontSize: 10,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                        ),
-                      ),
-                    ),
-                    borderData: FlBorderData(
-                      show: true,
-                      border: Border(
-                        bottom: BorderSide(
-                            color: Colors.grey.shade300, width: 1),
-                        left: BorderSide(
-                            color: Colors.grey.shade300, width: 1),
-                      ),
-                    ),
-                    lineBarsData: [
-                      LineChartBarData(
-                        spots: spots,
-                        isCurved: true,
-                        color: lineColor,
-                        barWidth: 3,
-                        isStrokeCapRound: true,
-                        dotData: FlDotData(
-                          show: true,
-                          getDotPainter: (spot, percent, bar, index) =>
-                              FlDotCirclePainter(
-                            radius: 4,
-                            color: lineColor,
-                            strokeWidth: 0,
-                          ),
-                        ),
-                        belowBarData: BarAreaData(
-                          show: true,
-                          gradient: LinearGradient(
-                            colors: [
-                              lineColor.withOpacity(0.3),
-                              lineColor.withOpacity(0.0),
-                            ],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 38,
+                            interval: isMonthly ? 1 : 5,
+                            getTitlesWidget:
+                                (value, meta) => Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    _getLabel(value),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: Colors.grey.shade700,
+                                      fontSize: 10,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
                           ),
                         ),
                       ),
-                    ],
-                    minX: spots.first.x,
-                    maxX: spots.last.x,
-                    minY: 0,
-                    maxY: maxY,
+                      borderData: FlBorderData(
+                        show: true,
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                          left: BorderSide(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                        ),
+                      ),
+                      lineBarsData: [
+                        LineChartBarData(
+                          spots: spots,
+                          isCurved: true,
+                          color: lineColor,
+                          barWidth: 3,
+                          isStrokeCapRound: true,
+                          dotData: FlDotData(
+                            show: true,
+                            getDotPainter:
+                                (spot, percent, bar, index) =>
+                                    FlDotCirclePainter(
+                                      radius: 4,
+                                      color: lineColor,
+                                      strokeWidth: 0,
+                                    ),
+                          ),
+                          belowBarData: BarAreaData(
+                            show: true,
+                            gradient: LinearGradient(
+                              colors: [
+                                lineColor.withOpacity(0.3),
+                                lineColor.withOpacity(0.0),
+                              ],
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                            ),
+                          ),
+                        ),
+                      ],
+                      minX: spots.first.x,
+                      maxX: spots.last.x,
+                      minY: 0,
+                      maxY: maxY,
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),
@@ -538,11 +566,7 @@ class RoomEnergyGrid extends StatelessWidget {
   final List<Map<String, dynamic>> rooms;
   final void Function(String roomId)? onRoomTap;
 
-  const RoomEnergyGrid({
-    super.key,
-    required this.rooms,
-    this.onRoomTap,
-  });
+  const RoomEnergyGrid({super.key, required this.rooms, this.onRoomTap});
 
   @override
   Widget build(BuildContext context) {
@@ -561,7 +585,10 @@ class RoomEnergyGrid extends StatelessWidget {
           currentUsage: room['usage'] as double,
           maxCapacity: room['capacity'] as double,
           status: room['status'] as String?,
-          onTap: () => onRoomTap?.call(room['id'] as String? ?? room['name'] as String),
+          onTap:
+              () => onRoomTap?.call(
+                room['id'] as String? ?? room['name'] as String,
+              ),
         );
       },
     );
@@ -608,9 +635,7 @@ class RoomEnergyCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
-            border: Border(
-              top: BorderSide(color: _usageColor, width: 4),
-            ),
+            border: Border(top: BorderSide(color: _usageColor, width: 4)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -744,46 +769,49 @@ class ComparativeBarChart extends StatelessWidget {
                   gridData: FlGridData(
                     show: true,
                     drawVerticalLine: false,
-                    getDrawingHorizontalLine: (value) =>
-                        const FlLine(color: Colors.grey, strokeWidth: 0.5),
+                    getDrawingHorizontalLine:
+                        (value) =>
+                            const FlLine(color: Colors.grey, strokeWidth: 0.5),
                   ),
                   titlesData: FlTitlesData(
                     topTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false)),
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                     rightTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false)),
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
                         reservedSize: 40,
-                        getTitlesWidget: (value, meta) => Text(
-                          value.toStringAsFixed(0),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
+                        getTitlesWidget:
+                            (value, meta) => Text(
+                              value.toStringAsFixed(0),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
                       ),
                     ),
                     bottomTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
                         reservedSize: 40,
-                        getTitlesWidget: (value, meta) => Text(
-                          labels[value.toInt()],
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: Colors.grey.shade700,
-                          ),
-                        ),
+                        getTitlesWidget:
+                            (value, meta) => Text(
+                              labels[value.toInt()],
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
                       ),
                     ),
                   ),
                   borderData: FlBorderData(
                     show: true,
                     border: Border(
-                      bottom: BorderSide(
-                          color: Colors.grey.shade300, width: 1),
-                      left: BorderSide(
-                          color: Colors.grey.shade300, width: 1),
+                      bottom: BorderSide(color: Colors.grey.shade300, width: 1),
+                      left: BorderSide(color: Colors.grey.shade300, width: 1),
                     ),
                   ),
                   barGroups: List.generate(
@@ -882,8 +910,10 @@ class AnomalyAlertCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: severityColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(20),
@@ -979,15 +1009,21 @@ class PredictionCard extends StatelessWidget {
                     if (liveDataAvailable) ...[
                       const SizedBox(height: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: EnergyColorScheme.successGreen.withOpacity(0.2),
+                          color: EnergyColorScheme.successGreen.withOpacity(
+                            0.2,
+                          ),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.radio_button_on, 
+                            Icon(
+                              Icons.radio_button_on,
                               size: 10,
                               color: EnergyColorScheme.successGreen,
                             ),
@@ -1042,8 +1078,7 @@ class PredictionCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                Icon(Icons.arrow_forward_rounded,
-                    color: Colors.grey.shade400),
+                Icon(Icons.arrow_forward_rounded, color: Colors.grey.shade400),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -1061,9 +1096,10 @@ class PredictionCard extends StatelessWidget {
                           predictedUsage.toStringAsFixed(2),
                           style: theme.textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.bold,
-                            color: difference > 0
-                                ? EnergyColorScheme.criticalRed
-                                : EnergyColorScheme.successGreen,
+                            color:
+                                difference > 0
+                                    ? EnergyColorScheme.criticalRed
+                                    : EnergyColorScheme.successGreen,
                           ),
                         ),
                         const SizedBox(width: 4),
@@ -1071,9 +1107,10 @@ class PredictionCard extends StatelessWidget {
                           'W',
                           style: theme.textTheme.labelSmall?.copyWith(
                             fontWeight: FontWeight.w600,
-                            color: difference > 0
-                                ? EnergyColorScheme.criticalRed
-                                : EnergyColorScheme.successGreen,
+                            color:
+                                difference > 0
+                                    ? EnergyColorScheme.criticalRed
+                                    : EnergyColorScheme.successGreen,
                           ),
                         ),
                       ],
@@ -1101,18 +1138,20 @@ class PredictionCard extends StatelessWidget {
                           difference > 0
                               ? Icons.trending_up
                               : Icons.trending_down,
-                          color: difference > 0
-                              ? EnergyColorScheme.criticalRed
-                              : EnergyColorScheme.successGreen,
+                          color:
+                              difference > 0
+                                  ? EnergyColorScheme.criticalRed
+                                  : EnergyColorScheme.successGreen,
                           size: 16,
                         ),
                         const SizedBox(width: 4),
                         Text(
                           '${percentDifference.abs().toStringAsFixed(1)}%',
                           style: TextStyle(
-                            color: difference > 0
-                                ? EnergyColorScheme.criticalRed
-                                : EnergyColorScheme.successGreen,
+                            color:
+                                difference > 0
+                                    ? EnergyColorScheme.criticalRed
+                                    : EnergyColorScheme.successGreen,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -1220,7 +1259,8 @@ class EnergyDistributionDonut extends StatelessWidget {
                     (index) => PieChartSectionData(
                       value: values[index],
                       color: chartColors[index % chartColors.length],
-                      title: '${(values[index] / values.reduce((a, b) => a + b) * 100).toStringAsFixed(0)}%',
+                      title:
+                          '${(values[index] / values.reduce((a, b) => a + b) * 100).toStringAsFixed(0)}%',
                       titleStyle: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -1245,8 +1285,7 @@ class EnergyDistributionDonut extends StatelessWidget {
                         width: 12,
                         height: 12,
                         decoration: BoxDecoration(
-                          color:
-                              chartColors[index % chartColors.length],
+                          color: chartColors[index % chartColors.length],
                           borderRadius: BorderRadius.circular(3),
                         ),
                       ),

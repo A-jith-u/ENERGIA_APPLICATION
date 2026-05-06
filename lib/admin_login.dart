@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names, use_build_context_synchronously
 // Admin login page UI and backend integration.
 // Connects to the backend `/login` endpoint to authenticate an admin user
 // and stores the returned JWT token in `SharedPreferences`.
@@ -57,7 +58,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
     } catch (e) {
       Navigator.of(context).pop();
       final msg = e is ApiError ? e.message : 'Login failed: ${e.toString()}';
-      setState(() { _errorMessage = msg; });
+      setState(() {
+        _errorMessage = msg;
+      });
       AppNotifier.showError(context, msg);
     }
   }
@@ -85,18 +88,21 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
         labelText: label,
         prefixIcon: Icon(icon),
         border: const OutlineInputBorder(),
-        suffixIcon: obscure
-            ? IconButton(
-                icon: Icon(
-                  _isPasswordVisible ? Icons.visibility_off : Icons.visibility,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _isPasswordVisible = !_isPasswordVisible;
-                  });
-                },
-              )
-            : null,
+        suffixIcon:
+            obscure
+                ? IconButton(
+                  icon: Icon(
+                    _isPasswordVisible
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _isPasswordVisible = !_isPasswordVisible;
+                    });
+                  },
+                )
+                : null,
       ),
       validator: validator,
     );
@@ -137,7 +143,10 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                         ),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 32,
+                          vertical: 40,
+                        ),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -145,8 +154,13 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                               tag: 'avatar-admin',
                               child: CircleAvatar(
                                 radius: 46,
-                                backgroundColor: colorScheme.secondary.withOpacity(.15),
-                                child: Icon(Icons.admin_panel_settings, size: 46, color: colorScheme.secondary),
+                                backgroundColor: colorScheme.secondary
+                                    .withOpacity(.15),
+                                child: Icon(
+                                  Icons.admin_panel_settings,
+                                  size: 46,
+                                  color: colorScheme.secondary,
+                                ),
                               ),
                             ),
                             const SizedBox(height: 20),
@@ -171,16 +185,25 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                                 decoration: BoxDecoration(
                                   color: Colors.red.shade50,
                                   borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.red.shade300),
+                                  border: Border.all(
+                                    color: Colors.red.shade300,
+                                  ),
                                 ),
                                 child: Row(
                                   children: [
-                                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                    Icon(
+                                      Icons.error_outline,
+                                      color: Colors.red.shade700,
+                                      size: 20,
+                                    ),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
                                         _errorMessage!,
-                                        style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                        style: TextStyle(
+                                          color: Colors.red.shade700,
+                                          fontSize: 13,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -195,7 +218,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                                     label: 'Admin ID',
                                     icon: Icons.person_outline,
                                     validator: (v) {
-                                      if (v == null || v.trim().isEmpty) return 'Enter your Admin ID';
+                                      if (v == null || v.trim().isEmpty) {
+                                        return 'Enter your Admin ID';
+                                      }
                                       return null;
                                     },
                                   ),
@@ -207,7 +232,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                                     obscure: true,
                                     onSubmit: _login,
                                     validator: (v) {
-                                      if (v == null || v.isEmpty) return 'Enter password';
+                                      if (v == null || v.isEmpty) {
+                                        return 'Enter password';
+                                      }
                                       return null;
                                     },
                                   ),
@@ -219,7 +246,9 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                               width: double.infinity,
                               child: ElevatedButton(
                                 style: ElevatedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 16,
+                                  ),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
@@ -233,7 +262,10 @@ class _AdminLoginPageState extends State<AdminLoginPage> {
                             const SizedBox(height: 16),
                             TextButton(
                               onPressed: () {
-                                Navigator.pushReplacementNamed(context, '/role_selection');
+                                Navigator.pushReplacementNamed(
+                                  context,
+                                  '/role_selection',
+                                );
                               },
                               child: const Text('Back to Role Selection'),
                             ),

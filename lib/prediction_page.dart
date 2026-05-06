@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names, curly_braces_in_flow_control_structures, unused_element, unused_local_variable
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/widgets/energy_visualization_widgets.dart';
@@ -6,9 +7,13 @@ import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'package:intl/intl.dart';
 import 'dart:math';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 
 class PredictionPage extends StatefulWidget {
-  const PredictionPage({super.key});
+  final String? authToken;
+
+  const PredictionPage({super.key, this.authToken});
 
   @override
   State<PredictionPage> createState() => _PredictionPageState();
@@ -22,12 +27,46 @@ class _PredictionPageState extends State<PredictionPage> {
   final int _intervalMinutes = 5; // fixed to 5 minutes horizon
   DateTime? _lastUpdated;
   static const String _roomName = 'CS-201';
+  String? _authToken;
+
+  @override
+  void initState() {
+    super.initState();
+    _authToken = widget.authToken;
+    _loadAuthToken();
+    _fetchPrediction();
+    // Auto-refresh every 5 minutes
+    _refreshTimer = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => _fetchPrediction(),
+    );
+  }
+
+  Future<void> _loadAuthToken() async {
+    if (_authToken != null && _authToken!.isNotEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token != null && token.isNotEmpty) {
+      try {
+        JwtDecoder.decode(token);
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _authToken = token;
+        });
+      } else {
+        _authToken = token;
+      }
+    }
+  }
 
   String _roomToDeviceId(String roomName) {
     final r = roomName.trim().toUpperCase().replaceAll(' ', '');
     if (r.startsWith('ESP32-')) return r;
     if (r.startsWith('CS-')) return 'ESP32-CS-C${r.split('-').last}';
-    if (r.startsWith('CS') && r.length > 2) return 'ESP32-CS-C${r.substring(2)}';
+    if (r.startsWith('CS') && r.length > 2) {
+      return 'ESP32-CS-C${r.substring(2)}';
+    }
     return r;
   }
 
@@ -36,14 +75,6 @@ class _PredictionPageState extends State<PredictionPage> {
         (m['value'] as num?)?.toDouble() ??
         (m['energy'] as num?)?.toDouble() ??
         0.0;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchPrediction();
-    // Auto-refresh every 5 minutes
-    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) => _fetchPrediction());
   }
 
   @override
@@ -64,18 +95,29 @@ class _PredictionPageState extends State<PredictionPage> {
         'http://localhost:5000',
         'http://127.0.0.1:5000',
       ];
-      
+
       for (final baseUrl in apiCandidates) {
         try {
           // STEP 1: Fetch latest sensor data from database
-          print('🔍 Fetching latest sensor data from $baseUrl');
+          debugPrint('🔍 Fetching latest sensor data from $baseUrl');
           final deviceId = _roomToDeviceId(_roomName);
-          final sensorResponse = await http.get(
-            Uri.parse('$baseUrl/sensor-data?limit=1&device_id=${Uri.encodeComponent(deviceId)}'),
-            headers: {'Content-Type': 'application/json'},
-          ).timeout(const Duration(seconds: 5), onTimeout: () {
-            throw TimeoutException('Sensor data request timed out');
-          });
+          final headers = {
+            'Content-Type': 'application/json',
+            if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+          };
+          final sensorResponse = await http
+              .get(
+                Uri.parse(
+                  '$baseUrl/sensor-data?limit=1&device_id=${Uri.encodeComponent(deviceId)}',
+                ),
+                headers: headers,
+              )
+              .timeout(
+                const Duration(seconds: 5),
+                onTimeout: () {
+                  throw TimeoutException('Sensor data request timed out');
+                },
+              );
 
           if (sensorResponse.statusCode != 200) continue;
 
@@ -83,31 +125,40 @@ class _PredictionPageState extends State<PredictionPage> {
           final sensorReadings = (sensorData['data'] as List?) ?? [];
 
           if (sensorReadings.isEmpty) {
-            print('⚠️ No sensor data available');
+            debugPrint('⚠️ No sensor data available');
             continue;
           }
 
           final latestSensor = sensorReadings.first as Map<String, dynamic>;
           final latestPower = _sensorPower(latestSensor);
-          print('✅ Latest sensor data: ${latestPower.toStringAsFixed(1)}W at ${latestSensor['timestamp']}');
+          debugPrint(
+            '✅ Latest sensor data: ${latestPower.toStringAsFixed(1)}W at ${latestSensor['timestamp']}',
+          );
 
           // STEP 2: Get prediction using the timestamp from sensor data
-          print('🔮 Getting prediction for timestamp: ${latestSensor['timestamp']}');
-          final predResponse = await http.post(
-            Uri.parse('$baseUrl/model/predict_15min'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'horizon_minutes': _intervalMinutes,
-              'room_name': _roomName,
-            }),
-          ).timeout(const Duration(seconds: 5), onTimeout: () {
-            throw TimeoutException('Prediction request timed out');
-          });
+          debugPrint(
+            '🔮 Getting prediction for timestamp: ${latestSensor['timestamp']}',
+          );
+          final predResponse = await http
+              .post(
+                Uri.parse('$baseUrl/model/predict_15min'),
+                headers: headers,
+                body: jsonEncode({
+                  'horizon_minutes': _intervalMinutes,
+                  'room_name': _roomName,
+                }),
+              )
+              .timeout(
+                const Duration(seconds: 5),
+                onTimeout: () {
+                  throw TimeoutException('Prediction request timed out');
+                },
+              );
 
           if (predResponse.statusCode != 200) continue;
 
           final prediction = jsonDecode(predResponse.body);
-          print('✅ Got prediction: ${prediction['yhat']}W');
+          debugPrint('✅ Got prediction: ${prediction['yhat']}W');
 
           // Merge sensor data into prediction
           prediction['latest_sensor_reading'] = latestSensor;
@@ -124,9 +175,9 @@ class _PredictionPageState extends State<PredictionPage> {
           return;
         } catch (e) {
           if (e is TimeoutException) {
-            print('⏱️ Timeout with $baseUrl - trying next...');
+            debugPrint('⏱️ Timeout with $baseUrl - trying next...');
           } else {
-            print('❌ Error with $baseUrl: $e');
+            debugPrint('❌ Error with $baseUrl: $e');
           }
           continue;
         }
@@ -135,7 +186,8 @@ class _PredictionPageState extends State<PredictionPage> {
       // No data from any backend
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'No sensor data available - sensor appears to be disconnected';
+        _errorMessage =
+            'No sensor data available - sensor appears to be disconnected';
         _isLoading = false;
       });
     } catch (e) {
@@ -146,15 +198,21 @@ class _PredictionPageState extends State<PredictionPage> {
       });
     }
   }
-  
+
   Future<void> _fetchLatestSensorData(String baseUrl) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/sensor-data?limit=1'),
-        headers: {'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final headers = {
+        'Content-Type': 'application/json',
+        if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+      };
+      final response = await http
+          .get(Uri.parse('$baseUrl/sensor-data?limit=1'), headers: headers)
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -169,7 +227,7 @@ class _PredictionPageState extends State<PredictionPage> {
         }
       }
     } catch (e) {
-      print('Error fetching sensor data: $e');
+      debugPrint('Error fetching sensor data: $e');
     }
   }
 
@@ -187,72 +245,83 @@ class _PredictionPageState extends State<PredictionPage> {
       ),
       body: RefreshIndicator(
         onRefresh: _fetchPrediction,
-        child: _isLoading && _prediction == null
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 280, child: Center(child: CircularProgressIndicator())),
-                ],
-              )
-            : _errorMessage != null && _prediction == null
+        child:
+            _isLoading && _prediction == null
                 ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: [
-                      SizedBox(
-                        height: 360,
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
-                              const SizedBox(height: 16),
-                              Text(_errorMessage!, style: theme.textTheme.titleMedium),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Pull down to refresh',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: const [
+                    SizedBox(
+                      height: 280,
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  ],
+                )
+                : _errorMessage != null && _prediction == null
+                ? ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [
+                    SizedBox(
+                      height: 360,
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              size: 64,
+                              color: Colors.red.shade400,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _errorMessage!,
+                              style: theme.textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Pull down to refresh',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  )
-                : SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // Header Section
-                        _buildHeader(theme, scheme),
-                        const SizedBox(height: 24),
-
-                        _buildIntervalControls(theme, scheme),
-                        const SizedBox(height: 12),
-
-                        _buildInfoRow(theme),
-                        const SizedBox(height: 24),
-
-                        // Main Prediction Card
-                        if (_prediction != null) ...[
-                          _buildPredictionCardNew(theme, scheme),
-                          const SizedBox(height: 24),
-
-                          // Confidence and Range Chart
-                          _buildConfidenceChart(theme, scheme),
-                          const SizedBox(height: 24),
-
-                          // Prediction Timeline
-                          _buildTimelineChart(theme, scheme),
-                          const SizedBox(height: 24),
-
-                          // Details Section
-                          _buildDetailsSection(theme, scheme),
-                        ],
-                      ],
                     ),
+                  ],
+                )
+                : SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Header Section
+                      _buildHeader(theme, scheme),
+                      const SizedBox(height: 24),
+
+                      _buildIntervalControls(theme, scheme),
+                      const SizedBox(height: 12),
+
+                      _buildInfoRow(theme),
+                      const SizedBox(height: 24),
+
+                      // Main Prediction Card
+                      if (_prediction != null) ...[
+                        _buildPredictionCardNew(theme, scheme),
+                        const SizedBox(height: 24),
+
+                        // Confidence and Range Chart
+                        _buildConfidenceChart(theme, scheme),
+                        const SizedBox(height: 24),
+
+                        // Prediction Timeline
+                        _buildTimelineChart(theme, scheme),
+                        const SizedBox(height: 24),
+
+                        // Details Section
+                        _buildDetailsSection(theme, scheme),
+                      ],
+                    ],
                   ),
+                ),
       ),
     );
   }
@@ -274,7 +343,11 @@ class _PredictionPageState extends State<PredictionPage> {
                     color: EnergyColorScheme.infoTeal.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(Icons.insights, color: EnergyColorScheme.infoTeal, size: 32),
+                  child: Icon(
+                    Icons.insights,
+                    color: EnergyColorScheme.infoTeal,
+                    size: 32,
+                  ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -329,7 +402,10 @@ class _PredictionPageState extends State<PredictionPage> {
       children: [
         Text(
           'Forecast horizon:',
-          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: Colors.white),
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
         ),
         const SizedBox(width: 12),
         Container(
@@ -341,10 +417,7 @@ class _PredictionPageState extends State<PredictionPage> {
           ),
           child: const Text(
             '5 min (fixed)',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
           ),
         ),
       ],
@@ -352,12 +425,15 @@ class _PredictionPageState extends State<PredictionPage> {
   }
 
   Widget _buildInfoRow(ThemeData theme) {
-    final lastUpdateText = _lastUpdated != null
-        ? DateFormat('h:mm a').format(_lastUpdated!)
-        : '—';
-    final livePower = _prediction?['latest_sensor_reading']?['power'] ??
-      _prediction?['latest_sensor_reading']?['value'];
-    final livePowerText = livePower != null ? '${(livePower as num).toStringAsFixed(2)} kW' : 'No live data';
+    final lastUpdateText =
+        _lastUpdated != null ? DateFormat('h:mm a').format(_lastUpdated!) : '—';
+    final livePower =
+        _prediction?['latest_sensor_reading']?['power'] ??
+        _prediction?['latest_sensor_reading']?['value'];
+    final livePowerText =
+        livePower != null
+            ? '${(livePower as num).toStringAsFixed(2)} kW'
+            : 'No live data';
 
     return Wrap(
       spacing: 12,
@@ -377,7 +453,10 @@ class _PredictionPageState extends State<PredictionPage> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: Colors.black54),
+          ),
           Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
         ],
       ),
@@ -387,20 +466,27 @@ class _PredictionPageState extends State<PredictionPage> {
 
   Widget _buildPredictionCardNew(ThemeData theme, ColorScheme scheme) {
     // Handle both old field names and new API field names
-    final yhat = _prediction!['yhat'] as num? ?? _prediction!['predicted_energy'] as num? ?? 3.5;
-    final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num?;
-    final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num?;
-    
+    final yhat =
+        _prediction!['yhat'] as num? ??
+        _prediction!['predicted_energy'] as num? ??
+        3.5;
+    final yhatLower =
+        _prediction!['yhat_lower'] as num? ??
+        _prediction!['lower_bound'] as num?;
+    final yhatUpper =
+        _prediction!['yhat_upper'] as num? ??
+        _prediction!['upper_bound'] as num?;
+
     final predictedEnergy = (yhat).toDouble();
     final lowerBound = (yhatLower ?? predictedEnergy * 0.8).toDouble();
     final upperBound = (yhatUpper ?? predictedEnergy * 1.2).toDouble();
-    
+
     // Extract live sensor data if available
     dynamic latestSensor = _prediction!['latest_sensor_reading'];
     double currentEnergy = 0;
     String sensorStatus = 'No recent data';
     String lastUpdate = '';
-    
+
     if (latestSensor != null) {
       if (latestSensor is Map) {
         currentEnergy = (latestSensor['value'] as num?)?.toDouble() ?? 0;
@@ -425,9 +511,9 @@ class _PredictionPageState extends State<PredictionPage> {
     }
 
     return _buildSimplePredictionCard(
-      theme, 
-      scheme, 
-      currentEnergy > 0 ? currentEnergy : 3.2, 
+      theme,
+      scheme,
+      currentEnergy > 0 ? currentEnergy : 3.2,
       predictedEnergy,
       currentEnergy > 0,
       sensorStatus,
@@ -445,23 +531,25 @@ class _PredictionPageState extends State<PredictionPage> {
     // Calculate the difference
     final difference = predictedUsage - currentUsage;
     final percentChange = (difference / currentUsage * 100).abs();
-    
+
     // Determine status and message
     String statusTitle;
     String statusMessage;
     Color statusColor;
     IconData statusIcon;
-    
+
     if (difference > currentUsage * 0.2) {
       // Predicted is >20% higher - HIGH ALERT
       statusTitle = '⚠️ Look Out!';
-      statusMessage = 'Energy usage will increase significantly in the next 5 minutes';
+      statusMessage =
+          'Energy usage will increase significantly in the next 5 minutes';
       statusColor = Colors.red;
       statusIcon = Icons.warning_amber_rounded;
     } else if (difference > 0) {
       // Predicted is higher but moderate - CAUTION
       statusTitle = '📊 Going Well';
-      statusMessage = 'Usage is expected to rise slightly. Everything is normal';
+      statusMessage =
+          'Usage is expected to rise slightly. Everything is normal';
       statusColor = Colors.orange;
       statusIcon = Icons.trending_up;
     } else if (difference < 0) {
@@ -488,10 +576,7 @@ class _PredictionPageState extends State<PredictionPage> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              statusColor.withOpacity(0.12),
-              const Color(0xFFF8FBFF),
-            ],
+            colors: [statusColor.withOpacity(0.12), const Color(0xFFF8FBFF)],
           ),
         ),
         child: Column(
@@ -541,9 +626,9 @@ class _PredictionPageState extends State<PredictionPage> {
                 ],
               ),
             ),
-            
+
             const SizedBox(height: 24),
-            
+
             // Current vs Predicted
             Row(
               children: [
@@ -565,14 +650,16 @@ class _PredictionPageState extends State<PredictionPage> {
                     '${predictedUsage.toStringAsFixed(0)} W',
                     statusColor,
                     Icons.show_chart,
-                    difference > 0 ? '+${percentChange.toStringAsFixed(0)}%' : '${percentChange.toStringAsFixed(0)}%',
+                    difference > 0
+                        ? '+${percentChange.toStringAsFixed(0)}%'
+                        : '${percentChange.toStringAsFixed(0)}%',
                   ),
                 ),
               ],
             ),
-            
+
             const SizedBox(height: 20),
-            
+
             // Change Indicator
             Container(
               padding: const EdgeInsets.all(12),
@@ -601,7 +688,7 @@ class _PredictionPageState extends State<PredictionPage> {
                 ],
               ),
             ),
-            
+
             if (hasLiveData) ...[
               const SizedBox(height: 16),
               Row(
@@ -692,7 +779,7 @@ class _PredictionPageState extends State<PredictionPage> {
 
     // Check if we have actual live sensor data
     final hasLiveData = _prediction!['has_live_sensor_data'] == true;
-    
+
     if (!hasLiveData) {
       return Card(
         elevation: 3,
@@ -701,7 +788,11 @@ class _PredictionPageState extends State<PredictionPage> {
           padding: const EdgeInsets.all(20),
           child: Column(
             children: [
-              Icon(Icons.signal_wifi_off, size: 64, color: Colors.grey.shade400),
+              Icon(
+                Icons.signal_wifi_off,
+                size: 64,
+                color: Colors.grey.shade400,
+              ),
               const SizedBox(height: 16),
               Text(
                 'Historical Trend Chart',
@@ -745,7 +836,7 @@ class _PredictionPageState extends State<PredictionPage> {
     final predictedPower = max(0.0, yhat.toDouble());
     final lowerBound = max(0.0, yhatLower.toDouble());
     final upperBound = max(0.0, yhatUpper.toDouble());
-    
+
     // Create data points: lower, predicted, upper
     final spots = [
       FlSpot(0, lowerBound),
@@ -753,7 +844,11 @@ class _PredictionPageState extends State<PredictionPage> {
       FlSpot(2, upperBound),
     ];
 
-    final maxValue = [predictedPower, upperBound, lowerBound].reduce((a, b) => a > b ? a : b);
+    final maxValue = [
+      predictedPower,
+      upperBound,
+      lowerBound,
+    ].reduce((a, b) => a > b ? a : b);
     final safeMax = maxValue <= 0 ? 10.0 : maxValue;
     final maxY = safeMax * 1.2;
     final minY = 0.0;
@@ -779,7 +874,10 @@ class _PredictionPageState extends State<PredictionPage> {
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFDCFCE7),
                     borderRadius: BorderRadius.circular(20),
@@ -810,24 +908,34 @@ class _PredictionPageState extends State<PredictionPage> {
                     show: true,
                     drawVerticalLine: false,
                     horizontalInterval: yInterval,
-                    getDrawingHorizontalLine: (value) => FlLine(
-                      color: const Color(0xFF2A3142),
-                      strokeWidth: 1,
-                      dashArray: [5, 5],
-                    ),
+                    getDrawingHorizontalLine:
+                        (value) => FlLine(
+                          color: const Color(0xFF2A3142),
+                          strokeWidth: 1,
+                          dashArray: [5, 5],
+                        ),
                   ),
                   titlesData: FlTitlesData(
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                     leftTitles: AxisTitles(
                       sideTitles: SideTitles(
                         showTitles: true,
                         reservedSize: 50,
                         interval: yInterval,
-                        getTitlesWidget: (value, meta) => Text(
-                          '${value.toStringAsFixed(0)}W',
-                          style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12, fontWeight: FontWeight.w500),
-                        ),
+                        getTitlesWidget:
+                            (value, meta) => Text(
+                              '${value.toStringAsFixed(0)}W',
+                              style: const TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                       ),
                     ),
                     bottomTitles: AxisTitles(
@@ -835,17 +943,36 @@ class _PredictionPageState extends State<PredictionPage> {
                         showTitles: true,
                         reservedSize: 30,
                         getTitlesWidget: (value, meta) {
-                          if (value == 0) return const Text('Lower', style: TextStyle(color: Color(0xFF9CA3AF), fontWeight: FontWeight.w600));
-                          if (value == 1) return const Text('Predicted', style: TextStyle(color: Color(0xFF9CA3AF), fontWeight: FontWeight.w600));
-                          if (value == 2) return const Text('Upper', style: TextStyle(color: Color(0xFF9CA3AF), fontWeight: FontWeight.w600));
+                          if (value == 0)
+                            return const Text(
+                              'Lower',
+                              style: TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            );
+                          if (value == 1)
+                            return const Text(
+                              'Predicted',
+                              style: TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            );
+                          if (value == 2)
+                            return const Text(
+                              'Upper',
+                              style: TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            );
                           return const SizedBox.shrink();
                         },
                       ),
                     ),
                   ),
-                  borderData: FlBorderData(
-                    show: false,
-                  ),
+                  borderData: FlBorderData(show: false),
                   lineBarsData: [
                     LineChartBarData(
                       spots: spots,
@@ -932,10 +1059,10 @@ class _PredictionPageState extends State<PredictionPage> {
 
   Widget _buildTimelineChart(ThemeData theme, ColorScheme scheme) {
     if (_prediction == null) return const SizedBox.shrink();
-    
+
     // Check if we have actual live sensor data
     final hasLiveData = _prediction!['has_live_sensor_data'] == true;
-    
+
     if (!hasLiveData) {
       return Card(
         elevation: 3,
@@ -944,7 +1071,11 @@ class _PredictionPageState extends State<PredictionPage> {
           padding: const EdgeInsets.all(20),
           child: Column(
             children: [
-              Icon(Icons.signal_wifi_off, size: 64, color: Colors.grey.shade400),
+              Icon(
+                Icons.signal_wifi_off,
+                size: 64,
+                color: Colors.grey.shade400,
+              ),
               const SizedBox(height: 16),
               Text(
                 'Confidence Interval',
@@ -977,14 +1108,15 @@ class _PredictionPageState extends State<PredictionPage> {
     final yhat = _prediction!['yhat'] as num? ?? 0;
     final yhatLower = _prediction!['yhat_lower'] as num? ?? 0;
     final yhatUpper = _prediction!['yhat_upper'] as num? ?? 0;
-    
+
     final predicted = yhat.toDouble();
     final lower = yhatLower.toDouble();
     final upper = yhatUpper.toDouble();
-    
+
     // Calculate confidence percentage
     final range = upper - lower;
-    final confidence = range > 0 ? ((predicted - lower) / range * 100).clamp(0, 100) : 50.0;
+    final confidence =
+        range > 0 ? ((predicted - lower) / range * 100).clamp(0, 100) : 50.0;
 
     return Card(
       elevation: 3,
@@ -1004,7 +1136,10 @@ class _PredictionPageState extends State<PredictionPage> {
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.green.shade50,
                     borderRadius: BorderRadius.circular(12),
@@ -1068,7 +1203,11 @@ class _PredictionPageState extends State<PredictionPage> {
                       sideTitles: SideTitles(
                         showTitles: true,
                         getTitlesWidget: (value, meta) {
-                          const titles = ['Lower\nBound', 'Predicted\nValue', 'Upper\nBound'];
+                          const titles = [
+                            'Lower\nBound',
+                            'Predicted\nValue',
+                            'Upper\nBound',
+                          ];
                           if (value.toInt() < titles.length) {
                             return Padding(
                               padding: const EdgeInsets.only(top: 8.0),
@@ -1090,23 +1229,27 @@ class _PredictionPageState extends State<PredictionPage> {
                         showTitles: true,
                         reservedSize: 50,
                         interval: upper / 4,
-                        getTitlesWidget: (value, meta) => Text(
-                          '${value.toStringAsFixed(0)}W',
-                          style: theme.textTheme.bodySmall,
-                        ),
+                        getTitlesWidget:
+                            (value, meta) => Text(
+                              '${value.toStringAsFixed(0)}W',
+                              style: theme.textTheme.bodySmall,
+                            ),
                       ),
                     ),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                   ),
                   gridData: FlGridData(
                     show: true,
                     drawVerticalLine: false,
                     horizontalInterval: upper / 4,
-                    getDrawingHorizontalLine: (value) => FlLine(
-                      color: Colors.grey.shade300,
-                      strokeWidth: 1,
-                    ),
+                    getDrawingHorizontalLine:
+                        (value) =>
+                            FlLine(color: Colors.grey.shade300, strokeWidth: 1),
                   ),
                   borderData: FlBorderData(
                     show: true,
@@ -1123,7 +1266,9 @@ class _PredictionPageState extends State<PredictionPage> {
                           toY: lower,
                           color: Colors.orange.shade400,
                           width: 40,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(8),
+                          ),
                         ),
                       ],
                     ),
@@ -1134,7 +1279,9 @@ class _PredictionPageState extends State<PredictionPage> {
                           toY: predicted,
                           color: EnergyColorScheme.primaryBlue,
                           width: 40,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(8),
+                          ),
                         ),
                       ],
                     ),
@@ -1145,7 +1292,9 @@ class _PredictionPageState extends State<PredictionPage> {
                           toY: upper,
                           color: Colors.red.shade400,
                           width: 40,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(8),
+                          ),
                         ),
                       ],
                     ),
@@ -1162,7 +1311,11 @@ class _PredictionPageState extends State<PredictionPage> {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.insights, size: 20, color: EnergyColorScheme.infoTeal),
+                  Icon(
+                    Icons.insights,
+                    size: 20,
+                    color: EnergyColorScheme.infoTeal,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -1182,12 +1335,20 @@ class _PredictionPageState extends State<PredictionPage> {
     );
   }
 
-
   Widget _buildPredictionCard(ThemeData theme, ColorScheme scheme) {
-    final yhat = _prediction!['yhat'] as num? ?? _prediction!['predicted_energy'] as num? ?? 0;
-    final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num? ?? 0;
-    final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num? ?? 0;
-    
+    final yhat =
+        _prediction!['yhat'] as num? ??
+        _prediction!['predicted_energy'] as num? ??
+        0;
+    final yhatLower =
+        _prediction!['yhat_lower'] as num? ??
+        _prediction!['lower_bound'] as num? ??
+        0;
+    final yhatUpper =
+        _prediction!['yhat_upper'] as num? ??
+        _prediction!['upper_bound'] as num? ??
+        0;
+
     final predictedEnergy = (yhat).toDouble();
     final lowerBound = (yhatLower).toDouble();
     final upperBound = (yhatUpper).toDouble();
@@ -1214,7 +1375,10 @@ class _PredictionPageState extends State<PredictionPage> {
       child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [statusColor.withOpacity(0.1), statusColor.withOpacity(0.05)],
+            colors: [
+              statusColor.withOpacity(0.1),
+              statusColor.withOpacity(0.05),
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -1233,7 +1397,10 @@ class _PredictionPageState extends State<PredictionPage> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: statusColor.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(20),
@@ -1348,10 +1515,7 @@ class _PredictionPageState extends State<PredictionPage> {
           ),
           Text(
             'kWh',
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -1361,10 +1525,19 @@ class _PredictionPageState extends State<PredictionPage> {
   Widget _buildVisualizationChart(ThemeData theme, ColorScheme scheme) {
     if (_prediction == null) return const SizedBox.shrink();
 
-    final yhat = _prediction!['yhat'] as num? ?? _prediction!['predicted_energy'] as num? ?? 0;
-    final yhatLower = _prediction!['yhat_lower'] as num? ?? _prediction!['lower_bound'] as num? ?? 0;
-    final yhatUpper = _prediction!['yhat_upper'] as num? ?? _prediction!['upper_bound'] as num? ?? 0;
-    
+    final yhat =
+        _prediction!['yhat'] as num? ??
+        _prediction!['predicted_energy'] as num? ??
+        0;
+    final yhatLower =
+        _prediction!['yhat_lower'] as num? ??
+        _prediction!['lower_bound'] as num? ??
+        0;
+    final yhatUpper =
+        _prediction!['yhat_upper'] as num? ??
+        _prediction!['upper_bound'] as num? ??
+        0;
+
     final predictedEnergy = (yhat).toDouble();
     final lowerBound = (yhatLower).toDouble();
     final upperBound = (yhatUpper).toDouble();
@@ -1399,11 +1572,26 @@ class _PredictionPageState extends State<PredictionPage> {
                         getTitlesWidget: (value, meta) {
                           switch (value.toInt()) {
                             case 0:
-                              return const Text('Lower\nBound', textAlign: TextAlign.center, style: TextStyle(fontSize: 10));
+                              return const Text(
+                                'Lower\nBound',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 10),
+                              );
                             case 1:
-                              return const Text('Predicted\nValue', textAlign: TextAlign.center, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold));
+                              return const Text(
+                                'Predicted\nValue',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              );
                             case 2:
-                              return const Text('Upper\nBound', textAlign: TextAlign.center, style: TextStyle(fontSize: 10));
+                              return const Text(
+                                'Upper\nBound',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 10),
+                              );
                             default:
                               return const Text('');
                           }
@@ -1422,8 +1610,12 @@ class _PredictionPageState extends State<PredictionPage> {
                         },
                       ),
                     ),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
                   ),
                   gridData: FlGridData(
                     show: true,
@@ -1445,7 +1637,9 @@ class _PredictionPageState extends State<PredictionPage> {
                           toY: lowerBound,
                           color: Colors.blue.shade400,
                           width: 40,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(6),
+                          ),
                         ),
                       ],
                     ),
@@ -1455,12 +1649,17 @@ class _PredictionPageState extends State<PredictionPage> {
                         BarChartRodData(
                           toY: predictedEnergy,
                           gradient: LinearGradient(
-                            colors: [Colors.green.shade400, Colors.green.shade700],
+                            colors: [
+                              Colors.green.shade400,
+                              Colors.green.shade700,
+                            ],
                             begin: Alignment.bottomCenter,
                             end: Alignment.topCenter,
                           ),
                           width: 40,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(6),
+                          ),
                         ),
                       ],
                     ),
@@ -1471,7 +1670,9 @@ class _PredictionPageState extends State<PredictionPage> {
                           toY: upperBound,
                           color: Colors.red.shade400,
                           width: 40,
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(6),
+                          ),
                         ),
                       ],
                     ),
@@ -1508,17 +1709,14 @@ class _PredictionPageState extends State<PredictionPage> {
           ),
         ),
         const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11),
-        ),
+        Text(label, style: const TextStyle(fontSize: 11)),
       ],
     );
   }
 
   Widget _buildDetailsSection(ThemeData theme, ColorScheme scheme) {
     final generatedAt = _prediction!['generated_at'] as String;
-    
+
     // Extract live sensor data if available
     dynamic latestSensor = _prediction!['latest_sensor_reading'];
     double voltage = 0;
@@ -1526,7 +1724,7 @@ class _PredictionPageState extends State<PredictionPage> {
     double power = 0;
     double powerFactor = 0;
     bool hasSensorData = false;
-    
+
     if (latestSensor != null && latestSensor is Map) {
       voltage = (latestSensor['value'] as num?)?.toDouble() ?? 0;
       current = (latestSensor['current'] as num?)?.toDouble() ?? 0;
@@ -1552,12 +1750,22 @@ class _PredictionPageState extends State<PredictionPage> {
             const SizedBox(height: 16),
             _buildDetailRow(Icons.timeline, 'Horizon', '15 minutes', theme),
             const SizedBox(height: 12),
-            _buildDetailRow(Icons.model_training, 'Model', 'Prophet (Facebook)', theme),
+            _buildDetailRow(
+              Icons.model_training,
+              'Model',
+              'Prophet (Facebook)',
+              theme,
+            ),
             const SizedBox(height: 12),
-            _buildDetailRow(Icons.update, 'Generated At', _formatTime(generatedAt), theme),
+            _buildDetailRow(
+              Icons.update,
+              'Generated At',
+              _formatTime(generatedAt),
+              theme,
+            ),
             const SizedBox(height: 12),
             _buildDetailRow(Icons.psychology, 'Confidence', 'High', theme),
-            
+
             // Show live sensor data if available
             if (hasSensorData) ...[
               const SizedBox(height: 24),
@@ -1573,8 +1781,9 @@ class _PredictionPageState extends State<PredictionPage> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Icon(Icons.electric_bolt, 
-                    size: 20, 
+                  Icon(
+                    Icons.electric_bolt,
+                    size: 20,
                     color: EnergyColorScheme.warningOrange,
                   ),
                   const SizedBox(width: 12),
@@ -1598,8 +1807,9 @@ class _PredictionPageState extends State<PredictionPage> {
               if (voltage > 0)
                 Row(
                   children: [
-                    Icon(Icons.electrical_services, 
-                      size: 20, 
+                    Icon(
+                      Icons.electrical_services,
+                      size: 20,
                       color: Colors.blue.shade600,
                     ),
                     const SizedBox(width: 12),
@@ -1623,10 +1833,7 @@ class _PredictionPageState extends State<PredictionPage> {
               if (current > 0)
                 Row(
                   children: [
-                    Icon(Icons.power, 
-                      size: 20, 
-                      color: Colors.red.shade600,
-                    ),
+                    Icon(Icons.power, size: 20, color: Colors.red.shade600),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -1648,10 +1855,7 @@ class _PredictionPageState extends State<PredictionPage> {
               if (powerFactor > 0)
                 Row(
                   children: [
-                    Icon(Icons.tune, 
-                      size: 20, 
-                      color: Colors.purple.shade600,
-                    ),
+                    Icon(Icons.tune, size: 20, color: Colors.purple.shade600),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -1670,7 +1874,7 @@ class _PredictionPageState extends State<PredictionPage> {
                   ],
                 ),
             ],
-            
+
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
@@ -1681,13 +1885,17 @@ class _PredictionPageState extends State<PredictionPage> {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.blue.shade700,
+                    size: 20,
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      hasSensorData 
-                        ? 'Predictions use live ESP32 sensor data updated every 60 seconds'
-                        : 'Predictions update every 5 minutes automatically',
+                      hasSensorData
+                          ? 'Predictions use live ESP32 sensor data updated every 60 seconds'
+                          : 'Predictions update every 5 minutes automatically',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.blue.shade900,
@@ -1703,7 +1911,12 @@ class _PredictionPageState extends State<PredictionPage> {
     );
   }
 
-  Widget _buildDetailRow(IconData icon, String label, String value, ThemeData theme) {
+  Widget _buildDetailRow(
+    IconData icon,
+    String label,
+    String value,
+    ThemeData theme,
+  ) {
     return Row(
       children: [
         Icon(icon, size: 20, color: Colors.grey.shade600),

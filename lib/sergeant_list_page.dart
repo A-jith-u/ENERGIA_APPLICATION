@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, unused_local_variable, file_names, unused_element, use_build_context_synchronously
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'services/api.dart' as api;
@@ -27,7 +28,9 @@ class _SergeantListPageState extends State<SergeantListPage> {
     // Subscribe to shared sergeants list
     UserListsStore.instance.sergeants.addListener(_onSergeantsChanged);
     // Initialize from cached store for instant display
-    _allSergeants = List<Map<String, dynamic>>.from(UserListsStore.instance.sergeants.value);
+    _allSergeants = List<Map<String, dynamic>>.from(
+      UserListsStore.instance.sergeants.value,
+    );
     _filteredSergeants = List.from(_allSergeants);
     // Refresh in background
     _loadSergeants();
@@ -36,23 +39,28 @@ class _SergeantListPageState extends State<SergeantListPage> {
   void _onSergeantsChanged() {
     if (!mounted) return;
     setState(() {
-      _allSergeants = List<Map<String, dynamic>>.from(UserListsStore.instance.sergeants.value);
-      _filteredSergeants = _allSergeants.where((sergeant) {
-        final name = sergeant['name']?.toString().toLowerCase() ?? '';
-        final email = sergeant['email']?.toString().toLowerCase() ?? '';
-        final searchLower = _searchController.text.toLowerCase();
+      _allSergeants = List<Map<String, dynamic>>.from(
+        UserListsStore.instance.sergeants.value,
+      );
+      _filteredSergeants =
+          _allSergeants.where((sergeant) {
+            final name = sergeant['name']?.toString().toLowerCase() ?? '';
+            final email = sergeant['email']?.toString().toLowerCase() ?? '';
+            final searchLower = _searchController.text.toLowerCase();
 
-        final matchesSearch = _searchController.text.isEmpty ||
-            name.contains(searchLower) ||
-            email.contains(searchLower);
+            final matchesSearch =
+                _searchController.text.isEmpty ||
+                name.contains(searchLower) ||
+                email.contains(searchLower);
 
-        final isActive = sergeant['is_active'] == true;
-        final matchesStatus = _selectedStatus == 'All' ||
-            (_selectedStatus == 'Active' && isActive) ||
-            (_selectedStatus == 'Inactive' && !isActive);
+            final isActive = sergeant['is_active'] == true;
+            final matchesStatus =
+                _selectedStatus == 'All' ||
+                (_selectedStatus == 'Active' && isActive) ||
+                (_selectedStatus == 'Inactive' && !isActive);
 
-        return matchesSearch && matchesStatus;
-      }).toList();
+            return matchesSearch && matchesStatus;
+          }).toList();
     });
   }
 
@@ -88,63 +96,81 @@ class _SergeantListPageState extends State<SergeantListPage> {
   void _filterData() {
     if (!mounted) return;
     setState(() {
-      _filteredSergeants = _allSergeants.where((sergeant) {
-        final name = sergeant['name']?.toString().toLowerCase() ?? '';
-        final email = sergeant['email']?.toString().toLowerCase() ?? '';
-        final searchLower = _searchController.text.toLowerCase();
-        
-        final matchesSearch = _searchController.text.isEmpty ||
-            name.contains(searchLower) ||
-            email.contains(searchLower);
-        
-        final isActive = sergeant['is_active'] == true;
-        final matchesStatus = _selectedStatus == 'All' ||
-            (_selectedStatus == 'Active' && isActive) ||
-            (_selectedStatus == 'Inactive' && !isActive);
-        
-        return matchesSearch && matchesStatus;
-      }).toList();
+      _filteredSergeants =
+          _allSergeants.where((sergeant) {
+            final name = sergeant['name']?.toString().toLowerCase() ?? '';
+            final email = sergeant['email']?.toString().toLowerCase() ?? '';
+            final searchLower = _searchController.text.toLowerCase();
+
+            final matchesSearch =
+                _searchController.text.isEmpty ||
+                name.contains(searchLower) ||
+                email.contains(searchLower);
+
+            final isActive = sergeant['is_active'] == true;
+            final matchesStatus =
+                _selectedStatus == 'All' ||
+                (_selectedStatus == 'Active' && isActive) ||
+                (_selectedStatus == 'Inactive' && !isActive);
+
+            return matchesSearch && matchesStatus;
+          }).toList();
     });
   }
 
   Future<void> _exportToPdf() async {
     if (_filteredSergeants.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No sergeants to export')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No sergeants to export')));
       return;
     }
 
-    const headers = ['Name', 'Email', 'Phone', 'Status', 'Last Login', 'Joined Date'];
-    final rows = _filteredSergeants.map((sergeant) {
-      final phone = sergeant['phone']?.toString() ?? 'N/A';
-      final lastLogin = sergeant['last_login']?.toString();
-      final isActive = lastLogin != null
-          ? (DateTime.now().difference(DateTime.parse(lastLogin)) <= const Duration(days: 30))
-          : false;
-      final lastLoginStr = lastLogin != null
-          ? DateFormat('MMM d, yyyy h:mm a').format(DateTime.parse(lastLogin))
-          : 'Never';
-      final createdStr = sergeant['created_at']?.toString();
-      final createdDate = createdStr != null
-          ? DateFormat('MMM d, yyyy').format(DateTime.parse(createdStr))
-          : 'N/A';
+    const headers = [
+      'Name',
+      'Email',
+      'Phone',
+      'Status',
+      'Last Login',
+      'Joined Date',
+    ];
+    final rows =
+        _filteredSergeants.map((sergeant) {
+          final phone = sergeant['phone']?.toString() ?? 'N/A';
+          final lastLogin = sergeant['last_login']?.toString();
+          final isActive =
+              lastLogin != null
+                  ? (DateTime.now().difference(DateTime.parse(lastLogin)) <=
+                      const Duration(days: 30))
+                  : false;
+          final lastLoginStr =
+              lastLogin != null
+                  ? DateFormat(
+                    'MMM d, yyyy h:mm a',
+                  ).format(DateTime.parse(lastLogin))
+                  : 'Never';
+          final createdStr = sergeant['created_at']?.toString();
+          final createdDate =
+              createdStr != null
+                  ? DateFormat('MMM d, yyyy').format(DateTime.parse(createdStr))
+                  : 'N/A';
 
-      return [
-        sergeant['name']?.toString() ?? 'Unknown',
-        sergeant['email']?.toString() ?? 'N/A',
-        phone,
-        isActive ? 'Active' : 'Inactive',
-        lastLoginStr,
-        createdDate,
-      ];
-    }).toList();
+          return [
+            sergeant['name']?.toString() ?? 'Unknown',
+            sergeant['email']?.toString() ?? 'N/A',
+            phone,
+            isActive ? 'Active' : 'Inactive',
+            lastLoginStr,
+            createdDate,
+          ];
+        }).toList();
 
     await exportTablePdfAutoSave(
       'Sergeants List',
       headers,
       rows,
-      subtitle: 'Exported on ${DateFormat('MMM d, yyyy').format(DateTime.now())}',
+      subtitle:
+          'Exported on ${DateFormat('MMM d, yyyy').format(DateTime.now())}',
     );
   }
 
@@ -152,7 +178,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    
+
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -162,10 +188,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
         foregroundColor: theme.appBarTheme.foregroundColor ?? scheme.onSurface,
         elevation: theme.appBarTheme.elevation ?? 0,
         actions: [
-          TextButton(
-            onPressed: _loadSergeants,
-            child: const Text('Reload'),
-          ),
+          TextButton(onPressed: _loadSergeants, child: const Text('Reload')),
         ],
       ),
       body: Center(
@@ -173,24 +196,32 @@ class _SergeantListPageState extends State<SergeantListPage> {
           constraints: const BoxConstraints(maxWidth: 900),
           child: Padding(
             padding: const EdgeInsets.all(20),
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _errorMessage != null
+            child:
+                _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _errorMessage != null
                     ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.error_outline, size: 64, color: Colors.red.shade400),
-                            const SizedBox(height: 16),
-                            Text(_errorMessage!, style: theme.textTheme.titleMedium),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: _loadSergeants,
-                              child: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      )
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.error_outline,
+                            size: 64,
+                            color: Colors.red.shade400,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _errorMessage!,
+                            style: theme.textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: _loadSergeants,
+                            child: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    )
                     : _buildSergeantsList(theme),
           ),
         ),
@@ -205,15 +236,19 @@ class _SergeantListPageState extends State<SergeantListPage> {
         // Header
         Text(
           'Security Personnel',
-          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
         ),
         const SizedBox(height: 8),
         Text(
           '${_filteredSergeants.length} ${_filteredSergeants.length == 1 ? 'sergeant' : 'sergeants'}',
-          style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+          style: theme.textTheme.titleMedium?.copyWith(
+            color: Colors.grey.shade600,
+          ),
         ),
         const SizedBox(height: 24),
-        
+
         // Search and Filter Bar
         Row(
           children: [
@@ -257,31 +292,38 @@ class _SergeantListPageState extends State<SergeantListPage> {
           ],
         ),
         const SizedBox(height: 24),
-        
+
         // Sergeants List
         Expanded(
-          child: _filteredSergeants.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.security_outlined, size: 64, color: Colors.grey.shade400),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No sergeants found',
-                        style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
-                      ),
-                    ],
+          child:
+              _filteredSergeants.isEmpty
+                  ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.security_outlined,
+                          size: 64,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No sergeants found',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                  : ListView.separated(
+                    itemCount: _filteredSergeants.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final sergeant = _filteredSergeants[index];
+                      return _buildSergeantCard(sergeant, theme);
+                    },
                   ),
-                )
-              : ListView.separated(
-                  itemCount: _filteredSergeants.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final sergeant = _filteredSergeants[index];
-                    return _buildSergeantCard(sergeant, theme);
-                  },
-                ),
         ),
       ],
     );
@@ -325,15 +367,17 @@ class _SergeantListPageState extends State<SergeantListPage> {
               // Avatar
               CircleAvatar(
                 radius: 28,
-                backgroundColor: isActive ? Colors.purple.shade100 : Colors.grey.shade300,
+                backgroundColor:
+                    isActive ? Colors.purple.shade100 : Colors.grey.shade300,
                 child: Icon(
                   Icons.security,
-                  color: isActive ? Colors.purple.shade700 : Colors.grey.shade600,
+                  color:
+                      isActive ? Colors.purple.shade700 : Colors.grey.shade600,
                   size: 28,
                 ),
               ),
               const SizedBox(width: 16),
-              
+
               // Details
               Expanded(
                 child: Column(
@@ -341,8 +385,9 @@ class _SergeantListPageState extends State<SergeantListPage> {
                   children: [
                     Text(
                       name,
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -368,15 +413,24 @@ class _SergeantListPageState extends State<SergeantListPage> {
                         ),
                         const SizedBox(width: 16),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
-                            color: isActive ? Colors.green.shade100 : Colors.red.shade100,
+                            color:
+                                isActive
+                                    ? Colors.green.shade100
+                                    : Colors.red.shade100,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
                             isActive ? 'Active' : 'Inactive',
                             style: theme.textTheme.bodySmall?.copyWith(
-                              color: isActive ? Colors.green.shade900 : Colors.red.shade900,
+                              color:
+                                  isActive
+                                      ? Colors.green.shade900
+                                      : Colors.red.shade900,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -386,7 +440,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
                   ],
                 ),
               ),
-              
+
               // Action buttons
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -400,10 +454,7 @@ class _SergeantListPageState extends State<SergeantListPage> {
                     },
                   ),
                   // Chevron to indicate more details
-                  Icon(
-                    Icons.chevron_right,
-                    color: Colors.grey.shade400,
-                  ),
+                  Icon(Icons.chevron_right, color: Colors.grey.shade400),
                 ],
               ),
             ],
@@ -413,52 +464,63 @@ class _SergeantListPageState extends State<SergeantListPage> {
     );
   }
 
-  void _confirmDeleteSergeant(BuildContext context, Map<String, dynamic> sergeant) {
+  void _confirmDeleteSergeant(
+    BuildContext context,
+    Map<String, dynamic> sergeant,
+  ) {
     final name = sergeant['name']?.toString() ?? 'Unknown';
     final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
-    
+
     showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete Sergeant'),
-        content: Text('Are you sure you want to delete $name ($sergeantId)?\n\nThis action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Delete Sergeant'),
+            content: Text(
+              'Are you sure you want to delete $name ($sergeantId)?\n\nThis action cannot be undone.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  _deleteSergeant(context, sergeant);
+                },
+                child: const Text('Delete'),
+              ),
+            ],
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _deleteSergeant(context, sergeant);
-            },
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
     );
   }
 
-  Future<void> _deleteSergeant(BuildContext context, Map<String, dynamic> sergeant) async {
+  Future<void> _deleteSergeant(
+    BuildContext context,
+    Map<String, dynamic> sergeant,
+  ) async {
     try {
       final sergeantId = sergeant['sergeant_id']?.toString() ?? '';
       final name = sergeant['name']?.toString() ?? 'Unknown';
-      
+
       // Optimistic update: remove from list immediately
-      final indexToRemove = _allSergeants.indexWhere((s) => s['sergeant_id'] == sergeantId);
+      final indexToRemove = _allSergeants.indexWhere(
+        (s) => s['sergeant_id'] == sergeantId,
+      );
       if (indexToRemove != -1) {
         final removedSergeant = _allSergeants[indexToRemove];
-        
+
         if (mounted) {
           setState(() {
             _allSergeants.removeAt(indexToRemove);
             _filterData(); // Update filtered list
           });
         }
-        
+
         AppNotifier.showSuccess(context, 'Sergeant deleted successfully');
-        
+
         // Call API in background
         try {
           await api.deleteSergeant(sergeantId);
@@ -521,19 +583,32 @@ class _SergeantDetailDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _DetailRow(icon: Icons.badge, label: 'Sergeant ID', value: sergeantId),
+            _DetailRow(
+              icon: Icons.badge,
+              label: 'Sergeant ID',
+              value: sergeantId,
+            ),
             _DetailRow(icon: Icons.person, label: 'Name', value: name),
             _DetailRow(icon: Icons.email, label: 'Email', value: email),
             _DetailRow(icon: Icons.phone, label: 'Phone', value: phone),
             const Divider(),
             _DetailRow(
-              icon: Icons.verified_user, 
-              label: 'Status', 
+              icon: Icons.verified_user,
+              label: 'Status',
               value: isActive ? 'Active' : 'Inactive',
-              valueColor: isActive ? Colors.green.shade700 : Colors.red.shade700,
+              valueColor:
+                  isActive ? Colors.green.shade700 : Colors.red.shade700,
             ),
-            _DetailRow(icon: Icons.login, label: 'Last Login', value: formatDate(lastLogin)),
-            _DetailRow(icon: Icons.calendar_today, label: 'Created', value: formatDate(createdAt)),
+            _DetailRow(
+              icon: Icons.login,
+              label: 'Last Login',
+              value: formatDate(lastLogin),
+            ),
+            _DetailRow(
+              icon: Icons.calendar_today,
+              label: 'Created',
+              value: formatDate(createdAt),
+            ),
           ],
         ),
       ),

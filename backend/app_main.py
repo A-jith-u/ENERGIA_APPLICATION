@@ -221,6 +221,17 @@ from contextlib import asynccontextmanager
 # Global variable to track background tasks
 _background_tasks = []
 _anomaly_alert_service = None
+_demo_mode_service = None
+
+
+def _load_demo_mode_service():
+    if __package__:
+        from . import demo_mode_service
+
+        return demo_mode_service
+    else:
+        sys.path.append(os.path.dirname(__file__))
+        return importlib.import_module("demo_mode_service")
 
 @asynccontextmanager
 async def lifespan(app_instance):
@@ -228,7 +239,7 @@ async def lifespan(app_instance):
     Lifespan context manager for app startup and shutdown.
     Starts the anomaly alert background service on startup.
     """
-    global _background_tasks, _anomaly_alert_service
+    global _background_tasks, _anomaly_alert_service, _demo_mode_service
     
     # Startup
     print("[app_main] Starting background services...")
@@ -242,6 +253,17 @@ async def lifespan(app_instance):
             print("[app_main] Anomaly alert background service STARTED [OK]")
         except Exception as e:
             print(f"[app_main] Failed to start anomaly alert service: {e}")
+
+    demo_mode_enabled = os.environ.get("DEMO_MODE", "1").strip().lower() in {"1", "true", "yes", "on"}
+    if demo_mode_enabled:
+        try:
+            demo_module = _load_demo_mode_service()
+            _demo_mode_service = demo_module.DemoModeService()
+            _demo_mode_service.start()
+            print("[app_main] Demo data service STARTED [OK]")
+        except Exception as e:
+            _demo_mode_service = None
+            print(f"[app_main] Failed to start demo data service: {e}")
     
     yield  # App runs here
     
@@ -249,6 +271,8 @@ async def lifespan(app_instance):
     print("[app_main] Shutting down background services...")
     if _anomaly_alert_service:
         _anomaly_alert_service.stop()
+    if _demo_mode_service:
+        _demo_mode_service.stop()
     for task in _background_tasks:
         if not task.done():
             task.cancel()

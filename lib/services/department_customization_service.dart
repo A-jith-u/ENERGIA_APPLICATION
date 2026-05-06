@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names
 import 'package:flutter/material.dart';
 import 'package:energia/models/user_role_model.dart';
 
@@ -14,7 +15,8 @@ class DepartmentCustomizationService {
 
   /// Get theme data specific to a department
   ThemeData getDepartmentTheme(Department department) {
-    final primaryColor = departmentColors[department] ?? const Color(0xFF005BBB);
+    final primaryColor =
+        departmentColors[department] ?? const Color(0xFF005BBB);
     final colorScheme = ColorScheme.fromSeed(
       seedColor: primaryColor,
       brightness: Brightness.light,
@@ -305,13 +307,14 @@ class DepartmentCustomizationService {
         break;
     }
 
-    return metrics..sort((a, b) => a.displayPriority.compareTo(b.displayPriority));
+    return metrics
+      ..sort((a, b) => a.displayPriority.compareTo(b.displayPriority));
   }
 
   /// Get department-specific color scheme for charts
   Map<String, Color> getDepartmentChartColors(Department department) {
     final baseColor = departmentColors[department] ?? const Color(0xFF005BBB);
-    
+
     return {
       'primary': baseColor,
       'secondary': baseColor.withOpacity(0.7),
@@ -352,31 +355,11 @@ class DepartmentCustomizationService {
         'CS-Lab-2',
         'Server-Room',
       ],
-      Department.electrical: [
-        'ELE-101',
-        'ELE-102',
-        'ELE-Lab-1',
-        'Power-Room',
-      ],
-      Department.electronics: [
-        'ECE-101',
-        'ECE-102',
-        'ECE-Lab-1',
-      ],
-      Department.mechanical: [
-        'MECH-101',
-        'MECH-102',
-        'MECH-Lab-1',
-        'Workshop',
-      ],
-      Department.itt: [
-        'ITT-101',
-        'ITT-102',
-      ],
-      Department.civilEngineering: [
-        'CIVIL-101',
-        'CIVIL-102',
-      ],
+      Department.electrical: ['ELE-101', 'ELE-102', 'ELE-Lab-1', 'Power-Room'],
+      Department.electronics: ['ECE-101', 'ECE-102', 'ECE-Lab-1'],
+      Department.mechanical: ['MECH-101', 'MECH-102', 'MECH-Lab-1', 'Workshop'],
+      Department.itt: ['ITT-101', 'ITT-102'],
+      Department.civilEngineering: ['CIVIL-101', 'CIVIL-102'],
       Department.admin: [],
     };
 

@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 // Simple API client for ENERGIA backend
 // - Uses the host loopback address for Android emulator (10.0.2.2)
 // - Exposes `login` and `register` helpers returning JWT token on success
@@ -59,7 +60,9 @@ void _markBaseHealthy(String base) {
 }
 
 void _markBaseFailed(String base, Object error) {
-  if (error is TimeoutException || error is SocketException || error is http.ClientException) {
+  if (error is TimeoutException ||
+      error is SocketException ||
+      error is http.ClientException) {
     _baseCooldownUntil[base] = DateTime.now().add(_baseCooldown);
   }
 }
@@ -83,12 +86,16 @@ dynamic _safeJsonDecode(String body) {
 }
 
 /// Login with username/password. Returns access token string on success.
-Future<String> login(String username, String password, {String? department}) async {
+Future<String> login(
+  String username,
+  String password, {
+  String? department,
+}) async {
   // Try candidate bases until one responds successfully.
   Exception? lastError;
   print('[API] Attempting login for user: $username');
   print('[API] Trying candidates: $_candidates');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/login');
     print('[API] Trying: $uri');
@@ -97,20 +104,26 @@ Future<String> login(String username, String password, {String? department}) asy
       if (department != null) {
         requestBody['department'] = department;
       }
-      final resp = await http.post(uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(requestBody))
-          .timeout(Duration(seconds: 15), onTimeout: () {
-            throw TimeoutException('Request timed out');
-          });
+      final resp = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(requestBody),
+          )
+          .timeout(
+            Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = _safeJsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Login successful!');
         return data['access_token'] as String;
       }
-      
+
       // Handle specific credential errors (400, 401)
       if (resp.statusCode == 400 || resp.statusCode == 401) {
         try {
@@ -124,13 +137,13 @@ Future<String> login(String username, String password, {String? department}) asy
           throw ApiError('Invalid credentials');
         }
       }
-      
+
       // Handle system errors (5xx)
       if (resp.statusCode >= 500) {
         print('[API] Backend system error: ${resp.statusCode}');
         throw ApiError('Something went wrong');
       }
-      
+
       // Other errors
       throw ApiError('Login failed');
     } catch (e) {
@@ -145,11 +158,22 @@ Future<String> login(String username, String password, {String? department}) asy
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Backend unreachable. Please check your connection or contact support.');
+  throw ApiError(
+    'Backend unreachable. Please check your connection or contact support.',
+  );
 }
 
 /// Register a new user
-Future<void> register(String username, String password, {String role = 'student', String? ktuId, String? name, String? department, String? year, String? email}) async {
+Future<void> register(
+  String username,
+  String password, {
+  String role = 'student',
+  String? ktuId,
+  String? name,
+  String? department,
+  String? year,
+  String? email,
+}) async {
   Exception? lastError;
   for (final base in _candidates) {
     final uri = Uri.parse('$base/register');
@@ -164,18 +188,24 @@ Future<void> register(String username, String password, {String role = 'student'
       if (department != null) body['department'] = department;
       if (year != null) body['year'] = year;
       if (email != null) body['email'] = email;
-      
-      final resp = await http.post(uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(body));
+
+      final resp = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
       if (resp.statusCode == 200) return;
-      throw ApiError('Register failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Register failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = Exception(e.toString());
       continue;
     }
   }
-  throw ApiError('Register failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Register failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Send an email notification (alert/update) to one or more recipients.
@@ -194,25 +224,31 @@ Future<void> sendNotification({
   for (final base in _candidates) {
     final uri = Uri.parse('$base/notify/$type');
     try {
-      final resp = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'subject': subject,
-          'body': body,
-          'recipients': recipients,
-        }),
-      ).timeout(const Duration(seconds: 8));
+      final resp = await http
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'subject': subject,
+              'body': body,
+              'recipients': recipients,
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
 
       if (resp.statusCode == 200) return;
-      throw ApiError('Notification failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Notification failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = Exception(e.toString());
       continue;
     }
   }
 
-  throw ApiError('Notification failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Notification failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 Future<void> requestPasswordReset(String username) async {
@@ -221,58 +257,79 @@ Future<void> requestPasswordReset(String username) async {
     final uri = Uri.parse('$base/request-password-reset');
     try {
       final resp = await http
-          .post(uri,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'username': username}))
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'username': username}),
+          )
           .timeout(const Duration(seconds: 8));
       if (resp.statusCode == 200) return;
-      throw ApiError('Reset request failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Reset request failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = Exception(e.toString());
       continue;
     }
   }
-  throw ApiError('Reset request failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Reset request failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
-Future<void> confirmPasswordReset(String username, String otp, String newPassword) async {
+Future<void> confirmPasswordReset(
+  String username,
+  String otp,
+  String newPassword,
+) async {
   Exception? lastError;
   for (final base in _candidates) {
     final uri = Uri.parse('$base/confirm-password-reset');
     try {
       final resp = await http
-          .post(uri,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'username': username,
-                'otp': otp,
-                'new_password': newPassword,
-              }))
+          .post(
+            uri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'username': username,
+              'otp': otp,
+              'new_password': newPassword,
+            }),
+          )
           .timeout(const Duration(seconds: 8));
       if (resp.statusCode == 200) return;
-      throw ApiError('Reset confirm failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Reset confirm failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = Exception(e.toString());
       continue;
     }
   }
-  throw ApiError('Reset confirm failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Reset confirm failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch all coordinators from the backend
 Future<List<Map<String, dynamic>>> getCoordinators() async {
   Exception? lastError;
   print('[API] Fetching coordinators');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/users/coordinators');
     print('[API] Trying: $uri');
     try {
-      final resp = await http.get(uri).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .get(uri)
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = _safeJsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched ${data['total']} coordinators');
@@ -280,7 +337,9 @@ Future<List<Map<String, dynamic>>> getCoordinators() async {
         UserListsStore.instance.setCoordinators(list);
         return list;
       }
-      throw ApiError('Get coordinators failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get coordinators failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = Exception(e.toString());
@@ -288,31 +347,42 @@ Future<List<Map<String, dynamic>>> getCoordinators() async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get coordinators failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get coordinators failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch all class representatives from the backend
 Future<List<Map<String, dynamic>>> getClassRepresentatives() async {
   Exception? lastError;
   print('[API] Fetching class representatives');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/users/class-representatives');
     print('[API] Trying: $uri');
     try {
-      final resp = await http.get(uri).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .get(uri)
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = _safeJsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched ${data['total']} class representatives');
-        final list = List<Map<String, dynamic>>.from(data['class_representatives']);
+        final list = List<Map<String, dynamic>>.from(
+          data['class_representatives'],
+        );
         UserListsStore.instance.setClassRepresentatives(list);
         return list;
       }
-      throw ApiError('Get class representatives failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get class representatives failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = Exception(e.toString());
@@ -320,7 +390,9 @@ Future<List<Map<String, dynamic>>> getClassRepresentatives() async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get class representatives failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get class representatives failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch all sergeants from the backend
@@ -333,19 +405,21 @@ Future<List<Map<String, dynamic>>> getSergeants() async {
   if (token == null || token.isEmpty) {
     throw ApiError('Authentication required. Please log in again.');
   }
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/sergeant/list');
     print('[API] Trying: $uri');
     try {
-      final resp = await http.get(
-        uri,
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .get(uri, headers: {'Authorization': 'Bearer $token'})
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = _safeJsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched ${data['total']} sergeants');
@@ -356,7 +430,9 @@ Future<List<Map<String, dynamic>>> getSergeants() async {
       if (resp.statusCode == 401 || resp.statusCode == 403) {
         throw ApiError('Authentication required. Please log in again.');
       }
-      throw ApiError('Get sergeants failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get sergeants failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       if (e is ApiError) rethrow;
       print('[API] Error with $base: $e');
@@ -365,37 +441,47 @@ Future<List<Map<String, dynamic>>> getSergeants() async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get sergeants failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get sergeants failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch user counts from the backend
 Future<Map<String, int>> getUserCounts() async {
   Exception? lastError;
   print('[API] Fetching user counts');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/users/counts');
     print('[API] Trying: $uri');
     try {
-      final resp = await http.get(uri).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .get(uri)
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         final data = _safeJsonDecode(resp.body) as Map<String, dynamic>;
         print('[API] Fetched user counts: $data');
         final result = {
           'total_users': (data['total_users'] as num?)?.toInt() ?? 0,
           'coordinators': (data['coordinators'] as num?)?.toInt() ?? 0,
-          'class_representatives': (data['class_representatives'] as num?)?.toInt() ?? 0,
+          'class_representatives':
+              (data['class_representatives'] as num?)?.toInt() ?? 0,
           'sergeants': (data['sergeants'] as num?)?.toInt() ?? 0,
         };
         // Update shared store so UI can react instantly
         UserCountsStore.instance.setCounts(result);
         return result;
       }
-      throw ApiError('Get user counts failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get user counts failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = Exception(e.toString());
@@ -403,21 +489,33 @@ Future<Map<String, int>> getUserCounts() async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get user counts failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get user counts failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch campus overview metrics: total usage, active/total rooms, efficiency, inactive rooms
-Future<Map<String, dynamic>> getCampusOverview({int activeWindowMinutes = 5, int usageWindowHours = 24}) async {
+Future<Map<String, dynamic>> getCampusOverview({
+  int activeWindowMinutes = 5,
+  int usageWindowHours = 24,
+}) async {
   Exception? lastError;
   print('[API] Fetching campus overview');
 
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/dashboard/overview?active_window_minutes=$activeWindowMinutes&usage_window_hours=$usageWindowHours');
+    final uri = Uri.parse(
+      '$base/dashboard/overview?active_window_minutes=$activeWindowMinutes&usage_window_hours=$usageWindowHours',
+    );
     print('[API] Trying: $uri');
     try {
-      final resp = await http.get(uri).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .get(uri)
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
 
       if (resp.statusCode == 200) {
@@ -425,7 +523,9 @@ Future<Map<String, dynamic>> getCampusOverview({int activeWindowMinutes = 5, int
         print('[API] Overview: $data');
         return data;
       }
-      throw ApiError('Get campus overview failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get campus overview failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = Exception(e.toString());
@@ -433,14 +533,18 @@ Future<Map<String, dynamic>> getCampusOverview({int activeWindowMinutes = 5, int
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Get campus overview failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get campus overview failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch list of rooms (optionally filtered by department)
 Future<List<Map<String, dynamic>>> getRooms({String? department}) async {
   Exception? lastError;
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/rooms${department != null ? '?department=${Uri.encodeComponent(department)}' : ''}');
+    final uri = Uri.parse(
+      '$base/rooms${department != null ? '?department=${Uri.encodeComponent(department)}' : ''}',
+    );
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 12));
       if (resp.statusCode == 200) {
@@ -448,20 +552,29 @@ Future<List<Map<String, dynamic>>> getRooms({String? department}) async {
         final list = List<Map<String, dynamic>>.from(data['data'] ?? []);
         return list;
       }
-      throw ApiError('Get rooms failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get rooms failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = Exception(e.toString());
       continue;
     }
   }
-  throw ApiError('Get rooms failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get rooms failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Fetch recent sensor readings for a department. Returns list of raw sensor rows (most recent first).
-Future<List<Map<String, dynamic>>> getDepartmentLiveReadings(String department, {int limit = 500}) async {
+Future<List<Map<String, dynamic>>> getDepartmentLiveReadings(
+  String department, {
+  int limit = 500,
+}) async {
   Exception? lastError;
   for (final base in _candidates) {
-    final uri = Uri.parse('$base/sensor-data?limit=$limit&department=${Uri.encodeComponent(department)}');
+    final uri = Uri.parse(
+      '$base/sensor-data?limit=$limit&department=${Uri.encodeComponent(department)}',
+    );
     try {
       final resp = await http.get(uri).timeout(const Duration(seconds: 12));
       if (resp.statusCode == 200) {
@@ -469,29 +582,38 @@ Future<List<Map<String, dynamic>>> getDepartmentLiveReadings(String department, 
         final list = List<Map<String, dynamic>>.from(data['data'] ?? []);
         return list;
       }
-      throw ApiError('Get sensor-data failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Get sensor-data failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       lastError = Exception(e.toString());
       continue;
     }
   }
-  throw ApiError('Get sensor-data failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Get sensor-data failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Delete a user (coordinator or class representative) by username
 Future<void> deleteUser(String username) async {
   Exception? lastError;
   print('[API] Deleting user: $username');
-  
+
   for (final base in _candidates) {
     final uri = Uri.parse('$base/users/$username');
     print('[API] Trying DELETE: $uri');
     try {
-      final resp = await http.delete(uri).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .delete(uri)
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
-      
+
       if (resp.statusCode == 200) {
         print('[API] User deleted successfully');
         return;
@@ -499,7 +621,9 @@ Future<void> deleteUser(String username) async {
       if (resp.statusCode == 404) {
         throw ApiError('User not found or cannot be deleted');
       }
-      throw ApiError('Delete user failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Delete user failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       print('[API] Error with $base: $e');
       lastError = Exception(e.toString());
@@ -508,20 +632,31 @@ Future<void> deleteUser(String username) async {
     }
   }
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Delete user failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Delete user failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
+
 /// Get activity logs from the backend
-Future<List<Map<String, dynamic>>> getActivityLogs({int limit = 10, int days = 1}) async {
+Future<List<Map<String, dynamic>>> getActivityLogs({
+  int limit = 10,
+  int days = 1,
+}) async {
   Exception? lastError;
   final candidates = _orderedCandidates();
-  
+
   for (final base in candidates) {
     final uri = Uri.parse('$base/activity/logs?limit=$limit&days=$days');
     try {
       print('[API] Fetching activity logs from: $uri');
-      final resp = await http.get(uri).timeout(_activityLogsTimeout, onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .get(uri)
+          .timeout(
+            _activityLogsTimeout,
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       if (resp.statusCode == 200) {
         _markBaseHealthy(base);
         final data = _safeJsonDecode(resp.body) as Map<String, dynamic>;
@@ -575,7 +710,8 @@ Future<Map<String, dynamic>> inviteUserAsAdmin({
             uri,
             headers: {
               'Content-Type': 'application/json',
-              if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+              if (token != null && token.isNotEmpty)
+                'Authorization': 'Bearer $token',
             },
             body: jsonEncode(payload),
           )
@@ -595,7 +731,9 @@ Future<Map<String, dynamic>> inviteUserAsAdmin({
       }
 
       // Validation/auth errors should be surfaced immediately.
-      if (response.statusCode == 400 || response.statusCode == 401 || response.statusCode == 403) {
+      if (response.statusCode == 400 ||
+          response.statusCode == 401 ||
+          response.statusCode == 403) {
         throw ApiError(message);
       }
 
@@ -609,7 +747,9 @@ Future<Map<String, dynamic>> inviteUserAsAdmin({
     }
   }
 
-  throw ApiError('Invite failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Invite failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Create sergeant user through dedicated sergeant endpoint.
@@ -655,7 +795,9 @@ Future<Map<String, dynamic>> createSergeantAsAdmin({
         // keep fallback message
       }
 
-      if (response.statusCode == 400 || response.statusCode == 401 || response.statusCode == 403) {
+      if (response.statusCode == 400 ||
+          response.statusCode == 401 ||
+          response.statusCode == 403) {
         throw ApiError(message);
       }
 
@@ -669,7 +811,9 @@ Future<Map<String, dynamic>> createSergeantAsAdmin({
     }
   }
 
-  throw ApiError('Create sergeant failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Create sergeant failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
 
 /// Delete/deactivate a sergeant user
@@ -687,12 +831,14 @@ Future<void> deleteSergeant(String sergeantId) async {
     final uri = Uri.parse('$base/sergeant/$sergeantId');
     print('[API] Trying: $uri');
     try {
-      final resp = await http.delete(
-        uri,
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 15), onTimeout: () {
-        throw TimeoutException('Request timed out');
-      });
+      final resp = await http
+          .delete(uri, headers: {'Authorization': 'Bearer $token'})
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw TimeoutException('Request timed out');
+            },
+          );
       print('[API] Response from $base: ${resp.statusCode}');
 
       if (resp.statusCode == 200) {
@@ -705,7 +851,9 @@ Future<void> deleteSergeant(String sergeantId) async {
         throw ApiError('Authentication required. Please log in again.');
       }
 
-      throw ApiError('Delete sergeant failed ($base): ${resp.statusCode} ${resp.body}');
+      throw ApiError(
+        'Delete sergeant failed ($base): ${resp.statusCode} ${resp.body}',
+      );
     } catch (e) {
       if (e is ApiError) rethrow;
       print('[API] Error with $base: $e');
@@ -716,6 +864,7 @@ Future<void> deleteSergeant(String sergeantId) async {
   }
 
   print('[API] All candidates failed. Last error: $lastError');
-  throw ApiError('Delete sergeant failed, no backend reachable. Last error: ${lastError ?? 'unknown'}');
+  throw ApiError(
+    'Delete sergeant failed, no backend reachable. Last error: ${lastError ?? 'unknown'}',
+  );
 }
-

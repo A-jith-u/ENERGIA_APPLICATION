@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use, avoid_print, file_names, unused_element, unused_field, unused_local_variable, use_build_context_synchronously
+
 import 'services/notifier.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -122,8 +124,12 @@ class _DashboardPageState extends State<DashboardPage> {
         if (query.isNotEmpty) {
           url += '?${query.join('&')}';
         }
+        final headers = {
+          'Content-Type': 'application/json',
+          if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+        };
         final resp = await http
-            .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
+            .get(Uri.parse(url), headers: headers)
             .timeout(const Duration(seconds: 6));
         if (resp.statusCode == 200) {
           final body = jsonDecode(resp.body);
@@ -302,6 +308,7 @@ class _DashboardPageState extends State<DashboardPage> {
           department: _department,
           roomId: _assignedRoomId,
           userEmail: _userEmail,
+          authToken: _authToken,
           baseUrls: _baseUrls,
           onRefresh: () async {
             await _fetchAnomalies();
@@ -1236,7 +1243,9 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             // Skip anomalous readings (likely sensor errors)
             // Normal classroom power usage: 0-10,000W (10kW)
             if (powerW < 0 || powerW > 10000) {
-              print('⚠️ Filtered anomalous reading: ${powerW}W at index $i');
+              debugPrint(
+                '⚠️ Filtered anomalous reading: ${powerW}W at index $i',
+              );
               continue;
             }
 
@@ -1252,7 +1261,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
                 readingTime = DateTime.parse(ts.toString());
               }
             } catch (e) {
-              print('Error parsing reading timestamp: $e');
+              debugPrint('Error parsing reading timestamp: $e');
             }
             timestamps.add(readingTime);
           }
@@ -1272,7 +1281,7 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
               latestTime = DateTime.parse(ts.toString());
             }
           } catch (e) {
-            print('Error parsing timestamp: $e');
+            debugPrint('Error parsing timestamp: $e');
             latestTime = DateTime.now();
           }
 
@@ -1324,12 +1333,12 @@ class _WelcomeSectionState extends State<_WelcomeSection> {
             _currentFrequencyHz = latestFrequency;
             _currentPowerFactorPf = latestPowerFactor;
           });
-          print(
+          debugPrint(
             '✅ Latest sensor data loaded - Power: ${latestW.toStringAsFixed(1)}W, Energy: ${latestEnergy.toStringAsFixed(2)}Wh',
           );
           return;
         } catch (e) {
-          print('Error with backend: $e');
+          debugPrint('Error with backend: $e');
           continue;
         }
       }
@@ -2068,6 +2077,7 @@ class _CRAlertsSection extends StatefulWidget {
   final String? department;
   final String? roomId;
   final String? userEmail;
+  final String? authToken;
   final List<String> baseUrls;
   final Future<void> Function() onRefresh;
 
@@ -2075,6 +2085,7 @@ class _CRAlertsSection extends StatefulWidget {
     required this.anomalies,
     required this.baseUrls,
     required this.onRefresh,
+    this.authToken,
     this.department,
     this.roomId,
     this.userEmail,
@@ -2133,8 +2144,13 @@ class _CRAlertsSectionState extends State<_CRAlertsSection> {
         if (query.isNotEmpty) {
           url += '?${query.join('&')}';
         }
+        final headers = {
+          'Content-Type': 'application/json',
+          if (widget.authToken != null)
+            'Authorization': 'Bearer ${widget.authToken}',
+        };
         final resp = await http
-            .get(Uri.parse(url), headers: {'Content-Type': 'application/json'})
+            .get(Uri.parse(url), headers: headers)
             .timeout(const Duration(seconds: 6));
         if (resp.statusCode == 200) {
           final body = jsonDecode(resp.body);
@@ -2898,7 +2914,9 @@ class _ReportsSection extends StatelessWidget {
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const PredictionPage()),
+            MaterialPageRoute(
+              builder: (context) => PredictionPage(authToken: userToken),
+            ),
           );
         },
         borderRadius: BorderRadius.circular(16),

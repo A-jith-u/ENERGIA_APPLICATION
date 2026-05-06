@@ -35,6 +35,8 @@ This repository contains:
 6. Relay APIs can trigger manual or automatic OFF actions for unresolved risk.
 7. Flutter dashboards refresh from backend endpoints for alerts, analytics, and controls.
 
+Demo mode is enabled by default in the backend startup path so the app can be showcased without live ESP32 hardware. It backfills recent minute-by-minute readings, continues streaming simulated readings, and drives the existing prediction, anomaly, notification, and email flows. Set `DEMO_MODE=0` in `backend/.env` if you want to disable it.
+
 ## 3. Tech Stack
 
 Frontend:

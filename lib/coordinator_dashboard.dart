@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names, unused_element, unused_field
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:energia/dashboard_scaffold.dart';
@@ -13,6 +14,34 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'role_selection_page.dart';
+
+double _toDouble(dynamic value) {
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value) ?? 0.0;
+  return 0.0;
+}
+
+Map<String, dynamic>? _latestElectricalReading(List<dynamic> readings) {
+  for (final item in readings) {
+    if (item is! Map) continue;
+    final reading = Map<String, dynamic>.from(item);
+    final voltage = _toDouble(reading['voltage']);
+    final current = _toDouble(reading['current']);
+    final power = _toDouble(reading['power'] ?? reading['value']);
+    final energy = _toDouble(reading['energy']);
+
+    if (voltage > 0 || current > 0 || power > 0 || energy > 0) {
+      return reading;
+    }
+  }
+
+  if (readings.isEmpty) {
+    return null;
+  }
+
+  final first = readings.first;
+  return first is Map ? Map<String, dynamic>.from(first) : null;
+}
 
 class CoordinatorDashboardPage extends StatefulWidget {
   final EnhancedUser? user; // Accept user object with department info

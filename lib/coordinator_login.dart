@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, use_build_context_synchronously, file_names, curly_braces_in_flow_control_structures
 // Coordinator login UI. Authenticates the coordinator via backend API
 // and persists the JWT token in `SharedPreferences` for subsequent API calls.
 import 'dart:ui';
@@ -23,7 +24,7 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
   bool _isPasswordVisible = false;
   String? _selectedDepartment;
   String? _errorMessage;
-  
+
   final List<String> _departments = ['CSE', 'ECE', 'EEE', 'IT', 'RA', 'ME'];
 
   void _login() {
@@ -47,13 +48,13 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
     final id = _idController.text.trim();
     final password = _passwordController.text;
     final department = _selectedDepartment;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
-    
+
     try {
       // Use new department authentication service
       final authService = DepartmentAuthService();
@@ -62,20 +63,24 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
         password: password,
         department: department,
       );
-      
+
       if (!mounted) return;
       Navigator.of(context).pop(); // Close loading dialog
-      
+
       if (loginResult.success && loginResult.user != null) {
         // Save user data to shared preferences (token is already saved by authService)
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('current_user', jsonEncode(loginResult.user!.toJson()));
-        
+        await prefs.setString(
+          'current_user',
+          jsonEncode(loginResult.user!.toJson()),
+        );
+
         // Navigate to dashboard with user object
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => CoordinatorDashboardPage(user: loginResult.user),
+            builder:
+                (context) => CoordinatorDashboardPage(user: loginResult.user),
           ),
         );
       } else {
@@ -87,7 +92,7 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
     } catch (e) {
       if (!mounted) return;
       Navigator.of(context).pop(); // Close loading dialog
-      
+
       final msg = 'Login failed: ${e.toString()}';
       setState(() {
         _errorMessage = msg;
@@ -119,23 +124,26 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
         labelText: label,
         prefixIcon: Icon(icon),
         border: const OutlineInputBorder(),
-        suffixIcon: obscure
-            ? IconButton(
-                icon: Icon(
-                  _isPasswordVisible ? Icons.visibility_off : Icons.visibility,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _isPasswordVisible = !_isPasswordVisible;
-                  });
-                },
-              )
-            : null,
+        suffixIcon:
+            obscure
+                ? IconButton(
+                  icon: Icon(
+                    _isPasswordVisible
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _isPasswordVisible = !_isPasswordVisible;
+                    });
+                  },
+                )
+                : null,
       ),
       validator: validator,
     );
   }
-  
+
   Widget _buildDropdownField({
     required String? value,
     required String label,
@@ -151,12 +159,10 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
         prefixIcon: Icon(icon),
         border: const OutlineInputBorder(),
       ),
-      items: items.map((item) {
-        return DropdownMenuItem<String>(
-          value: item,
-          child: Text(item),
-        );
-      }).toList(),
+      items:
+          items.map((item) {
+            return DropdownMenuItem<String>(value: item, child: Text(item));
+          }).toList(),
       onChanged: onChanged,
       validator: validator,
     );
@@ -185,7 +191,10 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
               constraints: const BoxConstraints(maxWidth: 400),
               child: Center(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 24,
+                  ),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 500),
                     child: ClipRRect(
@@ -201,7 +210,10 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                             ),
                           ),
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 32,
+                              vertical: 40,
+                            ),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -209,8 +221,13 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                   tag: 'avatar-coordinator',
                                   child: CircleAvatar(
                                     radius: 46,
-                                    backgroundColor: colorScheme.primary.withOpacity(.15),
-                                    child: Icon(Icons.engineering, size: 46, color: colorScheme.primary),
+                                    backgroundColor: colorScheme.primary
+                                        .withOpacity(.15),
+                                    child: Icon(
+                                      Icons.engineering,
+                                      size: 46,
+                                      color: colorScheme.primary,
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 20),
@@ -235,16 +252,25 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                     decoration: BoxDecoration(
                                       color: Colors.red.shade50,
                                       borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(color: Colors.red.shade300),
+                                      border: Border.all(
+                                        color: Colors.red.shade300,
+                                      ),
                                     ),
                                     child: Row(
                                       children: [
-                                        Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                        Icon(
+                                          Icons.error_outline,
+                                          color: Colors.red.shade700,
+                                          size: 20,
+                                        ),
                                         const SizedBox(width: 8),
                                         Expanded(
                                           child: Text(
                                             _errorMessage!,
-                                            style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                            style: TextStyle(
+                                              color: Colors.red.shade700,
+                                              fontSize: 13,
+                                            ),
                                           ),
                                         ),
                                       ],
@@ -259,7 +285,8 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                         label: 'Coordinator ID',
                                         icon: Icons.person_outline,
                                         validator: (v) {
-                                          if (v == null || v.trim().isEmpty) return 'Enter your Coordinator ID';
+                                          if (v == null || v.trim().isEmpty)
+                                            return 'Enter your Coordinator ID';
                                           return null;
                                         },
                                       ),
@@ -275,7 +302,8 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                           });
                                         },
                                         validator: (v) {
-                                          if (v == null || v.isEmpty) return 'Select department';
+                                          if (v == null || v.isEmpty)
+                                            return 'Select department';
                                           return null;
                                         },
                                       ),
@@ -287,7 +315,8 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                         obscure: true,
                                         onSubmit: _login,
                                         validator: (v) {
-                                          if (v == null || v.isEmpty) return 'Enter password';
+                                          if (v == null || v.isEmpty)
+                                            return 'Enter password';
                                           return null;
                                         },
                                       ),
@@ -299,7 +328,9 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                   width: double.infinity,
                                   child: ElevatedButton(
                                     style: ElevatedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 16,
+                                      ),
                                       shape: RoundedRectangleBorder(
                                         borderRadius: BorderRadius.circular(8),
                                       ),
@@ -312,7 +343,10 @@ class _CoordinatorLoginPageState extends State<CoordinatorLoginPage> {
                                 TextButton(
                                   onPressed: () {
                                     // Navigate back to the main role selection page
-                                    Navigator.pushReplacementNamed(context, '/role_selection');
+                                    Navigator.pushReplacementNamed(
+                                      context,
+                                      '/role_selection',
+                                    );
                                   },
                                   child: const Text('Back to Role Selection'),
                                 ),

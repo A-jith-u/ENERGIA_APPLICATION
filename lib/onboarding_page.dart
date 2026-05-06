@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -80,7 +81,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
                       onPressed: _onDone,
                       child: Text(
                         'SKIP',
-                        style: TextStyle(color: colorScheme.onSurface.withOpacity(0.7)),
+                        style: TextStyle(
+                          color: colorScheme.onSurface.withOpacity(0.7),
+                        ),
                       ),
                     ),
 
@@ -95,38 +98,42 @@ class _OnboardingPageState extends State<OnboardingPage> {
                         dotColor: colorScheme.onSurface.withOpacity(0.2),
                         activeDotColor: colorScheme.primary,
                       ),
-                      onDotClicked: (index) => _controller.animateToPage(
-                        index,
-                        duration: const Duration(milliseconds: 400),
-                        curve: Curves.easeInOut,
-                      ),
+                      onDotClicked:
+                          (index) => _controller.animateToPage(
+                            index,
+                            duration: const Duration(milliseconds: 400),
+                            curve: Curves.easeInOut,
+                          ),
                     ),
 
                     // Next or Done button
                     SizedBox(
                       width: 80,
-                      child: _isLastPage
-                          ? ElevatedButton(
-                              onPressed: _onDone,
-                              style: ElevatedButton.styleFrom(
-                                shape: const CircleBorder(),
-                                padding: const EdgeInsets.all(16),
+                      child:
+                          _isLastPage
+                              ? ElevatedButton(
+                                onPressed: _onDone,
+                                style: ElevatedButton.styleFrom(
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(16),
+                                ),
+                                child: const Icon(Icons.check_rounded),
+                              )
+                              : ElevatedButton(
+                                onPressed: () {
+                                  _controller.nextPage(
+                                    duration: const Duration(milliseconds: 400),
+                                    curve: Curves.easeInOut,
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  shape: const CircleBorder(),
+                                  padding: const EdgeInsets.all(16),
+                                ),
+                                child: const Icon(
+                                  Icons.arrow_forward_ios_rounded,
+                                ),
                               ),
-                              child: const Icon(Icons.check_rounded),
-                            )
-                          : ElevatedButton(
-                              onPressed: () {
-                                _controller.nextPage(
-                                  duration: const Duration(milliseconds: 400),
-                                  curve: Curves.easeInOut,
-                                );
-                              },
-                              style: ElevatedButton.styleFrom(
-                                shape: const CircleBorder(),
-                                padding: const EdgeInsets.all(16),
-                              ),
-                              child: const Icon(Icons.arrow_forward_ios_rounded),
-                            ),
                     ),
                   ],
                 ),
@@ -160,18 +167,13 @@ class _OnboardingScreen extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         // Background Image
-        Image.asset(
-          imageUrl,
-          fit: BoxFit.cover,
-        ),
+        Image.asset(imageUrl, fit: BoxFit.cover),
         // Frosted Glass Overlay
         Positioned.fill(
           child: ClipRect(
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: Container(
-                color: Colors.black.withOpacity(0.2),
-              ),
+              child: Container(color: Colors.black.withOpacity(0.2)),
             ),
           ),
         ),
@@ -193,7 +195,7 @@ class _OnboardingScreen extends StatelessWidget {
                         color: Colors.black.withOpacity(0.3),
                         blurRadius: 20,
                         offset: const Offset(0, 10),
-                      )
+                      ),
                     ],
                   ),
                   child: ClipOval(
@@ -227,7 +229,7 @@ class _OnboardingScreen extends StatelessWidget {
                   style: theme.textTheme.titleMedium?.copyWith(
                     color: Colors.white.withOpacity(0.9),
                     height: 1.5,
-                     shadows: [
+                    shadows: [
                       const Shadow(
                         blurRadius: 8.0,
                         color: Colors.black87,

@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names, unused_local_variable
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -162,7 +163,7 @@ class RecommendationService {
           }
           if (response.statusCode == 401) {
             // token invalid/expired - return generic recommendations
-            print(
+            debugPrint(
               'Token expired or missing, returning generic recommendations',
             );
             return _getGenericRecommendations();
@@ -173,10 +174,10 @@ class RecommendationService {
           continue;
         }
       }
-      print('No backend reachable for recommendations, using generic');
+      debugPrint('No backend reachable for recommendations, using generic');
       return _getGenericRecommendations();
     } catch (e) {
-      print('Error fetching recommendations: $e');
+      debugPrint('Error fetching recommendations: $e');
       return _getGenericRecommendations();
     }
   }
@@ -265,7 +266,7 @@ class RecommendationService {
         }
       }
     } catch (e) {
-      print('Error fetching recommendation count: $e');
+      debugPrint('Error fetching recommendation count: $e');
     }
     return {'total': 3, 'critical': 0, 'high': 0, 'medium': 1, 'low': 2};
   }

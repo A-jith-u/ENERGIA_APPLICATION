@@ -482,6 +482,7 @@ def _build_device_candidates(room_or_device_id: str | None) -> list[str]:
     if "201" in token:
         _push("CS-C201")
         _push("CS-201")
+        _push("ESP32-CS-C201")
 
     return out
 
@@ -1389,11 +1390,12 @@ def get_anomalies(limit: int = 50, department: str = None, room_id: str = None, 
         
         # Role-based access control
         if user_role == "student":
-            # Class reps can ONLY access anomalies for their assigned room
-            if not assigned_room_id or assigned_room_id.strip() == "":
-                raise HTTPException(status_code=403, detail="Class representative has no assigned room")
-            # Force room_id to their assigned room
-            room_id = assigned_room_id
+            # Prefer the assigned room, but keep dashboard requests working when
+            # older tokens do not include assigned_room_id.
+            if assigned_room_id and assigned_room_id.strip() != "":
+                room_id = assigned_room_id
+            elif user_department and not department:
+                department = user_department
         elif user_role not in ["admin", "coordinator", "sergeant"]:
             # Unauthenticated or invalid role - deny access
             raise HTTPException(status_code=401, detail="Authentication required to access anomaly data")
@@ -1405,7 +1407,9 @@ def get_anomalies(limit: int = 50, department: str = None, room_id: str = None, 
             where_parts = []
             params = {"limit": limit}
             if department and not _is_admin_department(department):
-                where_parts.append("r.department = :department")
+                where_parts.append(
+                    "COALESCE(NULLIF(TRIM(UPPER(r.department)), ''), CASE WHEN UPPER(split_part(COALESCE(m.room_id, a.room_id), '-', 1)) = 'CS' THEN 'CSE' ELSE UPPER(split_part(COALESCE(m.room_id, a.room_id), '-', 1)) END) = UPPER(:department)"
+                )
                 params["department"] = department
             # Change the where_parts logic for room_id to:
             if room_id:
@@ -2295,6 +2299,14 @@ async def receive_sensor_data(request: Request):
         payload = await request.json()
         raw_device_id = payload.get("device_id", "unknown")
         timestamp = datetime.now(timezone.utc)
+        timestamp_raw = payload.get("timestamp") or payload.get("ts")
+        if timestamp_raw:
+            try:
+                parsed_timestamp = datetime.fromisoformat(str(timestamp_raw).replace("Z", "+00:00"))
+                timestamp = parsed_timestamp if parsed_timestamp.tzinfo else parsed_timestamp.replace(tzinfo=timezone.utc)
+                timestamp = timestamp.astimezone(timezone.utc)
+            except Exception:
+                pass
 
         # Verbose ingest log: show exactly what JSON values arrived at backend.
         # Keep JSON encoded in one line so it is easy to grep in server logs.
@@ -2313,6 +2325,7 @@ async def receive_sensor_data(request: Request):
         has_occ = "human_present" in payload and payload.get("human_present") is not None
         has_relay_state = "relay_state" in payload and payload.get("relay_state") is not None
         relay_state = str(payload.get("relay_state", "")).strip().upper()
+        is_demo_payload = bool(payload.get("demo_mode") or str(payload.get("source", "")).strip().lower() == "demo")
 
         with engine.begin() as conn:
             # Normalize device_id to canonical relay_device_id format (ESP32-prefixed)
@@ -2340,7 +2353,7 @@ async def receive_sensor_data(request: Request):
             # Window is 7 min (not 5) because the ESP32 sends on an exact ~300s timer.
             # With a 5-min window, the previous row lands at "now - 300.06s" and misses
             # the "ds > now - 300.00s" check by milliseconds, causing spurious new rows.
-            existing = conn.execute(
+            existing = None if is_demo_payload else conn.execute(
                 text("""SELECT id, occupancy, power, current, voltage, energy, power_factor, frequency 
                         FROM sensor_data 
                         WHERE device_id = :id 
@@ -2355,8 +2368,8 @@ async def receive_sensor_data(request: Request):
                 if has_occ:
                     occupancy = payload.get("human_present")
                     conn.execute(
-                        text("UPDATE sensor_data SET occupancy = :occ WHERE id = :rid"),
-                        {"occ": occupancy, "rid": row_id}
+                        text("UPDATE sensor_data SET occupancy = :occ, ds = :ds WHERE id = :rid"),
+                        {"occ": occupancy, "ds": timestamp, "rid": row_id}
                     )
                     # Use existing electrical data for AI processing (FIXED indices)
                     # SELECT: id[0], occupancy[1], power[2], current[3], voltage[4], energy[5], power_factor[6], frequency[7]
@@ -2379,17 +2392,17 @@ async def receive_sensor_data(request: Request):
                     
                     conn.execute(
                         text("""UPDATE sensor_data SET 
-                                power=:p, current=:c, voltage=:v, energy=:e, power_factor=:pf, frequency=:f 
+                                power=:p, current=:c, voltage=:v, energy=:e, power_factor=:pf, frequency=:f, ds = :ds 
                                 WHERE id = :rid"""),
-                        {"p": p, "c": c, "v": v, "e": e, "pf": pf, "f": f, "rid": row_id}
+                        {"p": p, "c": c, "v": v, "e": e, "pf": pf, "f": f, "ds": timestamp, "rid": row_id}
                     )
                     # Use existing occupancy context for AI processing
                     occupancy = existing[1] if existing[1] is not None else 0
                 elif has_frequency:
                     f = float(payload.get("frequency", 0))
                     conn.execute(
-                        text("UPDATE sensor_data SET frequency = :f WHERE id = :rid"),
-                        {"f": f, "rid": row_id}
+                        text("UPDATE sensor_data SET frequency = :f, ds = :ds WHERE id = :rid"),
+                        {"f": f, "ds": timestamp, "rid": row_id}
                     )
                     p, c, v, e, pf = existing[2], existing[3], existing[4], existing[5], existing[6]
                     p = p if p is not None else 0.0
@@ -2546,6 +2559,7 @@ async def receive_sensor_data(request: Request):
         # Ignore synthetic/test identifiers so fake alerts never enter active flow.
         if is_anomaly_flag == 1 and _alert_svc and not _is_test_identifier(device_id):
             try:
+                alert_room_id = resolved_room_id or device_id
                 with engine.connect() as _conn:
                     _log_row = _conn.execute(
                         text("SELECT id FROM anomaly_logs WHERE device_id = :d ORDER BY ds DESC LIMIT 1"),
@@ -2556,11 +2570,11 @@ async def receive_sensor_data(request: Request):
                 try:
                     loop = asyncio.get_running_loop()
                     loop.create_task(
-                        _alert_svc.anomaly_alert_service.create_anomaly_alert(device_id, _log_id)
+                        _alert_svc.anomaly_alert_service.create_anomaly_alert(alert_room_id, _log_id)
                     )
                 except RuntimeError:
                     asyncio.run(
-                        _alert_svc.anomaly_alert_service.create_anomaly_alert(device_id, _log_id)
+                        _alert_svc.anomaly_alert_service.create_anomaly_alert(alert_room_id, _log_id)
                     )
             except Exception as _ae:
                 print(f"[auth_api] Alert notification error: {_ae}")
@@ -2598,10 +2612,11 @@ def get_sensor_data(request: Request, limit: int = 60, device_id: str = None, de
         user_department = payload.get("department")
 
         if user_role == "student":
-            if not assigned_room_id or not str(assigned_room_id).strip():
-                raise HTTPException(status_code=403, detail="Class representative has no assigned room")
-            device_id = assigned_room_id
-            department = None
+            if assigned_room_id and str(assigned_room_id).strip():
+                device_id = assigned_room_id
+                department = None
+            elif user_department and not department:
+                department = user_department
         elif user_role in ["coordinator", "sergeant"]:
             if user_department and not department:
                 department = user_department

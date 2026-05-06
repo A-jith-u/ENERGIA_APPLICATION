@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, use_build_context_synchronously, use_super_parameters, prefer_final_fields, file_names
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
@@ -130,25 +131,45 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
 
   Future<Uint8List> _buildFormattedPdfBytes() async {
     final pdf = pw.Document();
-    final period = (_reportData!['report_period'] ?? {}) as Map<String, dynamic>;
+    final period =
+        (_reportData!['report_period'] ?? {}) as Map<String, dynamic>;
     final selected = _reportData ?? {};
-    final stats = Map<String, dynamic>.from(_reportData!['overall_statistics'] as Map? ?? {});
-    final reportKind = (selected['report_kind'] ?? widget.reportType).toString().toLowerCase();
+    final stats = Map<String, dynamic>.from(
+      _reportData!['overall_statistics'] as Map? ?? {},
+    );
+    final reportKind =
+        (selected['report_kind'] ?? widget.reportType).toString().toLowerCase();
     final isTechnical = reportKind == 'technical';
     final accent = isTechnical ? PdfColors.blueGrey900 : PdfColors.indigo900;
-    final title = (selected['title'] ?? (isTechnical ? 'Technical Energy Audit Report' : 'Monthly Energy Report')).toString();
-    final subtitle = isTechnical
-        ? 'Detailed operational analysis based on live electrical readings.'
-        : 'Plain-language monthly summary built from live electrical readings.';
+    final title =
+        (selected['title'] ??
+                (isTechnical
+                    ? 'Technical Energy Audit Report'
+                    : 'Monthly Energy Report'))
+            .toString();
+    final subtitle =
+        isTechnical
+            ? 'Detailed operational analysis based on live electrical readings.'
+            : 'Plain-language monthly summary built from live electrical readings.';
 
     pw.Widget sectionTitle(String text, {String? subtitleText}) {
       return pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          pw.Text(text, style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold, color: accent)),
+          pw.Text(
+            text,
+            style: pw.TextStyle(
+              fontSize: 15,
+              fontWeight: pw.FontWeight.bold,
+              color: accent,
+            ),
+          ),
           if (subtitleText != null) ...[
             pw.SizedBox(height: 3),
-            pw.Text(subtitleText, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+            pw.Text(
+              subtitleText,
+              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+            ),
           ],
         ],
       );
@@ -167,7 +188,10 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
         child: pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pw.Text(heading, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+            pw.Text(
+              heading,
+              style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold),
+            ),
             pw.SizedBox(height: 4),
             pw.Text(body, style: const pw.TextStyle(fontSize: 9)),
           ],
@@ -178,20 +202,37 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
     pw.Widget keyValueTable(List<List<String>> rows) {
       return pw.Table(
         border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.4),
-        columnWidths: const {0: pw.FlexColumnWidth(1.2), 1: pw.FlexColumnWidth(2.2)},
-        children: rows
-            .map((row) => pw.TableRow(children: [
-                  pw.Container(
-                    color: PdfColors.grey100,
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(row[0], style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+        columnWidths: const {
+          0: pw.FlexColumnWidth(1.2),
+          1: pw.FlexColumnWidth(2.2),
+        },
+        children:
+            rows
+                .map(
+                  (row) => pw.TableRow(
+                    children: [
+                      pw.Container(
+                        color: PdfColors.grey100,
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          row[0],
+                          style: pw.TextStyle(
+                            fontSize: 9,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      pw.Container(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          row[1],
+                          style: const pw.TextStyle(fontSize: 9),
+                        ),
+                      ),
+                    ],
                   ),
-                  pw.Container(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(row[1], style: const pw.TextStyle(fontSize: 9)),
-                  ),
-                ]))
-            .toList(),
+                )
+                .toList(),
       );
     }
 
@@ -200,34 +241,79 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
       pw.Page(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(48),
-        build: (_) => pw.Center(
-          child: pw.Column(
-            mainAxisAlignment: pw.MainAxisAlignment.center,
-            crossAxisAlignment: pw.CrossAxisAlignment.center,
-            children: [
-              pw.Text('GECI ENERGIA', style: pw.TextStyle(fontSize: 26, fontWeight: pw.FontWeight.bold, color: accent)),
-              pw.SizedBox(height: 12),
-              pw.Text(title, style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 12),
-              pw.Container(
-                padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: pw.BoxDecoration(
-                  color: isTechnical ? PdfColors.blueGrey100 : PdfColors.indigo50,
-                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(20)),
-                ),
-                child: pw.Text(subtitle, textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: accent)),
+        build:
+            (_) => pw.Center(
+              child: pw.Column(
+                mainAxisAlignment: pw.MainAxisAlignment.center,
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  pw.Text(
+                    'GECI ENERGIA',
+                    style: pw.TextStyle(
+                      fontSize: 26,
+                      fontWeight: pw.FontWeight.bold,
+                      color: accent,
+                    ),
+                  ),
+                  pw.SizedBox(height: 12),
+                  pw.Text(
+                    title,
+                    style: pw.TextStyle(
+                      fontSize: 22,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  pw.SizedBox(height: 12),
+                  pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    decoration: pw.BoxDecoration(
+                      color:
+                          isTechnical
+                              ? PdfColors.blueGrey100
+                              : PdfColors.indigo50,
+                      borderRadius: const pw.BorderRadius.all(
+                        pw.Radius.circular(20),
+                      ),
+                    ),
+                    child: pw.Text(
+                      subtitle,
+                      textAlign: pw.TextAlign.center,
+                      style: pw.TextStyle(
+                        fontSize: 11,
+                        fontWeight: pw.FontWeight.bold,
+                        color: accent,
+                      ),
+                    ),
+                  ),
+                  pw.SizedBox(height: 24),
+                  pw.Text(
+                    '${period['month_name']} ${period['year']}',
+                    style: pw.TextStyle(fontSize: 16, color: PdfColors.grey800),
+                  ),
+                  pw.SizedBox(height: 8),
+                  pw.Text(
+                    'Generated: ${DateFormat('MMM dd, yyyy').format(DateTime.now())}',
+                    style: const pw.TextStyle(
+                      fontSize: 11,
+                      color: PdfColors.grey700,
+                    ),
+                  ),
+                  pw.SizedBox(height: 22),
+                  pw.Container(width: 120, height: 2, color: accent),
+                  pw.SizedBox(height: 8),
+                  pw.Text(
+                    'Based on real sensor readings only',
+                    style: const pw.TextStyle(
+                      fontSize: 10,
+                      color: PdfColors.grey700,
+                    ),
+                  ),
+                ],
               ),
-              pw.SizedBox(height: 24),
-              pw.Text('${period['month_name']} ${period['year']}', style: pw.TextStyle(fontSize: 16, color: PdfColors.grey800)),
-              pw.SizedBox(height: 8),
-              pw.Text('Generated: ${DateFormat('MMM dd, yyyy').format(DateTime.now())}', style: const pw.TextStyle(fontSize: 11, color: PdfColors.grey700)),
-              pw.SizedBox(height: 22),
-              pw.Container(width: 120, height: 2, color: accent),
-              pw.SizedBox(height: 8),
-              pw.Text('Based on real sensor readings only', style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
-            ],
-          ),
-        ),
+            ),
       ),
     );
 
@@ -236,27 +322,40 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
       pw.Page(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
-        build: (_) => pw.Column(
-          children: [
-            sectionTitle('Overall Statistics'),
-            pw.SizedBox(height: 12),
-            keyValueTable([
-              ['Total Energy', '${stats['total_energy']?.toStringAsFixed(2) ?? '-'} kWh'],
-              ['Average Power', '${stats['avg_power']?.toStringAsFixed(2) ?? '-'} W'],
-              ['Peak Power', '${stats['peak_power']?.toStringAsFixed(2) ?? '-'} W'],
-              ['Active Sensors', '${stats['active_sensors'] ?? '-'}'],
-              ['Power Factor', '${stats['avg_power_factor']?.toStringAsFixed(3) ?? '-'}'],
-            ]),
-            pw.SizedBox(height: 20),
-            sectionTitle('Month Comparison'),
-            pw.SizedBox(height: 8),
-            infoPanel(
-              'Change from previous month',
-              '${(_reportData!['month_over_month_change'] as num).abs().toStringAsFixed(1)}% ${(_reportData!['month_over_month_change'] as num) >= 0 ? 'increase' : 'decrease'}',
-              panelColor: PdfColors.yellow50,
+        build:
+            (_) => pw.Column(
+              children: [
+                sectionTitle('Overall Statistics'),
+                pw.SizedBox(height: 12),
+                keyValueTable([
+                  [
+                    'Total Energy',
+                    '${stats['total_energy']?.toStringAsFixed(2) ?? '-'} kWh',
+                  ],
+                  [
+                    'Average Power',
+                    '${stats['avg_power']?.toStringAsFixed(2) ?? '-'} W',
+                  ],
+                  [
+                    'Peak Power',
+                    '${stats['peak_power']?.toStringAsFixed(2) ?? '-'} W',
+                  ],
+                  ['Active Sensors', '${stats['active_sensors'] ?? '-'}'],
+                  [
+                    'Power Factor',
+                    '${stats['avg_power_factor']?.toStringAsFixed(3) ?? '-'}',
+                  ],
+                ]),
+                pw.SizedBox(height: 20),
+                sectionTitle('Month Comparison'),
+                pw.SizedBox(height: 8),
+                infoPanel(
+                  'Change from previous month',
+                  '${(_reportData!['month_over_month_change'] as num).abs().toStringAsFixed(1)}% ${(_reportData!['month_over_month_change'] as num) >= 0 ? 'increase' : 'decrease'}',
+                  panelColor: PdfColors.yellow50,
+                ),
+              ],
             ),
-          ],
-        ),
       ),
     );
 
@@ -320,7 +419,9 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
           await Printing.sharePdf(bytes: bytes, filename: _reportFileName());
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Downloads directory not found. Opening share dialog instead.'),
+              content: Text(
+                'Downloads directory not found. Opening share dialog instead.',
+              ),
               backgroundColor: Colors.orange,
             ),
           );
@@ -362,35 +463,37 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => Dialog(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(message),
-            ],
+      builder:
+          (_) => Dialog(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(message),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
     );
   }
 
   void _showErrorDialog(String title, String message) {
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
+      builder:
+          (_) => AlertDialog(
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
   }
 
@@ -405,17 +508,52 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
       crossAxisSpacing: 12,
       childAspectRatio: 1.5,
       children: [
-        _buildStatCard('Total Energy', '${stats['total_energy'].toStringAsFixed(2)} kWh', Icons.energy_savings_leaf, Colors.green),
-        _buildStatCard('Active Sensors', '${stats['active_sensors']}', Icons.sensors, Colors.blue),
-        _buildStatCard('Total Readings', '${stats['total_readings']}', Icons.timeline, Colors.purple),
-        _buildStatCard('Avg Power', '${stats['avg_power'].toStringAsFixed(2)} W', Icons.bolt, Colors.orange),
-        _buildStatCard('Peak Power', '${stats['peak_power'].toStringAsFixed(2)} W', Icons.trending_up, Colors.red),
-        _buildStatCard('Power Factor', '${stats['avg_power_factor'].toStringAsFixed(3)}', Icons.speed, Colors.teal),
+        _buildStatCard(
+          'Total Energy',
+          '${stats['total_energy'].toStringAsFixed(2)} kWh',
+          Icons.energy_savings_leaf,
+          Colors.green,
+        ),
+        _buildStatCard(
+          'Active Sensors',
+          '${stats['active_sensors']}',
+          Icons.sensors,
+          Colors.blue,
+        ),
+        _buildStatCard(
+          'Total Readings',
+          '${stats['total_readings']}',
+          Icons.timeline,
+          Colors.purple,
+        ),
+        _buildStatCard(
+          'Avg Power',
+          '${stats['avg_power'].toStringAsFixed(2)} W',
+          Icons.bolt,
+          Colors.orange,
+        ),
+        _buildStatCard(
+          'Peak Power',
+          '${stats['peak_power'].toStringAsFixed(2)} W',
+          Icons.trending_up,
+          Colors.red,
+        ),
+        _buildStatCard(
+          'Power Factor',
+          '${stats['avg_power_factor'].toStringAsFixed(3)}',
+          Icons.speed,
+          Colors.teal,
+        ),
       ],
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon, Color color) {
+  Widget _buildStatCard(
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
     return Card(
       elevation: 2,
       child: Padding(
@@ -425,9 +563,21 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
           children: [
             Icon(icon, size: 32, color: color),
             const SizedBox(height: 8),
-            Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color), textAlign: TextAlign.center),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey), textAlign: TextAlign.center),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),
@@ -451,15 +601,42 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$reportMode Monthly Report', style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold, color: colorScheme.primary)),
+                Text(
+                  '$reportMode Monthly Report',
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.primary,
+                  ),
+                ),
                 const SizedBox(height: 6),
-                Text('${_reportData!['report_period']['month_name']} ${_reportData!['report_period']['year']}', style: theme.textTheme.titleLarge),
+                Text(
+                  '${_reportData!['report_period']['month_name']} ${_reportData!['report_period']['year']}',
+                  style: theme.textTheme.titleLarge,
+                ),
                 const SizedBox(height: 10),
-                Wrap(spacing: 12, runSpacing: 8, children: [
-                  Chip(label: Text(reportMode), backgroundColor: reportMode == 'Technical' ? Colors.blue.shade100 : Colors.indigo.shade100),
-                  ElevatedButton.icon(icon: const Icon(Icons.download), label: const Text('Download PDF'), onPressed: _downloadPDF),
-                  OutlinedButton.icon(icon: const Icon(Icons.print), label: const Text('Print/Share'), onPressed: _generatePDF),
-                ]),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    Chip(
+                      label: Text(reportMode),
+                      backgroundColor:
+                          reportMode == 'Technical'
+                              ? Colors.blue.shade100
+                              : Colors.indigo.shade100,
+                    ),
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.download),
+                      label: const Text('Download PDF'),
+                      onPressed: _downloadPDF,
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.print),
+                      label: const Text('Print/Share'),
+                      onPressed: _generatePDF,
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -475,16 +652,24 @@ class _MonthlyReportPageState extends State<MonthlyReportPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.reportType == 'technical' ? 'Technical' : 'Simple'} Report'),
+        title: Text(
+          '${widget.reportType == 'technical' ? 'Technical' : 'Simple'} Report',
+        ),
         elevation: 0,
       ),
       body: RefreshIndicator(
         onRefresh: _loadReport,
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-            ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
-            : _buildReportContent(),
+        child:
+            _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                ? Center(
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                )
+                : _buildReportContent(),
       ),
     );
   }

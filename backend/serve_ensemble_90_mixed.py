@@ -12,7 +12,8 @@ from sqlalchemy import create_engine, text
 
 app = FastAPI(title="Energy Ensemble 90 Mixed Service")
 
-MODEL_PATH = os.environ.get("MIXED_MODEL_PATH", "models/energy_ensemble_90_mixed.joblib")
+DEFAULT_MODEL = os.path.join(os.path.dirname(__file__), "models", "energy_ensemble_90_mixed.joblib")
+MODEL_PATH = os.environ.get("MIXED_MODEL_PATH", DEFAULT_MODEL)
 DB_URL = os.environ.get("DB_URL", "postgresql://postgres:admin@localhost:5432/energia")
 MAX_STALE_MINUTES = int(os.environ.get("PREDICTION_MAX_STALE_MINUTES", "180"))
 
@@ -29,7 +30,11 @@ def _load_model_bundle() -> dict:
     if _model_cache is None:
         if not os.path.exists(MODEL_PATH):
             raise HTTPException(status_code=500, detail=f"Model not found: {MODEL_PATH}")
-        _model_cache = joblib.load(MODEL_PATH)
+        try:
+            _model_cache = joblib.load(MODEL_PATH)
+        except Exception as exc:
+            # Surface a readable HTTP error so callers see the cause instead of a generic 500
+            raise HTTPException(status_code=500, detail=f"Failed to load model bundle: {exc}")
     return _model_cache
 
 
@@ -54,9 +59,9 @@ def _fetch_recent_values(limit: int = 200, room_name: Optional[str] = None) -> p
     if device_id:
         query = text(
             """
-            SELECT ds, value
+            SELECT ds, COALESCE(value, power) AS value
             FROM sensor_data
-            WHERE ds IS NOT NULL AND value IS NOT NULL
+            WHERE ds IS NOT NULL AND (value IS NOT NULL OR power IS NOT NULL)
               AND UPPER(device_id) = :device_id
             ORDER BY ds DESC
             LIMIT :limit
@@ -68,9 +73,9 @@ def _fetch_recent_values(limit: int = 200, room_name: Optional[str] = None) -> p
             df = pd.read_sql(
                 text(
                     """
-                    SELECT ds, value
+                    SELECT ds, COALESCE(value, power) AS value
                     FROM sensor_data
-                    WHERE ds IS NOT NULL AND value IS NOT NULL
+                    WHERE ds IS NOT NULL AND (value IS NOT NULL OR power IS NOT NULL)
                     ORDER BY ds DESC
                     LIMIT :limit
                     """
@@ -82,9 +87,9 @@ def _fetch_recent_values(limit: int = 200, room_name: Optional[str] = None) -> p
         df = pd.read_sql(
             text(
                 """
-                SELECT ds, value
+                SELECT ds, COALESCE(value, power) AS value
                 FROM sensor_data
-                WHERE ds IS NOT NULL AND value IS NOT NULL
+                WHERE ds IS NOT NULL AND (value IS NOT NULL OR power IS NOT NULL)
                 ORDER BY ds DESC
                 LIMIT :limit
                 """

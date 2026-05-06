@@ -1,18 +1,39 @@
+// ignore_for_file: deprecated_member_use, file_names
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart'; 
+import 'package:fl_chart/fl_chart.dart';
 // Import the target dashboard page
-import 'adm_cspage.dart'; 
+import 'adm_cspage.dart';
 
-class AdmPage  extends StatelessWidget {
-  const AdmPage ({super.key});
+class AdmPage extends StatelessWidget {
+  const AdmPage({super.key});
 
   // Sample data for Admin Block Classrooms
   final List<Map<String, dynamic>> classrooms = const [
-    {'name': 'A-202', 'status': 'Active', 'usage_kw': 3.1, 'color': Colors.green},
+    {
+      'name': 'A-202',
+      'status': 'Active',
+      'usage_kw': 3.1,
+      'color': Colors.green,
+    },
     {'name': 'A-404', 'status': 'Alert', 'usage_kw': 5.2, 'color': Colors.red},
-    {'name': 'A-Lab 1', 'status': 'Offline', 'usage_kw': 0.0, 'color': Colors.grey},
-    {'name': 'A-Seminar Hall', 'status': 'Optimal', 'usage_kw': 1.5, 'color': Colors.blue},
-    {'name': 'A-301', 'status': 'Moderate', 'usage_kw': 4.5, 'color': Colors.orange},
+    {
+      'name': 'A-Lab 1',
+      'status': 'Offline',
+      'usage_kw': 0.0,
+      'color': Colors.grey,
+    },
+    {
+      'name': 'A-Seminar Hall',
+      'status': 'Optimal',
+      'usage_kw': 1.5,
+      'color': Colors.blue,
+    },
+    {
+      'name': 'A-301',
+      'status': 'Moderate',
+      'usage_kw': 4.5,
+      'color': Colors.orange,
+    },
   ];
 
   @override
@@ -29,15 +50,19 @@ class AdmPage  extends StatelessWidget {
         children: [
           Text(
             'Room-Level Energy Monitoring',
-            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 8),
           Text(
             'Detailed view of classrooms with real-time usage breakdown.',
-            style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: Colors.grey.shade600,
+            ),
           ),
           const SizedBox(height: 24),
-          
+
           // 1. List of Classroom Cards (Simplified)
           ...classrooms.map((room) {
             return _ClassroomCard(
@@ -53,7 +78,9 @@ class AdmPage  extends StatelessWidget {
           // 2. Aggregate Pie Chart (New Section)
           Text(
             'Energy Distribution Among Classrooms',
-            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -85,18 +112,23 @@ class _ClassroomCard extends StatelessWidget {
     return Card(
       elevation: 2, // Matched admin card elevation
       shadowColor: Colors.transparent,
-      margin: const EdgeInsets.only(bottom: 12), // Matched admin card vertical spacing
+      margin: const EdgeInsets.only(
+        bottom: 12,
+      ), // Matched admin card vertical spacing
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         onTap: () {
           // ACTION: Navigate to the shared Admin/CR Dashboard page (Dash)
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const Dash()), 
+            MaterialPageRoute(builder: (context) => const Dash()),
           );
         },
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0), // Reduced vertical padding for compact look
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16.0,
+            vertical: 12.0,
+          ), // Reduced vertical padding for compact look
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -107,10 +139,14 @@ class _ClassroomCard extends StatelessWidget {
                   color: color.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(Icons.class_outlined, color: color, size: 28), // Adjusted size
+                child: Icon(
+                  Icons.class_outlined,
+                  color: color,
+                  size: 28,
+                ), // Adjusted size
               ),
               const SizedBox(width: 16),
-              
+
               // 2. Name and Usage
               Expanded(
                 child: Column(
@@ -118,22 +154,29 @@ class _ClassroomCard extends StatelessWidget {
                   children: [
                     Text(
                       name,
-                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600), // Match ListTile style
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ), // Match ListTile style
                     ),
                     Text(
                       'Live: $usage',
-                      style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
                     ),
                   ],
                 ),
               ),
-              
+
               // 3. Status Tag (Compact and aligned right)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Matched admin tag padding
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ), // Matched admin tag padding
                     decoration: BoxDecoration(
                       color: color.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(12),
@@ -141,14 +184,22 @@ class _ClassroomCard extends StatelessWidget {
                     ),
                     child: Text(
                       status,
-                      style: theme.textTheme.bodyMedium?.copyWith(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   // Removed the extra Icon and spacing to maintain compact size
                 ],
               ),
               const SizedBox(width: 8),
-              const Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey),
+              const Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 16,
+                color: Colors.grey,
+              ),
             ],
           ),
         ),
@@ -165,19 +216,22 @@ class _ClassroomEnergyDistributionChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // 1. Calculate total usage
-    final totalUsage = classrooms.fold<double>(0, (sum, room) => sum + (room['usage_kw'] as double));
+    final totalUsage = classrooms.fold<double>(
+      0,
+      (sum, room) => sum + (room['usage_kw'] as double),
+    );
 
     // 2. Create PieChartSections
     final List<PieChartSectionData> sections = [];
     final List<Widget> legendItems = [];
-    
+
     // Assign colors and create sections
     classrooms.asMap().forEach((index, room) {
       final usage = room['usage_kw'] as double;
       final name = room['name'] as String;
       final color = room['color'] as Color;
       final percentage = totalUsage > 0 ? (usage / totalUsage) * 100 : 0.0;
-      
+
       // Only include sections with positive usage in the chart
       if (usage > 0) {
         sections.add(
@@ -186,12 +240,16 @@ class _ClassroomEnergyDistributionChart extends StatelessWidget {
             color: color,
             title: '${percentage.toStringAsFixed(0)}%',
             radius: 80,
-            titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+            titleStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
             badgeWidget: totalUsage > 0 ? null : null,
           ),
         );
-    }
-      
+      }
+
       // Create legend item regardless of usage
       legendItems.add(
         Padding(
@@ -212,15 +270,19 @@ class _ClassroomEnergyDistributionChart extends StatelessWidget {
     });
 
     if (totalUsage == 0) {
-       sections.add(
-          PieChartSectionData(
-            value: 1.0,
-            color: Colors.grey.shade300,
-            title: '0%',
-            radius: 80,
-            titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey),
+      sections.add(
+        PieChartSectionData(
+          value: 1.0,
+          color: Colors.grey.shade300,
+          title: '0%',
+          radius: 80,
+          titleStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey,
           ),
-        );
+        ),
+      );
     }
 
     return Row(
@@ -247,7 +309,9 @@ class _ClassroomEnergyDistributionChart extends StatelessWidget {
             children: [
               Text(
                 'Total Live Usage: ${totalUsage.toStringAsFixed(1)} kW',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               ...legendItems,

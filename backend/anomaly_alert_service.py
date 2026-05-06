@@ -185,7 +185,9 @@ class AnomalyAlertService:
             return conn.execute(text("""
                 SELECT id, ds, power, occupancy, anomaly_score, is_anomaly
                 FROM anomaly_logs
-                WHERE device_id = :room_id
+                WHERE UPPER(device_id) = UPPER(:room_id)
+                   OR UPPER(device_id) = UPPER(CONCAT('ESP32-', :room_id))
+                   OR UPPER(REPLACE(device_id, 'ESP32-', '')) = UPPER(:room_id)
                 ORDER BY ds DESC
                 LIMIT 1
             """), {"room_id": room_id}).fetchone()
@@ -420,7 +422,21 @@ class AnomalyAlertService:
 
                     # Auto-resolve when anomaly no longer active for this room/type.
                     snap = self._latest_room_snapshot(room_id)
-                    if not snap or int(snap[5] or 0) not in (1, -1):
+                    recent_anomaly = False
+                    try:
+                        recent_row = conn.execute(text("""
+                            SELECT 1
+                            FROM anomaly_logs
+                            WHERE device_id = :room_id
+                              AND ds >= NOW() - INTERVAL '15 minutes'
+                              AND COALESCE(is_anomaly, 0) IN (1, -1)
+                            LIMIT 1
+                        """), {"room_id": room_id}).fetchone()
+                        recent_anomaly = recent_row is not None
+                    except Exception:
+                        recent_anomaly = False
+
+                    if not snap or (int(snap[5] or 0) not in (1, -1) and not recent_anomaly):
                         with engine.begin() as rc:
                             rc.execute(text("""
                                 UPDATE anomaly_alert_tracking
@@ -471,10 +487,14 @@ class AnomalyAlertService:
         1=class rep, 2=coordinator, 3=sergeant.
         """
         try:
-            now = datetime.utcnow()
-            # Make first_detected tz-naive for comparison
+            # Compare timestamps in the same timezone domain.
+            # Some databases/drivers return naive timestamps for TIMESTAMPTZ columns,
+            # so we fall back to local naive time in that case.
             if first_detected.tzinfo is not None:
-                first_detected = first_detected.replace(tzinfo=None)
+                now = datetime.now(timezone.utc)
+                first_detected = first_detected.astimezone(timezone.utc)
+            else:
+                now = datetime.now()
             minutes_elapsed = (now - first_detected).total_seconds() / 60
 
             # Stop everything after 1 hour
@@ -699,24 +719,27 @@ class AnomalyAlertService:
                 else:
                     try:
                         from sqlalchemy import text as _text
+
                         with _notify.engine.begin() as _nc:
                             updated = _nc.execute(
-                                _text("""
+                                _text(
+                                    """
                                     UPDATE notifications
                                     SET title      = :title,
                                         message    = :msg,
                                         created_at = NOW()
                                     WHERE recipient_email = :email
-                                                                            AND recipient_type = :rtype
+                                      AND recipient_type = :rtype
                                       AND room_id = :room_id
                                       AND COALESCE(is_resolved, FALSE) = FALSE
                                     RETURNING id
-                                """),
+                                    """
+                                ),
                                 {
                                     "title": title,
                                     "msg": message,
                                     "email": recipient_email,
-                                                                        "rtype": recipient_type,
+                                    "rtype": recipient_type,
                                     "room_id": room_id,
                                 },
                             ).fetchone()
@@ -736,18 +759,12 @@ class AnomalyAlertService:
                         print(f"[Notify] Re-alert upsert error: {_ue}")
 
             # 2) Email alert
-            if _alert_mailer and _alert_mailer.is_configured() and ('@' in recipient_email):
+            if '@' in recipient_email:
                 role_label = recipient_type.replace('_', ' ').title()
                 resolve_link = (
                     f"{PUBLIC_BASE_URL}/anomaly-alerts/resolve-alert-link"
                     f"?room_id={quote(room_id)}&resolved_by={quote(recipient_email)}"
                 )
-                severity_badge = (
-                    f"<span style='display:inline-block;padding:4px 10px;border-radius:999px;'"
-                    f"background:{severity_color};color:#fff;font-weight:700;'>"
-                    f"{severity_level}</span>"
-                )
-                # role-specific intro and tone
                 intro = {
                     'class_rep': "Hello Class Representative,",
                     'coordinator': "Hello Coordinator,",
@@ -789,40 +806,37 @@ class AnomalyAlertService:
                     </div>
                 </body></html>
                 """
+
                 try:
-                    _alert_mailer.send_html_email(
-                        subject=title,
-                        html_body=email_html,
-                        recipients=[recipient_email],
-                    )
-                    print(f"  -> Dedicated alert email sent to {recipient_type}: {recipient_email}")
+                    if _alert_mailer and _alert_mailer.is_configured():
+                        _alert_mailer.send_html_email(
+                            subject=title,
+                            html_body=email_html,
+                            recipients=[recipient_email],
+                        )
+                        print(f"  -> Dedicated alert email sent to {recipient_type}: {recipient_email}")
+                    elif _notify and getattr(_notify, 'SMTP_PASSWORD', None):
+                        _notify._send_email(
+                            subject=title,
+                            body=email_html,
+                            recipients=[recipient_email],
+                        )
+                        print(f"  -> Fallback notify_api email sent to {recipient_type}: {recipient_email}")
+                    else:
+                        try:
+                            out_dir = os.path.join(os.path.dirname(__file__), 'tmp_alert_emails')
+                            os.makedirs(out_dir, exist_ok=True)
+                            safe_addr = recipient_email.replace('@', '_at_').replace('.', '_')
+                            fname = f"{safe_addr}_{int(datetime.utcnow().timestamp())}.html"
+                            fpath = os.path.join(out_dir, fname)
+                            with open(fpath, 'w', encoding='utf-8') as fh:
+                                fh.write(f"<!-- TO: {recipient_email} ({recipient_type}) -->\n")
+                                fh.write(email_html)
+                            print(f"  -> Alert email saved to {fpath} (SMTP not configured)")
+                        except Exception as wf:
+                            print(f"  -> Failed to write fallback alert email for {recipient_email}: {wf}")
                 except Exception as email_err:
                     print(f"  -> Dedicated alert email failed for {recipient_email}: {email_err}")
-                    # Fallback to existing notify_api SMTP sender if available — ensure HTML body used
-                    if _notify and getattr(_notify, 'SMTP_PASSWORD', None):
-                        try:
-                            _notify._send_email(
-                                subject=title,
-                                body=email_html,
-                                recipients=[recipient_email],
-                            )
-                            print(f"  -> Fallback notify_api email sent to {recipient_type}: {recipient_email}")
-                        except Exception as fallback_err:
-                            print(f"  -> Fallback notify_api email failed for {recipient_email}: {fallback_err}")
-            elif _notify and _notify.SMTP_PASSWORD and ('@' in recipient_email):
-                # Legacy path when dedicated mail service is not configured.
-                try:
-                    # Send the same HTML email for consistency
-                    _notify._send_email(
-                        subject=title,
-                        body=email_html,
-                        recipients=[recipient_email],
-                    )
-                    print(f"  -> Legacy notify_api email sent to {recipient_type}: {recipient_email}")
-                except Exception as legacy_err:
-                    print(f"  -> Legacy notify_api email failed for {recipient_email}: {legacy_err}")
-            else:
-                print(f"  -> Email skipped (dedicated + legacy SMTP not configured) for {recipient_email}")
 
             print(f"  -> In-app notification saved for {recipient_type}: {recipient_email} | Room: {room_name}")
 
@@ -1005,7 +1019,9 @@ class AnomalyAlertService:
                     latest = conn.execute(text("""
                         SELECT occupancy, ds
                         FROM sensor_data
-                        WHERE device_id = :room_id
+                                WHERE UPPER(device_id) = UPPER(:room_id)
+                                    OR UPPER(device_id) = UPPER(CONCAT('ESP32-', :room_id))
+                                    OR UPPER(REPLACE(device_id, 'ESP32-', '')) = UPPER(:room_id)
                         ORDER BY ds DESC
                         LIMIT 1
                     """), {"room_id": room_id}).fetchone()

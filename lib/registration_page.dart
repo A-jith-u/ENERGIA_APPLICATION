@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, library_private_types_in_public_api, file_names, curly_braces_in_flow_control_structures, unused_field, unused_local_variable, use_build_context_synchronously
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -23,10 +24,10 @@ class _RegistrationPageState extends State<RegistrationPage> {
   bool _isPasswordVisible = false;
   bool _isRePasswordVisible = false;
   String? _errorMessage;
-  
+
   String? _selectedDepartment;
   String? _selectedYear;
-  
+
   final List<String> _departments = ['CSE', 'ECE', 'EEE', 'IT', 'RA', 'ME'];
   final List<String> _years = ['1', '2', '3', '4'];
 
@@ -42,22 +43,34 @@ class _RegistrationPageState extends State<RegistrationPage> {
     final password = _passwordController.text;
     final department = _selectedDepartment;
     final year = _selectedYear;
-    
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
-    
+
     try {
-      await register(ktuId, password, role: 'student', ktuId: ktuId, name: name, department: department, year: year, email: email);
+      await register(
+        ktuId,
+        password,
+        role: 'student',
+        ktuId: ktuId,
+        name: name,
+        department: department,
+        year: year,
+        email: email,
+      );
       Navigator.of(context).pop(); // Close progress dialog
       AppNotifier.showSuccess(context, 'Registration successful for $name');
       Navigator.pop(context); // Go back to login
     } catch (e) {
       Navigator.of(context).pop(); // Close progress dialog
-      final msg = e is ApiError ? e.message : 'Registration failed: ${e.toString()}';
-      setState(() { _errorMessage = msg; });
+      final msg =
+          e is ApiError ? e.message : 'Registration failed: ${e.toString()}';
+      setState(() {
+        _errorMessage = msg;
+      });
       AppNotifier.showError(context, msg);
     }
   }
@@ -99,7 +112,10 @@ class _RegistrationPageState extends State<RegistrationPage> {
                         ),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 34),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 28,
+                          vertical: 34,
+                        ),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -108,24 +124,27 @@ class _RegistrationPageState extends State<RegistrationPage> {
                               children: [
                                 CircleAvatar(
                                   radius: 42,
-                                  backgroundColor: colorScheme.primary.withOpacity(.15),
-                                  child: Icon(Icons.school, size: 44, color: colorScheme.primary),
+                                  backgroundColor: colorScheme.primary
+                                      .withOpacity(.15),
+                                  child: Icon(
+                                    Icons.school,
+                                    size: 44,
+                                    color: colorScheme.primary,
+                                  ),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 20),
                             Text(
                               'Create Student Account',
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w700),
                             ),
                             const SizedBox(height: 6),
                             Text(
                               'Register to access campus resources',
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    color: Colors.grey.shade600,
-                                  ),
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(color: Colors.grey.shade600),
                             ),
                             const SizedBox(height: 28),
                             if (_errorMessage != null)
@@ -135,16 +154,25 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                 decoration: BoxDecoration(
                                   color: Colors.red.shade50,
                                   borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.red.shade300),
+                                  border: Border.all(
+                                    color: Colors.red.shade300,
+                                  ),
                                 ),
                                 child: Row(
                                   children: [
-                                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                                    Icon(
+                                      Icons.error_outline,
+                                      color: Colors.red.shade700,
+                                      size: 20,
+                                    ),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
                                         _errorMessage!,
-                                        style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                                        style: TextStyle(
+                                          color: Colors.red.shade700,
+                                          fontSize: 13,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -160,8 +188,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                     icon: Icons.email_outlined,
                                     keyboardType: TextInputType.emailAddress,
                                     validator: (v) {
-                                      if (v == null || v.trim().isEmpty) return 'Enter email';
-                                      if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) return 'Invalid email';
+                                      if (v == null || v.trim().isEmpty)
+                                        return 'Enter email';
+                                      if (!RegExp(
+                                        r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                                      ).hasMatch(v.trim()))
+                                        return 'Invalid email';
                                       return null;
                                     },
                                   ),
@@ -171,8 +203,10 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                     label: 'Student Name',
                                     icon: Icons.person_outline,
                                     validator: (v) {
-                                      if (v == null || v.trim().isEmpty) return 'Enter name';
-                                      if (v.trim().length < 3) return 'Too short';
+                                      if (v == null || v.trim().isEmpty)
+                                        return 'Enter name';
+                                      if (v.trim().length < 3)
+                                        return 'Too short';
                                       return null;
                                     },
                                   ),
@@ -188,7 +222,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                       });
                                     },
                                     validator: (v) {
-                                      if (v == null || v.isEmpty) return 'Select department';
+                                      if (v == null || v.isEmpty)
+                                        return 'Select department';
                                       return null;
                                     },
                                   ),
@@ -204,7 +239,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                       });
                                     },
                                     validator: (v) {
-                                      if (v == null || v.isEmpty) return 'Select year';
+                                      if (v == null || v.isEmpty)
+                                        return 'Select year';
                                       return null;
                                     },
                                   ),
@@ -214,8 +250,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                     label: 'KTU ID',
                                     icon: Icons.badge_outlined,
                                     validator: (v) {
-                                      if (v == null || v.trim().isEmpty) return 'Enter ID';
-                                      if (!RegExp(r'^[A-Za-z0-9_-]{4,}$').hasMatch(v)) return 'Invalid ID';
+                                      if (v == null || v.trim().isEmpty)
+                                        return 'Enter ID';
+                                      if (!RegExp(
+                                        r'^[A-Za-z0-9_-]{4,}$',
+                                      ).hasMatch(v))
+                                        return 'Invalid ID';
                                       return null;
                                     },
                                   ),
@@ -226,10 +266,13 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                     icon: Icons.lock_outline,
                                     obscure: true,
                                     validator: (v) {
-                                      if (v == null || v.isEmpty) return 'Enter password';
+                                      if (v == null || v.isEmpty)
+                                        return 'Enter password';
                                       if (v.length < 6) return 'Min 6 chars';
-                                      if (!RegExp(r'[0-9]').hasMatch(v)) return 'Add a number';
-                                      if (!RegExp(r'[A-Z]').hasMatch(v)) return 'Add an uppercase';
+                                      if (!RegExp(r'[0-9]').hasMatch(v))
+                                        return 'Add a number';
+                                      if (!RegExp(r'[A-Z]').hasMatch(v))
+                                        return 'Add an uppercase';
                                       return null;
                                     },
                                   ),
@@ -241,8 +284,10 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                     obscure: true,
                                     isRePassword: true,
                                     validator: (v) {
-                                      if (v == null || v.isEmpty) return 'Re-type password';
-                                      if (v != _passwordController.text) return 'Passwords do not match';
+                                      if (v == null || v.isEmpty)
+                                        return 'Re-type password';
+                                      if (v != _passwordController.text)
+                                        return 'Passwords do not match';
                                       return null;
                                     },
                                   ),
@@ -256,8 +301,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   child: OutlinedButton(
                                     onPressed: _goBack,
                                     style: OutlinedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 16,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
                                     ),
                                     child: const Text('Back'),
                                   ),
@@ -267,8 +316,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   child: ElevatedButton(
                                     onPressed: _register,
                                     style: ElevatedButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(vertical: 16),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 16,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
                                     ),
                                     child: const Text('Register'),
                                   ),
@@ -303,35 +356,38 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }) {
     return TextFormField(
       controller: controller,
-      obscureText: obscure && (isRePassword ? !_isRePasswordVisible : !_isPasswordVisible),
+      obscureText:
+          obscure &&
+          (isRePassword ? !_isRePasswordVisible : !_isPasswordVisible),
       keyboardType: keyboardType,
       textInputAction: textInputAction,
       validator: validator,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon),
-        suffixIcon: obscure
-            ? IconButton(
-                icon: Icon(
-                  (isRePassword ? _isRePasswordVisible : _isPasswordVisible)
-                      ? Icons.visibility_off
-                      : Icons.visibility,
-                ),
-                onPressed: () {
-                  setState(() {
-                    if (isRePassword) {
-                      _isRePasswordVisible = !_isRePasswordVisible;
-                    } else {
-                      _isPasswordVisible = !_isPasswordVisible;
-                    }
-                  });
-                },
-              )
-            : null,
+        suffixIcon:
+            obscure
+                ? IconButton(
+                  icon: Icon(
+                    (isRePassword ? _isRePasswordVisible : _isPasswordVisible)
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      if (isRePassword) {
+                        _isRePasswordVisible = !_isRePasswordVisible;
+                      } else {
+                        _isPasswordVisible = !_isPasswordVisible;
+                      }
+                    });
+                  },
+                )
+                : null,
       ),
     );
   }
-  
+
   Widget _buildDropdownField({
     required String? value,
     required String label,
@@ -342,16 +398,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }) {
     return DropdownButtonFormField<String>(
       value: value,
-      decoration: InputDecoration(
-        labelText: label,
-        prefixIcon: Icon(icon),
-      ),
-      items: items.map((item) {
-        return DropdownMenuItem<String>(
-          value: item,
-          child: Text(item),
-        );
-      }).toList(),
+      decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon)),
+      items:
+          items.map((item) {
+            return DropdownMenuItem<String>(value: item, child: Text(item));
+          }).toList(),
       onChanged: onChanged,
       validator: validator,
     );

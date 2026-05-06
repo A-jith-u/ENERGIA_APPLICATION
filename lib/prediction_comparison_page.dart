@@ -1,9 +1,12 @@
+// ignore_for_file: deprecated_member_use, file_names, unused_field, unused_local_variable
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 
 class PredictionComparisonPage extends StatefulWidget {
   final String roomName;
@@ -17,6 +20,7 @@ class PredictionComparisonPage extends StatefulWidget {
 class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
   bool _loading = false;
   String? _error;
+  String? _authToken;
 
   // Prediction data
   DateTime? _predictedForLocal;
@@ -62,7 +66,25 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
   @override
   void initState() {
     super.initState();
+    _loadAuthToken();
     _startAutoRefresh();
+  }
+
+  Future<void> _loadAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token != null && token.isNotEmpty) {
+      try {
+        JwtDecoder.decode(token);
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _authToken = token;
+        });
+      } else {
+        _authToken = token;
+      }
+    }
   }
 
   @override
@@ -142,21 +164,21 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
 
         for (final uri in uris) {
           try {
-            print('🔍 Fetching prediction from: $uri');
+            debugPrint('🔍 Fetching prediction from: $uri');
 
             final body = jsonEncode({
               'horizon_minutes': 5,
               'room_name': widget.roomName,
             });
+            final headers = {
+              'Content-Type': 'application/json',
+              if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+            };
 
             http.Response resp;
             try {
               resp = await http
-                  .post(
-                    uri,
-                    headers: {'Content-Type': 'application/json'},
-                    body: body,
-                  )
+                  .post(uri, headers: headers, body: body)
                   .timeout(
                     const Duration(seconds: 5),
                     onTimeout: () {
@@ -165,7 +187,7 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
                   );
             } catch (_) {
               resp = await http
-                  .get(uri, headers: {'Content-Type': 'application/json'})
+                  .get(uri, headers: headers)
                   .timeout(
                     const Duration(seconds: 5),
                     onTimeout: () {
@@ -208,10 +230,10 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
             final isLiveBased =
                 respBody['based_on_live_data'] as bool? ?? false;
 
-            print('✅ Prediction received: yhat=$yhat');
+            debugPrint('✅ Prediction received: yhat=$yhat');
 
             if (when == null || yhat == null) {
-              print('❌ Missing required fields');
+              debugPrint('❌ Missing required fields');
               continue;
             }
 
@@ -230,7 +252,7 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
             });
             return;
           } catch (e) {
-            print('❌ Error: $e');
+            debugPrint('❌ Error: $e');
             continue;
           }
         }
@@ -254,8 +276,12 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
         final uri = Uri.parse(
           '$base/api/sensor-data?limit=120&device_id=${Uri.encodeComponent(deviceId)}',
         );
+        final headers = {
+          'Content-Type': 'application/json',
+          if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+        };
         final resp = await http
-            .get(uri, headers: {'Content-Type': 'application/json'})
+            .get(uri, headers: headers)
             .timeout(const Duration(seconds: 6));
 
         if (resp.statusCode != 200) continue;
@@ -312,7 +338,7 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
 
         return;
       } catch (e) {
-        print('Error fetching live data: $e');
+        debugPrint('Error fetching live data: $e');
         continue;
       }
     }
@@ -333,8 +359,12 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
         final uri = Uri.parse(
           '$base/api/sensor-data?limit=120&room=${Uri.encodeComponent(widget.roomName)}',
         );
+        final headers = {
+          'Content-Type': 'application/json',
+          if (_authToken != null) 'Authorization': 'Bearer $_authToken',
+        };
         final resp = await http
-            .get(uri, headers: {'Content-Type': 'application/json'})
+            .get(uri, headers: headers)
             .timeout(const Duration(seconds: 15));
 
         if (resp.statusCode != 200) continue;
@@ -386,7 +416,7 @@ class _PredictionComparisonPageState extends State<PredictionComparisonPage> {
         });
         return;
       } catch (e) {
-        print('Error fetching actual data: $e');
+        debugPrint('Error fetching actual data: $e');
         continue;
       }
     }

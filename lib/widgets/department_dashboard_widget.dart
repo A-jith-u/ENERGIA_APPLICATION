@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, unused_field, unused_local_variable, file_names
 import 'package:flutter/material.dart';
 import 'package:energia/models/user_role_model.dart';
 import 'package:energia/services/department_customization_service.dart';
@@ -47,9 +48,7 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
           if (MediaQuery.of(context).size.width > 800)
             _buildSidebar(menuItems, context),
           // Main content
-          Expanded(
-            child: widget.contentBuilder(context),
-          ),
+          Expanded(child: widget.contentBuilder(context)),
         ],
       ),
     );
@@ -66,10 +65,7 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
         children: [
           Text(
             departmentNames[widget.user.department] ?? 'Dashboard',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           Text(
             widget.user.getDisplayTitle(),
@@ -87,10 +83,7 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
           child: Center(
             child: Text(
               widget.user.name,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-              ),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
             ),
           ),
         ),
@@ -98,7 +91,10 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
     );
   }
 
-  Widget _buildSidebar(List<DepartmentMenuItem> menuItems, BuildContext context) {
+  Widget _buildSidebar(
+    List<DepartmentMenuItem> menuItems,
+    BuildContext context,
+  ) {
     final deptColor = departmentColors[widget.user.department] ?? Colors.blue;
 
     return Container(
@@ -130,10 +126,7 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
                   ),
                   Text(
                     widget.user.role.name,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ],
               ),
@@ -164,7 +157,10 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
                 backgroundColor: Colors.white,
                 foregroundColor: item.color,
                 alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -175,7 +171,10 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
         .toList();
   }
 
-  Widget _buildDrawer(List<DepartmentMenuItem> menuItems, BuildContext context) {
+  Widget _buildDrawer(
+    List<DepartmentMenuItem> menuItems,
+    BuildContext context,
+  ) {
     final deptColor = departmentColors[widget.user.department] ?? Colors.blue;
 
     return Drawer(
@@ -248,23 +247,24 @@ class _DepartmentDashboardState extends State<DepartmentDashboard> {
   void _logout(BuildContext context) {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+      builder:
+          (ctx) => AlertDialog(
+            title: const Text('Logout'),
+            content: const Text('Are you sure you want to logout?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  Navigator.pushReplacementNamed(context, '/role_selection');
+                },
+                child: const Text('Logout'),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              Navigator.pushReplacementNamed(context, '/role_selection');
-            },
-            child: const Text('Logout'),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -293,13 +293,14 @@ class DepartmentCard extends StatelessWidget {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: onTap != null
-          ? InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(12),
-              child: _buildCardContent(deptColor),
-            )
-          : _buildCardContent(deptColor),
+      child:
+          onTap != null
+              ? InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(12),
+                child: _buildCardContent(deptColor),
+              )
+              : _buildCardContent(deptColor),
     );
   }
 
@@ -318,11 +319,7 @@ class DepartmentCard extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(
-                departmentIcons[department],
-                color: deptColor,
-                size: 24,
-              ),
+              Icon(departmentIcons[department], color: deptColor, size: 24),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -337,10 +334,7 @@ class DepartmentCard extends StatelessWidget {
             ],
           ),
         ),
-        Padding(
-          padding: padding,
-          child: child,
-        ),
+        Padding(padding: padding, child: child),
       ],
     );
   }
@@ -404,10 +398,7 @@ class DepartmentMetric extends StatelessWidget {
           ),
           Text(
             unit,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
-            ),
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ],
       ),

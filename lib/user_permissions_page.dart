@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names
 import 'package:flutter/material.dart';
 
 class UserPermissionsPage extends StatelessWidget {
@@ -25,12 +26,16 @@ class UserPermissionsPage extends StatelessWidget {
             children: [
               Text(
                 'Role-Based Access Control',
-                style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
                 'Comprehensive overview of user roles, permissions, rules, and duties in the ENERGIA system',
-                style: theme.textTheme.titleMedium?.copyWith(color: Colors.grey.shade600),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
               ),
               const SizedBox(height: 32),
 
@@ -167,7 +172,9 @@ class UserPermissionsPage extends StatelessWidget {
               // Summary Section
               Card(
                 elevation: 2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Column(
@@ -179,7 +186,9 @@ class UserPermissionsPage extends StatelessWidget {
                           const SizedBox(width: 8),
                           Text(
                             'Access Control Summary',
-                            style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ],
                       ),
@@ -187,12 +196,14 @@ class UserPermissionsPage extends StatelessWidget {
                       _SummaryRow(
                         icon: Icons.lock,
                         label: 'Authentication',
-                        value: 'All roles require JWT token-based authentication',
+                        value:
+                            'All roles require JWT token-based authentication',
                       ),
                       _SummaryRow(
                         icon: Icons.visibility,
                         label: 'Data Visibility',
-                        value: 'Scoped to role level (admin > coordinator > class rep > sergeant)',
+                        value:
+                            'Scoped to role level (admin > coordinator > class rep > sergeant)',
                       ),
                       _SummaryRow(
                         icon: Icons.edit,
@@ -202,7 +213,8 @@ class UserPermissionsPage extends StatelessWidget {
                       _SummaryRow(
                         icon: Icons.warning,
                         label: 'Security',
-                        value: 'All actions logged with timestamp, user ID, and IP address',
+                        value:
+                            'All actions logged with timestamp, user ID, and IP address',
                       ),
                     ],
                   ),
@@ -249,7 +261,9 @@ class _RoleCard extends StatelessWidget {
         ),
         title: Text(
           title,
-          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
         ),
         children: [
           Padding(
@@ -265,9 +279,9 @@ class _RoleCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 ...permissions.map((p) => _BulletPoint(text: p)),
-                
+
                 const SizedBox(height: 24),
-                
+
                 // Rules Section
                 _SectionHeader(
                   icon: Icons.rule,
@@ -276,9 +290,9 @@ class _RoleCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 ...rules.map((r) => _BulletPoint(text: r)),
-                
+
                 const SizedBox(height: 24),
-                
+
                 // Duties Section
                 _SectionHeader(
                   icon: Icons.assignment_outlined,

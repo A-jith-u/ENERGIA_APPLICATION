@@ -1,3 +1,4 @@
+// ignore_for_file: avoid_print
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
@@ -46,7 +47,7 @@ class SensorService {
   /// IP: 10.111.183.200 (Backend server)
   /// Port: 5000 (FastAPI server)
   final String baseUrl = "http://10.111.183.200:5000/api";
-  
+
   /// Check if sensor backend is connected and returning live data
   /// Returns true if sensor data is available
   Future<bool> isSensorConnected() async {
@@ -58,7 +59,7 @@ class SensorService {
       return false;
     }
   }
-  
+
   /// Get the time of latest sensor reading
   /// Useful to determine if data is fresh
   Future<DateTime?> getLastSensorReadingTime() async {
@@ -72,13 +73,13 @@ class SensorService {
     }
     return null;
   }
-  
+
   /// Check if sensor data is fresh (within last 5 minutes)
   Future<bool> isSensorDataFresh() async {
     try {
       final lastReadTime = await getLastSensorReadingTime();
       if (lastReadTime == null) return false;
-      
+
       final now = DateTime.now();
       final diff = now.difference(lastReadTime);
       return diff.inMinutes <= 5;

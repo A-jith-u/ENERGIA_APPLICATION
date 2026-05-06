@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, file_names, unused_field
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'dart:convert';
@@ -91,9 +92,9 @@ class _Prediction15MinWidgetState extends State<Prediction15MinWidget> {
           }
         } catch (e) {
           if (e is TimeoutException) {
-            print('⏱️ Timeout with $baseUrl - trying next...');
+            debugPrint('⏱️ Timeout with $baseUrl - trying next...');
           } else {
-            print('Error: $e');
+            debugPrint('Error: $e');
           }
           continue;
         }

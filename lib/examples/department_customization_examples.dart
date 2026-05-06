@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, unused_field, file_names
 import 'package:flutter/material.dart';
 import 'package:energia/models/user_role_model.dart';
 import 'package:energia/services/department_auth_service.dart';
@@ -93,11 +94,7 @@ class _EnhancedCoordinatorLoginPageState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: 32),
-            Icon(
-              Icons.engineering,
-              size: 80,
-              color: theme.colorScheme.primary,
-            ),
+            Icon(Icons.engineering, size: 80, color: theme.colorScheme.primary),
             const SizedBox(height: 24),
             Text(
               'Technical Coordinator\nDepartment Access',
@@ -170,16 +167,20 @@ class _EnhancedCoordinatorLoginPageState
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text(
-                      'Login',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
+              child:
+                  _isLoading
+                      ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : const Text(
+                        'Login',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
             ),
             const SizedBox(height: 16),
             // Demo Credentials Info
@@ -200,7 +201,11 @@ class _EnhancedCoordinatorLoginPageState
                     ),
                   ),
                   const SizedBox(height: 8),
-                  _buildCredentialInfo('Computer Science', 'CCSE001', 'Coord@123'),
+                  _buildCredentialInfo(
+                    'Computer Science',
+                    'CCSE001',
+                    'Coord@123',
+                  ),
                   const SizedBox(height: 8),
                   _buildCredentialInfo('Electrical', 'CELE001', 'Coord@123'),
                   const SizedBox(height: 8),
@@ -226,10 +231,7 @@ class _EnhancedCoordinatorLoginPageState
 class EnhancedCoordinatorDashboard extends StatefulWidget {
   final EnhancedUser user;
 
-  const EnhancedCoordinatorDashboard({
-    super.key,
-    required this.user,
-  });
+  const EnhancedCoordinatorDashboard({super.key, required this.user});
 
   @override
   State<EnhancedCoordinatorDashboard> createState() =>
@@ -249,12 +251,16 @@ class _EnhancedCoordinatorDashboardState
   @override
   Widget build(BuildContext context) {
     // Get dashboard features for this user's role and department
-    final features =
-        _customizationService.getDashboardFeatures(widget.user.role, widget.user.department);
+    final features = _customizationService.getDashboardFeatures(
+      widget.user.role,
+      widget.user.department,
+    );
 
     // Get metrics to display
-    final metrics =
-        _customizationService.getMetricsForRole(widget.user.role, widget.user.department);
+    final metrics = _customizationService.getMetricsForRole(
+      widget.user.role,
+      widget.user.department,
+    );
 
     return DepartmentDashboard(
       user: widget.user,
@@ -376,10 +382,7 @@ class _EnhancedCoordinatorDashboardState
           const SizedBox(height: 8),
           Text(
             widget.user.getDisplayTitle(),
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ],
       ),
@@ -410,40 +413,40 @@ void exampleRouteConfiguration() {
 class DepartmentSpecificMenuExample extends StatelessWidget {
   final EnhancedUser user;
 
-  const DepartmentSpecificMenuExample({
-    super.key,
-    required this.user,
-  });
+  const DepartmentSpecificMenuExample({super.key, required this.user});
 
   @override
   Widget build(BuildContext context) {
     late DepartmentCustomizationService customizationService;
     customizationService = DepartmentCustomizationService();
 
-    final menuItems =
-        customizationService.getDepartmentMenuItems(user.department, user.role);
+    final menuItems = customizationService.getDepartmentMenuItems(
+      user.department,
+      user.role,
+    );
 
     return ListView(
-      children: menuItems.map((item) {
-        return Card(
-          color: item.color.withOpacity(0.1),
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: ListTile(
-            leading: Icon(item.icon, color: item.color),
-            title: Text(
-              item.title,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: item.color,
+      children:
+          menuItems.map((item) {
+            return Card(
+              color: item.color.withOpacity(0.1),
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: ListTile(
+                leading: Icon(item.icon, color: item.color),
+                title: Text(
+                  item.title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: item.color,
+                  ),
+                ),
+                trailing: const Icon(Icons.arrow_forward),
+                onTap: () {
+                  Navigator.pushNamed(context, item.route);
+                },
               ),
-            ),
-            trailing: const Icon(Icons.arrow_forward),
-            onTap: () {
-              Navigator.pushNamed(context, item.route);
-            },
-          ),
-        );
-      }).toList(),
+            );
+          }).toList(),
     );
   }
 }
@@ -468,11 +471,7 @@ class FeatureAccessExample extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.lock,
-              size: 64,
-              color: Colors.grey.shade400,
-            ),
+            Icon(Icons.lock, size: 64, color: Colors.grey.shade400),
             const SizedBox(height: 16),
             Text(
               'Access Denied',

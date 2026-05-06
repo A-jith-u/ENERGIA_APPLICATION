@@ -1,3 +1,4 @@
+// ignore_for_file: deprecated_member_use, use_build_context_synchronously, file_names
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'services/api.dart';
@@ -34,7 +35,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       });
       AppNotifier.showSuccess(context, 'OTP sent. It expires in 5 minutes.');
     } catch (e) {
-      final msg = e is ApiError ? e.message : 'Reset request failed: ${e.toString()}';
+      final msg =
+          e is ApiError ? e.message : 'Reset request failed: ${e.toString()}';
       AppNotifier.showError(context, msg);
     } finally {
       setState(() => _submitting = false);
@@ -85,7 +87,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 500),
                   child: ClipRRect(
@@ -101,35 +106,52 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           ),
                         ),
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 32,
+                            vertical: 40,
+                          ),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               CircleAvatar(
                                 radius: 46,
-                                backgroundColor: colorScheme.primary.withOpacity(.15),
-                                child: Icon(Icons.lock_reset, size: 46, color: colorScheme.primary),
+                                backgroundColor: colorScheme.primary
+                                    .withOpacity(.15),
+                                child: Icon(
+                                  Icons.lock_reset,
+                                  size: 46,
+                                  color: colorScheme.primary,
+                                ),
                               ),
                               const SizedBox(height: 20),
                               Text(
                                 'Reset Password',
-                                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                               const SizedBox(height: 6),
                               Text(
                                 _step == 1
                                     ? 'Request an OTP to your registered email'
                                     : 'Enter the OTP and set a new password',
-                                style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey.shade600),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: Colors.grey.shade600,
+                                ),
                               ),
                               const SizedBox(height: 28),
-                              _step == 1 ? _buildStep1(colorScheme) : _buildStep2(colorScheme),
+                              _step == 1
+                                  ? _buildStep1(colorScheme)
+                                  : _buildStep2(colorScheme),
                               const SizedBox(height: 16),
                               Row(
                                 children: [
                                   Expanded(
                                     child: OutlinedButton(
-                                      onPressed: _submitting ? null : () => Navigator.pop(context),
+                                      onPressed:
+                                          _submitting
+                                              ? null
+                                              : () => Navigator.pop(context),
                                       child: const Text('Back to Login'),
                                     ),
                                   ),
@@ -211,8 +233,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               labelText: 'New Password',
               prefixIcon: const Icon(Icons.lock_outline),
               suffixIcon: IconButton(
-                icon: Icon(_showNewPassword ? Icons.visibility_off : Icons.visibility),
-                onPressed: () => setState(() => _showNewPassword = !_showNewPassword),
+                icon: Icon(
+                  _showNewPassword ? Icons.visibility_off : Icons.visibility,
+                ),
+                onPressed:
+                    () => setState(() => _showNewPassword = !_showNewPassword),
               ),
             ),
             validator: (v) {
@@ -229,8 +254,15 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               labelText: 'Confirm New Password',
               prefixIcon: const Icon(Icons.lock_outline),
               suffixIcon: IconButton(
-                icon: Icon(_showConfirmPassword ? Icons.visibility_off : Icons.visibility),
-                onPressed: () => setState(() => _showConfirmPassword = !_showConfirmPassword),
+                icon: Icon(
+                  _showConfirmPassword
+                      ? Icons.visibility_off
+                      : Icons.visibility,
+                ),
+                onPressed:
+                    () => setState(
+                      () => _showConfirmPassword = !_showConfirmPassword,
+                    ),
               ),
             ),
             validator: (v) {
@@ -243,7 +275,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: _submitting ? null : () => setState(() => _step = 1),
+                  onPressed:
+                      _submitting ? null : () => setState(() => _step = 1),
                   child: const Text('Back'),
                 ),
               ),
